@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+APP_DIR="/Applications/GOD MODE Media Library"
+BIN_PATH="/usr/local/bin/gml"
+LAUNCHER="$APP_DIR/GodMode Media Library.command"
+
+if [ -f "$BIN_PATH" ]; then
+  chmod 755 "$BIN_PATH"
+fi
+
+if [ -f "$LAUNCHER" ]; then
+  chmod 755 "$LAUNCHER"
+fi
+
+exit 0

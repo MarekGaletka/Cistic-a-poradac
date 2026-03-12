@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "godmode-media-library"
+version = "0.1.0"
+description = "GOD MODE media library organizer with metadata-first safety"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Marek Galetka" }
+]
+license = { text = "Proprietary" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Environment :: Console"
+]
+
+[project.optional-dependencies]
+geo = [
+  "geopy>=2.4.1"
+]
+people = [
+  "face-recognition>=1.3.0",
+  "numpy>=1.26.0",
+  "Pillow>=10.0.0",
+  "pillow-heif>=0.18.0",
+  "scikit-learn>=1.4.0"
+]
+full = [
+  "geopy>=2.4.1",
+  "face-recognition>=1.3.0",
+  "numpy>=1.26.0",
+  "Pillow>=10.0.0",
+  "pillow-heif>=0.18.0",
+  "scikit-learn>=1.4.0"
+]
+
+[project.scripts]
+gml = "godmode_media_library.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

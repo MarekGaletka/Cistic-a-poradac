@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.DS_Store
+
+# runtime outputs
+runs/
+audit_*/
+quarantine/
+_smoke*/
+views_*/
