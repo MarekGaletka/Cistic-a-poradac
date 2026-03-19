@@ -407,6 +407,38 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_auto(args: argparse.Namespace) -> int:
+    from .pipeline import PipelineConfig, run_pipeline
+
+    roots = _parse_roots(args.roots)
+    catalog_path = Path(args.catalog) if args.catalog else None
+
+    config = PipelineConfig(
+        roots=roots,
+        catalog_path=catalog_path,
+        exiftool_bin=args.exiftool_bin,
+        dry_run=args.dry_run,
+        interactive=not args.no_interactive,
+        workers=args.workers,
+        min_size_bytes=args.min_size_kb * 1024,
+        skip_steps=set(args.skip),
+    )
+
+    result = run_pipeline(config)
+
+    print(f"files_scanned={result.files_scanned}")
+    print(f"files_new={result.files_new}")
+    print(f"metadata_extracted={result.metadata_extracted}")
+    print(f"duplicate_groups={result.duplicate_groups}")
+    print(f"merge_plans={result.merge_plans_created}")
+    print(f"tags_merged={result.tags_merged}")
+    if result.errors:
+        print(f"errors={len(result.errors)}")
+        for err in result.errors[:10]:
+            print(f"  {err}")
+    return 1 if result.errors else 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .deps import check_all, format_report
 
@@ -715,6 +747,17 @@ def build_parser() -> argparse.ArgumentParser:
     pdoc = sub.add_parser("doctor", help="Check external dependencies and show install hints")
     pdoc.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path to check")
     pdoc.set_defaults(func=cmd_doctor)
+
+    pauto = sub.add_parser("auto", help="Run full pipeline: scan → extract → diff → merge")
+    pauto.add_argument("--roots", nargs="+", required=True, help="Root directories to scan")
+    pauto.add_argument("--catalog", default=None, help="Catalog DB path")
+    pauto.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
+    pauto.add_argument("--workers", type=int, default=1, help="Parallel workers")
+    pauto.add_argument("--min-size-kb", type=int, default=0, help="Min file size for hashing (KB)")
+    pauto.add_argument("--dry-run", action="store_true", help="Simulate merges without writing")
+    pauto.add_argument("--no-interactive", action="store_true", help="Skip confirmation prompts")
+    pauto.add_argument("--skip", nargs="*", default=[], help="Steps to skip: scan, extract, diff, merge")
+    pauto.set_defaults(func=cmd_auto)
 
     # ── Catalog commands ─────────────────────────────────────────────
 
