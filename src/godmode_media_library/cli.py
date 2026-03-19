@@ -407,6 +407,16 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from .deps import check_all, format_report
+
+    exiftool_bin = getattr(args, "exiftool_bin", "exiftool")
+    statuses = check_all(exiftool_bin=exiftool_bin)
+    print(format_report(statuses), end="")
+    missing = [s for s in statuses if not s.available]
+    return 1 if missing else 0
+
+
 def _get_catalog(args: argparse.Namespace) -> Catalog:
     db_path = Path(args.catalog) if hasattr(args, "catalog") and args.catalog else default_catalog_path()
     return Catalog(db_path)
@@ -423,6 +433,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
             min_size_bytes=args.min_size_kb * 1024,
             extract_media=not args.no_media,
             compute_phash=not args.no_phash,
+            extract_exiftool=getattr(args, "exiftool", False),
+            exiftool_bin=getattr(args, "exiftool_bin", "exiftool"),
+            workers=getattr(args, "workers", 1),
         )
     print(f"catalog={catalog.db_path}")
     print(f"files_scanned={stats.files_scanned}")
@@ -699,6 +712,10 @@ def build_parser() -> argparse.ArgumentParser:
     pcfg = sub.add_parser("config", help="Show resolved configuration")
     pcfg.set_defaults(func=cmd_config_show)
 
+    pdoc = sub.add_parser("doctor", help="Check external dependencies and show install hints")
+    pdoc.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path to check")
+    pdoc.set_defaults(func=cmd_doctor)
+
     # ── Catalog commands ─────────────────────────────────────────────
 
     ps = sub.add_parser("scan", help="Incremental scan: update catalog from filesystem")
@@ -708,6 +725,9 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--min-size-kb", type=int, default=0, help="Min file size for hashing (KB)")
     ps.add_argument("--no-media", action="store_true", help="Skip media metadata extraction (ffprobe/EXIF)")
     ps.add_argument("--no-phash", action="store_true", help="Skip perceptual hash computation")
+    ps.add_argument("--exiftool", action="store_true", help="Run deep ExifTool metadata extraction after scan")
+    ps.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
+    ps.add_argument("--workers", type=int, default=1, help="Parallel workers for hashing/media extraction (default: 1)")
     ps.set_defaults(func=cmd_scan)
 
     pq = sub.add_parser("query", help="Search files in catalog")

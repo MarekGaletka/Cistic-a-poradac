@@ -29,6 +29,7 @@ class GMLConfig:
     max_dimension: int = 1600
     eps: float = 0.5
     min_samples: int = 2
+    scan_workers: int = 4
 
 
 def _global_config_path() -> Path:

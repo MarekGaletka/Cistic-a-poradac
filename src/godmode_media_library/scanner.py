@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .asset_sets import build_asset_membership
@@ -23,6 +24,9 @@ def incremental_scan(
     min_size_bytes: int = 0,
     extract_media: bool = True,
     compute_phash: bool = True,
+    extract_exiftool: bool = False,
+    exiftool_bin: str = "exiftool",
+    workers: int = 1,
 ) -> ScanStats:
     """Scan filesystem roots and update catalog incrementally.
 
@@ -37,8 +41,11 @@ def incremental_scan(
         min_size_bytes: Minimum file size for hashing (smaller files get sha256=None).
         extract_media: If True, extract media metadata (ffprobe + EXIF) for new/changed files.
         compute_phash: If True, compute perceptual hash for image files.
+        extract_exiftool: If True, run ExifTool batch extraction after scan for files without metadata.
+        exiftool_bin: ExifTool binary path (used only when extract_exiftool=True).
     """
     stats = ScanStats(root=";".join(str(r) for r in roots))
+    effective_workers = max(1, workers)
 
     # Collect all current disk paths
     all_paths = list(iter_files(roots))
@@ -50,10 +57,14 @@ def incremental_scan(
     # Start scan record
     scan_id = catalog.start_scan(stats.root)
 
-    # Track which catalog paths we've seen (for deletion detection)
+    # ── Phase 1: Stat & classify (sequential, fast) ──────────────────
     seen_paths: set[str] = set()
+    file_infos: list[dict] = []
+    paths_to_hash: list[tuple[int, Path, int]] = []  # (index, path, size)
+    paths_for_media: list[tuple[int, Path, str]] = []  # (index, path, ext)
+    paths_for_phash: list[tuple[int, Path]] = []  # (index, path)
 
-    for path in all_paths:
+    for idx, path in enumerate(all_paths):
         try:
             st = path.stat()
         except OSError:
@@ -76,93 +87,146 @@ def incremental_scan(
         asset_key = path_to_key.get(path)
         is_component = path_is_component.get(path, False)
 
-        # Check if file is already in catalog and unchanged
         existing = catalog.get_file_mtime_size(path_str)
         needs_hash = force_rehash
         is_new_or_changed = False
 
         if existing is None:
-            # New file
             stats.files_new += 1
             needs_hash = True
             is_new_or_changed = True
         elif existing[0] != mtime or existing[1] != size:
-            # Changed file
             stats.files_changed += 1
             needs_hash = True
             is_new_or_changed = True
 
-        # Compute hash if needed
-        sha256 = None
-        if needs_hash and size >= min_size_bytes:
-            try:
-                sha256 = sha256_file(path)
-                stats.bytes_hashed += size
-            except OSError:
-                logger.warning("Cannot hash %s", path)
+        info = {
+            "idx": idx, "path": path, "path_str": path_str,
+            "size": size, "mtime": mtime, "ctime": ctime, "ext": ext,
+            "birthtime": birthtime, "xattr": xattr,
+            "inode": inode, "device": device, "nlink": nlink,
+            "asset_key": asset_key, "is_component": is_component,
+            "needs_hash": needs_hash, "is_new_or_changed": is_new_or_changed,
+            "sha256": None, "media_meta": None, "exif_meta": None, "phash": None,
+        }
+        file_infos.append(info)
 
-        # If not rehashing, preserve existing hash and media metadata
-        existing_row = None
-        if not needs_hash and existing is not None:
+        if needs_hash and size >= min_size_bytes:
+            paths_to_hash.append((len(file_infos) - 1, path, size))
+        elif not needs_hash and existing is not None:
             existing_row = catalog.get_file_by_path(path_str)
             if existing_row:
-                sha256 = existing_row.sha256
-
-        # Extract media metadata for new/changed files
-        media_meta: MediaMeta | None = None
-        exif_meta: ExifMeta | None = None
-        phash_val: str | None = None
+                info["sha256"] = existing_row.sha256
+                if existing_row.duration_seconds or existing_row.width:
+                    info["media_meta"] = MediaMeta(
+                        duration_seconds=existing_row.duration_seconds,
+                        width=existing_row.width,
+                        height=existing_row.height,
+                        video_codec=existing_row.video_codec,
+                        audio_codec=existing_row.audio_codec,
+                        bitrate=existing_row.bitrate,
+                    )
+                info["phash"] = existing_row.phash
+                if existing_row.date_original or existing_row.camera_make:
+                    info["exif_meta"] = ExifMeta(
+                        date_original=existing_row.date_original,
+                        camera_make=existing_row.camera_make,
+                        camera_model=existing_row.camera_model,
+                        image_width=existing_row.width,
+                        image_height=existing_row.height,
+                        gps_latitude=existing_row.gps_latitude,
+                        gps_longitude=existing_row.gps_longitude,
+                    )
 
         if is_new_or_changed and extract_media:
-            if is_media_ext(ext):
-                media_meta = probe_file(path)
-            if can_read_exif(ext):
-                exif_meta = read_exif(path)
-            if compute_phash and is_image_ext(ext):
-                phash_val = dhash(path)
-        elif existing_row:
-            # Preserve existing media metadata for unchanged files
-            media_meta = MediaMeta(
-                duration_seconds=existing_row.duration_seconds,
-                width=existing_row.width,
-                height=existing_row.height,
-                video_codec=existing_row.video_codec,
-                audio_codec=existing_row.audio_codec,
-                bitrate=existing_row.bitrate,
-            ) if existing_row.duration_seconds or existing_row.width else None
-            phash_val = existing_row.phash
-            if existing_row.date_original or existing_row.camera_make:
-                exif_meta = ExifMeta(
-                    date_original=existing_row.date_original,
-                    camera_make=existing_row.camera_make,
-                    camera_model=existing_row.camera_model,
-                    image_width=existing_row.width,
-                    image_height=existing_row.height,
-                    gps_latitude=existing_row.gps_latitude,
-                    gps_longitude=existing_row.gps_longitude,
-                )
+            paths_for_media.append((len(file_infos) - 1, path, ext))
+        if is_new_or_changed and compute_phash and is_image_ext(ext):
+            paths_for_phash.append((len(file_infos) - 1, path))
 
-        # Build row with media metadata
+    # ── Phase 2: Parallel SHA-256 hashing ─────────────────────────────
+    if paths_to_hash:
+        logger.info("Hashing %d files (workers=%d)", len(paths_to_hash), effective_workers)
+        if effective_workers > 1:
+            with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+                futures = {
+                    pool.submit(sha256_file, p): (fi_idx, sz)
+                    for fi_idx, p, sz in paths_to_hash
+                }
+                for future in as_completed(futures):
+                    fi_idx, sz = futures[future]
+                    try:
+                        file_infos[fi_idx]["sha256"] = future.result()
+                        stats.bytes_hashed += sz
+                    except OSError:
+                        logger.warning("Cannot hash %s", file_infos[fi_idx]["path"])
+        else:
+            for fi_idx, p, sz in paths_to_hash:
+                try:
+                    file_infos[fi_idx]["sha256"] = sha256_file(p)
+                    stats.bytes_hashed += sz
+                except OSError:
+                    logger.warning("Cannot hash %s", p)
+
+    # ── Phase 3: Parallel media probe + EXIF ──────────────────────────
+    if paths_for_media:
+        def _extract_media(fi_idx: int, p: Path, ext: str) -> tuple[int, MediaMeta | None, ExifMeta | None]:
+            mm = probe_file(p) if is_media_ext(ext) else None
+            em = read_exif(p) if can_read_exif(ext) else None
+            return fi_idx, mm, em
+
+        if effective_workers > 1:
+            with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+                futures = [pool.submit(_extract_media, fi_idx, p, ext) for fi_idx, p, ext in paths_for_media]
+                for future in as_completed(futures):
+                    fi_idx, mm, em = future.result()
+                    file_infos[fi_idx]["media_meta"] = mm
+                    file_infos[fi_idx]["exif_meta"] = em
+        else:
+            for fi_idx, p, ext in paths_for_media:
+                _, mm, em = _extract_media(fi_idx, p, ext)
+                file_infos[fi_idx]["media_meta"] = mm
+                file_infos[fi_idx]["exif_meta"] = em
+
+    # ── Phase 4: Parallel perceptual hash ─────────────────────────────
+    if paths_for_phash:
+        if effective_workers > 1:
+            with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+                futures = {pool.submit(dhash, p): fi_idx for fi_idx, p in paths_for_phash}
+                for future in as_completed(futures):
+                    fi_idx = futures[future]
+                    file_infos[fi_idx]["phash"] = future.result()
+        else:
+            for fi_idx, p in paths_for_phash:
+                file_infos[fi_idx]["phash"] = dhash(p)
+
+    # ── Phase 5: Sequential catalog upsert ────────────────────────────
+    for info in file_infos:
         row = CatalogFileRow(
             id=None,
-            path=path_str,
-            size=size,
-            mtime=mtime,
-            ctime=ctime,
-            birthtime=birthtime,
-            ext=ext,
-            sha256=sha256,
-            inode=inode,
-            device=device,
-            nlink=nlink,
-            asset_key=f"{path.parent}\t{path.stem}" if asset_key else None,
-            asset_component=is_component,
-            xattr_count=xattr,
-            first_seen="",  # upsert_file handles this
+            path=info["path_str"],
+            size=info["size"],
+            mtime=info["mtime"],
+            ctime=info["ctime"],
+            birthtime=info["birthtime"],
+            ext=info["ext"],
+            sha256=info["sha256"],
+            inode=info["inode"],
+            device=info["device"],
+            nlink=info["nlink"],
+            asset_key=(
+                f"{info['path'].parent}\t{info['path'].stem}"
+                if info["asset_key"] else None
+            ),
+            asset_component=info["is_component"],
+            xattr_count=info["xattr"],
+            first_seen="",
             last_scanned="",
         )
 
-        # Apply media metadata
+        media_meta = info["media_meta"]
+        exif_meta = info["exif_meta"]
+        phash_val = info["phash"]
+
         if media_meta:
             row.duration_seconds = media_meta.duration_seconds
             row.video_codec = media_meta.video_codec
@@ -189,9 +253,8 @@ def incremental_scan(
 
         catalog.upsert_file(row)
 
-        if stats.files_scanned % 1000 == 0:
-            catalog.commit()
-            logger.info("Progress: %d files scanned, %d new, %d changed", stats.files_scanned, stats.files_new, stats.files_changed)
+    if stats.files_scanned % 1000 == 0 and stats.files_scanned > 0:
+        catalog.commit()
 
     # Detect removals
     catalog_paths = catalog.all_paths()
@@ -207,6 +270,10 @@ def incremental_scan(
     # Detect duplicates from catalog
     _update_duplicate_groups(catalog)
 
+    # Optional deep ExifTool extraction for files without metadata
+    if extract_exiftool:
+        _run_exiftool_extraction(catalog, exiftool_bin)
+
     catalog.commit()
     catalog.finish_scan(scan_id, stats)
 
@@ -215,6 +282,36 @@ def incremental_scan(
         stats.files_scanned, stats.files_new, stats.files_changed, stats.files_removed, stats.bytes_hashed,
     )
     return stats
+
+
+def _run_exiftool_extraction(catalog: Catalog, exiftool_bin: str = "exiftool") -> int:
+    """Run batch ExifTool extraction for catalog files without metadata.
+
+    Returns number of files with metadata extracted.
+    """
+    import json
+
+    from .exiftool_extract import extract_all_metadata
+    from .metadata_richness import compute_richness
+
+    paths_needing = [Path(p) for p in catalog.paths_without_metadata()]
+    if not paths_needing:
+        logger.debug("All catalog files already have ExifTool metadata")
+        return 0
+
+    logger.info("Extracting ExifTool metadata for %d files", len(paths_needing))
+    all_meta = extract_all_metadata(paths_needing, bin_path=exiftool_bin)
+    extracted = 0
+    for path, meta in all_meta.items():
+        richness = compute_richness(meta)
+        catalog.upsert_file_metadata(str(path), json.dumps(meta))
+        catalog.update_metadata_richness(str(path), richness.total)
+        extracted += 1
+
+    if extracted:
+        catalog.commit()
+        logger.info("ExifTool metadata extracted for %d files", extracted)
+    return extracted
 
 
 def _update_duplicate_groups(catalog: Catalog) -> int:
