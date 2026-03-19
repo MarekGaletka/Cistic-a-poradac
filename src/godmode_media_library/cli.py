@@ -9,12 +9,14 @@ from .actions import apply_plan, promote_from_manifest, restore_from_log
 from .audit import collect_file_records, load_exact_duplicates, load_inventory, write_audit_run
 from .autolabel_people import auto_people_labels
 from .autolabel_place import auto_place_labels
+from .catalog import Catalog, default_catalog_path
 from .config import format_config, load_config
 from .delete_ops import apply_delete_plan, create_delete_plan
 from .logging_config import setup_logging
 from .models import PlanPolicy
 from .planning import create_plan, write_plan_files
 from .prune_recommend import recommend_prune
+from .scanner import incremental_scan
 from .tree_ops import apply_tree_plan, create_tree_plan, write_tree_plan
 from .utils import ensure_dir, utc_stamp
 
@@ -401,6 +403,84 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _get_catalog(args: argparse.Namespace) -> Catalog:
+    db_path = Path(args.catalog) if hasattr(args, "catalog") and args.catalog else default_catalog_path()
+    return Catalog(db_path)
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    roots = _parse_roots(args.roots)
+    catalog = _get_catalog(args)
+    with catalog:
+        stats = incremental_scan(
+            catalog,
+            roots,
+            force_rehash=args.force_rehash,
+            min_size_bytes=args.min_size_kb * 1024,
+        )
+    print(f"catalog={catalog.db_path}")
+    print(f"files_scanned={stats.files_scanned}")
+    print(f"files_new={stats.files_new}")
+    print(f"files_changed={stats.files_changed}")
+    print(f"files_removed={stats.files_removed}")
+    print(f"bytes_hashed={stats.bytes_hashed}")
+    return 0
+
+
+def cmd_query(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args)
+    with catalog:
+        if args.duplicates:
+            groups = catalog.query_duplicates()
+            for group_id, files in groups:
+                for f in files:
+                    print(f"{group_id}\t{f.size}\t{f.path}")
+            print(f"\n# {len(groups)} duplicate groups")
+            return 0
+
+        rows = catalog.query_files(
+            ext=args.ext,
+            date_from=args.date_from,
+            date_to=args.date_to,
+            min_size=args.min_size * 1024 if args.min_size else None,
+            max_size=args.max_size * 1024 if args.max_size else None,
+            path_contains=args.path_contains,
+            limit=args.limit,
+        )
+        for f in rows:
+            print(f"{f.path}\t{f.size}\t{f.ext}\t{f.sha256 or ''}")
+        print(f"\n# {len(rows)} files")
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args)
+    with catalog:
+        s = catalog.stats()
+    print(json.dumps(s, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_catalog_import(args: argparse.Namespace) -> int:
+    inventory_path = Path(args.inventory).expanduser().resolve()
+    catalog = _get_catalog(args)
+    with catalog:
+        count = catalog.import_from_inventory_tsv(inventory_path)
+    print(f"catalog={catalog.db_path}")
+    print(f"imported={count}")
+    return 0
+
+
+def cmd_catalog_export(args: argparse.Namespace) -> int:
+    out_path = Path(args.out).expanduser().resolve()
+    catalog = _get_catalog(args)
+    with catalog:
+        count = catalog.export_inventory_tsv(out_path)
+    print(f"exported={count}")
+    print(f"path={out_path}")
+    return 0
+
+
 def cmd_delete_apply(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan).expanduser().resolve()
     quarantine_root = Path(args.quarantine_root).expanduser().resolve()
@@ -435,6 +515,43 @@ def build_parser() -> argparse.ArgumentParser:
 
     pcfg = sub.add_parser("config", help="Show resolved configuration")
     pcfg.set_defaults(func=cmd_config_show)
+
+    # ── Catalog commands ─────────────────────────────────────────────
+
+    ps = sub.add_parser("scan", help="Incremental scan: update catalog from filesystem")
+    ps.add_argument("--roots", nargs="+", required=True, help="Root directories to scan")
+    ps.add_argument("--catalog", default=None, help="Catalog DB path (default: ~/.config/gml/catalog.db)")
+    ps.add_argument("--force-rehash", action="store_true", help="Recompute SHA-256 for all files")
+    ps.add_argument("--min-size-kb", type=int, default=0, help="Min file size for hashing (KB)")
+    ps.set_defaults(func=cmd_scan)
+
+    pq = sub.add_parser("query", help="Search files in catalog")
+    pq.add_argument("--catalog", default=None, help="Catalog DB path")
+    pq.add_argument("--ext", default=None, help="Filter by extension (e.g. jpg)")
+    pq.add_argument("--date-from", default=None, help="Filter by date (YYYY-MM-DD)")
+    pq.add_argument("--date-to", default=None, help="Filter by date (YYYY-MM-DD)")
+    pq.add_argument("--min-size", type=int, default=None, help="Min file size (KB)")
+    pq.add_argument("--max-size", type=int, default=None, help="Max file size (KB)")
+    pq.add_argument("--path-contains", default=None, help="Path substring filter")
+    pq.add_argument("--duplicates", action="store_true", help="List duplicate groups")
+    pq.add_argument("--limit", type=int, default=10000, help="Max results")
+    pq.set_defaults(func=cmd_query)
+
+    pst = sub.add_parser("stats", help="Show catalog statistics")
+    pst.add_argument("--catalog", default=None, help="Catalog DB path")
+    pst.set_defaults(func=cmd_stats)
+
+    pci = sub.add_parser("catalog-import", help="Import audit inventory TSV into catalog")
+    pci.add_argument("--inventory", required=True, help="Path to file_inventory.tsv")
+    pci.add_argument("--catalog", default=None, help="Catalog DB path")
+    pci.set_defaults(func=cmd_catalog_import)
+
+    pce = sub.add_parser("catalog-export", help="Export catalog to inventory TSV")
+    pce.add_argument("--out", required=True, help="Output TSV path")
+    pce.add_argument("--catalog", default=None, help="Catalog DB path")
+    pce.set_defaults(func=cmd_catalog_export)
+
+    # ── Legacy commands ──────────────────────────────────────────────
 
     pa = sub.add_parser("audit", help="Scan roots, detect duplicates, create safe plan")
     pa.add_argument("--roots", nargs="+", required=True, help="Root directories to scan")

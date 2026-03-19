@@ -1,0 +1,439 @@
+"""Persistent SQLite catalog for GOD MODE Media Library."""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+from dataclasses import dataclass
+from pathlib import Path
+
+from .utils import utc_stamp
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 1
+
+_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS files (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    path            TEXT    NOT NULL UNIQUE,
+    size            INTEGER NOT NULL,
+    mtime           REAL    NOT NULL,
+    ctime           REAL    NOT NULL,
+    birthtime       REAL,
+    ext             TEXT    NOT NULL DEFAULT '',
+    sha256          TEXT,
+    inode           INTEGER,
+    device          INTEGER,
+    nlink           INTEGER DEFAULT 1,
+    asset_key       TEXT,
+    asset_component INTEGER DEFAULT 0,
+    xattr_count     INTEGER DEFAULT 0,
+    first_seen      TEXT    NOT NULL,
+    last_scanned    TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
+CREATE INDEX IF NOT EXISTS idx_files_ext    ON files(ext);
+CREATE INDEX IF NOT EXISTS idx_files_size   ON files(size);
+
+CREATE TABLE IF NOT EXISTS labels (
+    file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    people     TEXT    NOT NULL DEFAULT '',
+    place      TEXT    NOT NULL DEFAULT '',
+    updated_at TEXT    NOT NULL,
+    PRIMARY KEY (file_id)
+);
+
+CREATE TABLE IF NOT EXISTS scans (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    root           TEXT    NOT NULL,
+    started_at     TEXT    NOT NULL,
+    finished_at    TEXT,
+    files_scanned  INTEGER DEFAULT 0,
+    files_new      INTEGER DEFAULT 0,
+    files_changed  INTEGER DEFAULT 0,
+    files_removed  INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS duplicates (
+    group_id  TEXT    NOT NULL,
+    file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    is_primary INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_dup_group ON duplicates(group_id);
+"""
+
+
+@dataclass
+class CatalogFileRow:
+    """Represents a file row in the catalog."""
+
+    id: int | None
+    path: str
+    size: int
+    mtime: float
+    ctime: float
+    birthtime: float | None
+    ext: str
+    sha256: str | None
+    inode: int | None
+    device: int | None
+    nlink: int
+    asset_key: str | None
+    asset_component: bool
+    xattr_count: int
+    first_seen: str
+    last_scanned: str
+
+
+@dataclass
+class ScanStats:
+    """Statistics for an incremental scan."""
+
+    root: str
+    files_scanned: int = 0
+    files_new: int = 0
+    files_changed: int = 0
+    files_removed: int = 0
+    bytes_hashed: int = 0
+
+
+class Catalog:
+    """SQLite-backed persistent catalog."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn: sqlite3.Connection | None = None
+
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
+
+    def open(self) -> None:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.executescript(_SCHEMA_SQL)
+        # Set schema version if not present
+        cur = self._conn.execute("SELECT value FROM meta WHERE key='schema_version'")
+        row = cur.fetchone()
+        if row is None:
+            self._conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            self._conn.commit()
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self) -> Catalog:
+        self.open()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            raise RuntimeError("Catalog is not open. Call open() or use as context manager.")
+        return self._conn
+
+    # ── File operations ──────────────────────────────────────────────
+
+    def upsert_file(self, row: CatalogFileRow) -> int:
+        """Insert or update a file record. Returns the row id."""
+        now = utc_stamp()
+        cur = self.conn.execute("SELECT id, first_seen FROM files WHERE path = ?", (row.path,))
+        existing = cur.fetchone()
+
+        if existing:
+            file_id = existing[0]
+            first_seen = existing[1]
+            self.conn.execute(
+                """UPDATE files SET
+                    size=?, mtime=?, ctime=?, birthtime=?, ext=?, sha256=?,
+                    inode=?, device=?, nlink=?, asset_key=?, asset_component=?,
+                    xattr_count=?, first_seen=?, last_scanned=?
+                WHERE id=?""",
+                (
+                    row.size, row.mtime, row.ctime, row.birthtime, row.ext, row.sha256,
+                    row.inode, row.device, row.nlink, row.asset_key, int(row.asset_component),
+                    row.xattr_count, first_seen, now, file_id,
+                ),
+            )
+            return file_id
+        else:
+            cur = self.conn.execute(
+                """INSERT INTO files
+                    (path, size, mtime, ctime, birthtime, ext, sha256,
+                     inode, device, nlink, asset_key, asset_component,
+                     xattr_count, first_seen, last_scanned)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row.path, row.size, row.mtime, row.ctime, row.birthtime, row.ext, row.sha256,
+                    row.inode, row.device, row.nlink, row.asset_key, int(row.asset_component),
+                    row.xattr_count, now, now,
+                ),
+            )
+            return cur.lastrowid  # type: ignore[return-value]
+
+    def get_file_by_path(self, path: str) -> CatalogFileRow | None:
+        cur = self.conn.execute("SELECT * FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return self._row_to_catalog_file(row)
+
+    def get_file_mtime_size(self, path: str) -> tuple[float, int] | None:
+        """Fast lookup: returns (mtime, size) or None."""
+        cur = self.conn.execute("SELECT mtime, size FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else None
+
+    def mark_removed(self, paths: list[str]) -> int:
+        """Delete catalog entries for removed files. Returns count deleted."""
+        if not paths:
+            return 0
+        placeholders = ",".join("?" for _ in paths)
+        cur = self.conn.execute(f"DELETE FROM files WHERE path IN ({placeholders})", paths)  # noqa: S608
+        return cur.rowcount
+
+    def commit(self) -> None:
+        self.conn.commit()
+
+    # ── Scan tracking ────────────────────────────────────────────────
+
+    def start_scan(self, root: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO scans (root, started_at) VALUES (?, ?)",
+            (root, utc_stamp()),
+        )
+        self.conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def finish_scan(self, scan_id: int, stats: ScanStats) -> None:
+        self.conn.execute(
+            """UPDATE scans SET
+                finished_at=?, files_scanned=?, files_new=?, files_changed=?, files_removed=?
+            WHERE id=?""",
+            (utc_stamp(), stats.files_scanned, stats.files_new, stats.files_changed, stats.files_removed, scan_id),
+        )
+        self.conn.commit()
+
+    # ── Duplicate tracking ───────────────────────────────────────────
+
+    def upsert_duplicate_group(self, group_id: str, file_ids: list[int], primary_id: int | None = None) -> None:
+        self.conn.execute("DELETE FROM duplicates WHERE group_id = ?", (group_id,))
+        for fid in file_ids:
+            is_primary = 1 if fid == primary_id else 0
+            self.conn.execute(
+                "INSERT INTO duplicates (group_id, file_id, is_primary) VALUES (?, ?, ?)",
+                (group_id, fid, is_primary),
+            )
+
+    # ── Label operations ─────────────────────────────────────────────
+
+    def upsert_label(self, file_id: int, people: str = "", place: str = "") -> None:
+        self.conn.execute(
+            """INSERT INTO labels (file_id, people, place, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(file_id) DO UPDATE SET
+                   people=excluded.people, place=excluded.place, updated_at=excluded.updated_at""",
+            (file_id, people, place, utc_stamp()),
+        )
+
+    # ── Query operations ─────────────────────────────────────────────
+
+    def query_files(
+        self,
+        *,
+        ext: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        min_size: int | None = None,
+        max_size: int | None = None,
+        path_contains: str | None = None,
+        has_sha256: bool | None = None,
+        limit: int = 10000,
+    ) -> list[CatalogFileRow]:
+        conditions: list[str] = []
+        params: list[object] = []
+
+        if ext is not None:
+            conditions.append("ext = ?")
+            params.append(ext.lower().lstrip("."))
+        if date_from is not None:
+            conditions.append("birthtime >= ?")
+            params.append(_date_to_timestamp(date_from))
+        if date_to is not None:
+            conditions.append("birthtime <= ?")
+            params.append(_date_to_timestamp(date_to) + 86400)  # end of day
+        if min_size is not None:
+            conditions.append("size >= ?")
+            params.append(min_size)
+        if max_size is not None:
+            conditions.append("size <= ?")
+            params.append(max_size)
+        if path_contains is not None:
+            conditions.append("path LIKE ?")
+            params.append(f"%{path_contains}%")
+        if has_sha256 is True:
+            conditions.append("sha256 IS NOT NULL")
+        elif has_sha256 is False:
+            conditions.append("sha256 IS NULL")
+
+        where = " AND ".join(conditions) if conditions else "1=1"
+        sql = f"SELECT * FROM files WHERE {where} ORDER BY path LIMIT ?"  # noqa: S608
+        params.append(limit)
+
+        cur = self.conn.execute(sql, params)
+        return [self._row_to_catalog_file(row) for row in cur.fetchall()]
+
+    def query_duplicates(self) -> list[tuple[str, list[CatalogFileRow]]]:
+        """Return duplicate groups with their file rows."""
+        cur = self.conn.execute(
+            """SELECT d.group_id, f.*
+               FROM duplicates d JOIN files f ON d.file_id = f.id
+               ORDER BY d.group_id, f.path"""
+        )
+        groups: dict[str, list[CatalogFileRow]] = {}
+        for row in cur.fetchall():
+            group_id = row[0]
+            file_row = self._row_to_catalog_file(row[1:])
+            groups.setdefault(group_id, []).append(file_row)
+        return list(groups.items())
+
+    def stats(self) -> dict[str, object]:
+        """Return library statistics from catalog."""
+        conn = self.conn
+        total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        total_size = conn.execute("SELECT COALESCE(SUM(size), 0) FROM files").fetchone()[0]
+        hashed_files = conn.execute("SELECT COUNT(*) FROM files WHERE sha256 IS NOT NULL").fetchone()[0]
+        dup_groups = conn.execute("SELECT COUNT(DISTINCT group_id) FROM duplicates").fetchone()[0]
+        dup_files = conn.execute("SELECT COUNT(*) FROM duplicates").fetchone()[0]
+        labeled_files = conn.execute("SELECT COUNT(*) FROM labels WHERE people != '' OR place != ''").fetchone()[0]
+        scans = conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
+        last_scan = conn.execute("SELECT MAX(finished_at) FROM scans").fetchone()[0]
+
+        ext_counts = {}
+        for row in conn.execute("SELECT ext, COUNT(*) as cnt FROM files GROUP BY ext ORDER BY cnt DESC LIMIT 20"):
+            ext_counts[row[0] or "(noext)"] = row[1]
+
+        return {
+            "total_files": total_files,
+            "total_size_bytes": total_size,
+            "hashed_files": hashed_files,
+            "duplicate_groups": dup_groups,
+            "duplicate_files": dup_files,
+            "labeled_files": labeled_files,
+            "total_scans": scans,
+            "last_scan": last_scan,
+            "top_extensions": ext_counts,
+        }
+
+    def all_paths(self) -> set[str]:
+        """Return all file paths currently in catalog."""
+        cur = self.conn.execute("SELECT path FROM files")
+        return {row[0] for row in cur.fetchall()}
+
+    # ── Export / Import ──────────────────────────────────────────────
+
+    def export_inventory_tsv(self, out_path: Path) -> int:
+        """Export catalog to TSV matching audit file_inventory format. Returns row count."""
+        from .utils import write_tsv
+
+        header = [
+            "path", "size", "mtime", "ctime", "birthtime", "ext",
+            "meaningful_xattr_count", "asset_key", "asset_component",
+        ]
+        cur = self.conn.execute("SELECT * FROM files ORDER BY path")
+        rows = []
+        for db_row in cur.fetchall():
+            f = self._row_to_catalog_file(db_row)
+            rows.append((
+                f.path, f.size, f"{f.mtime:.6f}", f"{f.ctime:.6f}",
+                "" if f.birthtime is None else f"{f.birthtime:.6f}",
+                f.ext, f.xattr_count, f.asset_key or "", int(f.asset_component),
+            ))
+        write_tsv(out_path, header, rows)
+        return len(rows)
+
+    def import_from_inventory_tsv(self, inventory_path: Path) -> int:
+        """Import from audit file_inventory.tsv. Returns imported count."""
+        from .utils import read_tsv_dict
+
+        rows = read_tsv_dict(inventory_path)
+        now = utc_stamp()
+        count = 0
+        for row in rows:
+            birth_str = row.get("birthtime", "")
+            cf = CatalogFileRow(
+                id=None,
+                path=row["path"],
+                size=int(row["size"]),
+                mtime=float(row["mtime"]),
+                ctime=float(row["ctime"]),
+                birthtime=float(birth_str) if birth_str else None,
+                ext=row.get("ext", ""),
+                sha256=None,
+                inode=None,
+                device=None,
+                nlink=1,
+                asset_key=row.get("asset_key") or None,
+                asset_component=bool(int(row.get("asset_component", "0"))),
+                xattr_count=int(row.get("meaningful_xattr_count", "0")),
+                first_seen=now,
+                last_scanned=now,
+            )
+            self.upsert_file(cf)
+            count += 1
+        self.commit()
+        return count
+
+    # ── Internal ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_catalog_file(row: tuple) -> CatalogFileRow:
+        return CatalogFileRow(
+            id=row[0],
+            path=row[1],
+            size=row[2],
+            mtime=row[3],
+            ctime=row[4],
+            birthtime=row[5],
+            ext=row[6],
+            sha256=row[7],
+            inode=row[8],
+            device=row[9],
+            nlink=row[10],
+            asset_key=row[11],
+            asset_component=bool(row[12]),
+            xattr_count=row[13],
+            first_seen=row[14],
+            last_scanned=row[15],
+        )
+
+
+def default_catalog_path() -> Path:
+    """Default catalog location: ~/.config/gml/catalog.db"""
+    return Path.home() / ".config" / "gml" / "catalog.db"
+
+
+def _date_to_timestamp(date_str: str) -> float:
+    """Convert YYYY-MM-DD to Unix timestamp."""
+    import datetime as dt
+
+    d = dt.datetime.strptime(date_str, "%Y-%m-%d")
+    return d.timestamp()
