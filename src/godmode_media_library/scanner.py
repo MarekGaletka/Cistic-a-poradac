@@ -7,6 +7,9 @@ from pathlib import Path
 
 from .asset_sets import build_asset_membership
 from .catalog import Catalog, CatalogFileRow, ScanStats
+from .exif_reader import ExifMeta, can_read_exif, read_exif
+from .media_probe import MediaMeta, is_media_ext, probe_file
+from .perceptual_hash import dhash, is_image_ext
 from .utils import iter_files, meaningful_xattr_count, safe_stat_birthtime, sha256_file
 
 logger = logging.getLogger(__name__)
@@ -18,6 +21,8 @@ def incremental_scan(
     *,
     force_rehash: bool = False,
     min_size_bytes: int = 0,
+    extract_media: bool = True,
+    compute_phash: bool = True,
 ) -> ScanStats:
     """Scan filesystem roots and update catalog incrementally.
 
@@ -30,6 +35,8 @@ def incremental_scan(
         roots: Directories to scan recursively.
         force_rehash: If True, recompute SHA-256 for all files regardless of mtime/size.
         min_size_bytes: Minimum file size for hashing (smaller files get sha256=None).
+        extract_media: If True, extract media metadata (ffprobe + EXIF) for new/changed files.
+        compute_phash: If True, compute perceptual hash for image files.
     """
     stats = ScanStats(root=";".join(str(r) for r in roots))
 
@@ -72,15 +79,18 @@ def incremental_scan(
         # Check if file is already in catalog and unchanged
         existing = catalog.get_file_mtime_size(path_str)
         needs_hash = force_rehash
+        is_new_or_changed = False
 
         if existing is None:
             # New file
             stats.files_new += 1
             needs_hash = True
+            is_new_or_changed = True
         elif existing[0] != mtime or existing[1] != size:
             # Changed file
             stats.files_changed += 1
             needs_hash = True
+            is_new_or_changed = True
 
         # Compute hash if needed
         sha256 = None
@@ -91,13 +101,49 @@ def incremental_scan(
             except OSError:
                 logger.warning("Cannot hash %s", path)
 
-        # If not rehashing, preserve existing hash
+        # If not rehashing, preserve existing hash and media metadata
+        existing_row = None
         if not needs_hash and existing is not None:
             existing_row = catalog.get_file_by_path(path_str)
             if existing_row:
                 sha256 = existing_row.sha256
 
-        catalog.upsert_file(CatalogFileRow(
+        # Extract media metadata for new/changed files
+        media_meta: MediaMeta | None = None
+        exif_meta: ExifMeta | None = None
+        phash_val: str | None = None
+
+        if is_new_or_changed and extract_media:
+            if is_media_ext(ext):
+                media_meta = probe_file(path)
+            if can_read_exif(ext):
+                exif_meta = read_exif(path)
+            if compute_phash and is_image_ext(ext):
+                phash_val = dhash(path)
+        elif existing_row:
+            # Preserve existing media metadata for unchanged files
+            media_meta = MediaMeta(
+                duration_seconds=existing_row.duration_seconds,
+                width=existing_row.width,
+                height=existing_row.height,
+                video_codec=existing_row.video_codec,
+                audio_codec=existing_row.audio_codec,
+                bitrate=existing_row.bitrate,
+            ) if existing_row.duration_seconds or existing_row.width else None
+            phash_val = existing_row.phash
+            if existing_row.date_original or existing_row.camera_make:
+                exif_meta = ExifMeta(
+                    date_original=existing_row.date_original,
+                    camera_make=existing_row.camera_make,
+                    camera_model=existing_row.camera_model,
+                    image_width=existing_row.width,
+                    image_height=existing_row.height,
+                    gps_latitude=existing_row.gps_latitude,
+                    gps_longitude=existing_row.gps_longitude,
+                )
+
+        # Build row with media metadata
+        row = CatalogFileRow(
             id=None,
             path=path_str,
             size=size,
@@ -114,7 +160,34 @@ def incremental_scan(
             xattr_count=xattr,
             first_seen="",  # upsert_file handles this
             last_scanned="",
-        ))
+        )
+
+        # Apply media metadata
+        if media_meta:
+            row.duration_seconds = media_meta.duration_seconds
+            row.video_codec = media_meta.video_codec
+            row.audio_codec = media_meta.audio_codec
+            row.bitrate = media_meta.bitrate
+            if media_meta.width:
+                row.width = media_meta.width
+            if media_meta.height:
+                row.height = media_meta.height
+
+        if exif_meta:
+            row.date_original = exif_meta.date_original
+            row.camera_make = exif_meta.camera_make
+            row.camera_model = exif_meta.camera_model
+            if exif_meta.image_width and not row.width:
+                row.width = exif_meta.image_width
+            if exif_meta.image_height and not row.height:
+                row.height = exif_meta.image_height
+            row.gps_latitude = exif_meta.gps_latitude
+            row.gps_longitude = exif_meta.gps_longitude
+
+        if phash_val:
+            row.phash = phash_val
+
+        catalog.upsert_file(row)
 
         if stats.files_scanned % 1000 == 0:
             catalog.commit()

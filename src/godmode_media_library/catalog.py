@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -35,12 +36,26 @@ CREATE TABLE IF NOT EXISTS files (
     asset_component INTEGER DEFAULT 0,
     xattr_count     INTEGER DEFAULT 0,
     first_seen      TEXT    NOT NULL,
-    last_scanned    TEXT    NOT NULL
+    last_scanned    TEXT    NOT NULL,
+    -- Media metadata (Phase 3)
+    duration_seconds REAL,
+    width           INTEGER,
+    height          INTEGER,
+    video_codec     TEXT,
+    audio_codec     TEXT,
+    bitrate         INTEGER,
+    phash           TEXT,
+    date_original   TEXT,
+    camera_make     TEXT,
+    camera_model    TEXT,
+    gps_latitude    REAL,
+    gps_longitude   REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
 CREATE INDEX IF NOT EXISTS idx_files_ext    ON files(ext);
 CREATE INDEX IF NOT EXISTS idx_files_size   ON files(size);
+CREATE INDEX IF NOT EXISTS idx_files_phash  ON files(phash);
 
 CREATE TABLE IF NOT EXISTS labels (
     file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -91,6 +106,19 @@ class CatalogFileRow:
     xattr_count: int
     first_seen: str
     last_scanned: str
+    # Media metadata (Phase 3)
+    duration_seconds: float | None = None
+    width: int | None = None
+    height: int | None = None
+    video_codec: str | None = None
+    audio_codec: str | None = None
+    bitrate: int | None = None
+    phash: str | None = None
+    date_original: str | None = None
+    camera_make: str | None = None
+    camera_model: str | None = None
+    gps_latitude: float | None = None
+    gps_longitude: float | None = None
 
 
 @dataclass
@@ -122,7 +150,7 @@ class Catalog:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA_SQL)
-        # Set schema version if not present
+        # Schema version management and migration
         cur = self._conn.execute("SELECT value FROM meta WHERE key='schema_version'")
         row = cur.fetchone()
         if row is None:
@@ -130,6 +158,40 @@ class Catalog:
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
+            self._conn.commit()
+        else:
+            current_version = int(row[0])
+            if current_version < SCHEMA_VERSION:
+                self._migrate(current_version)
+                self._conn.execute(
+                    "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                    (str(SCHEMA_VERSION),),
+                )
+                self._conn.commit()
+
+    def _migrate(self, from_version: int) -> None:
+        """Apply schema migrations from from_version to SCHEMA_VERSION."""
+        assert self._conn is not None
+        if from_version < 2:
+            logger.info("Migrating catalog schema v%d → v2: adding media metadata columns", from_version)
+            media_columns = [
+                ("duration_seconds", "REAL"),
+                ("width", "INTEGER"),
+                ("height", "INTEGER"),
+                ("video_codec", "TEXT"),
+                ("audio_codec", "TEXT"),
+                ("bitrate", "INTEGER"),
+                ("phash", "TEXT"),
+                ("date_original", "TEXT"),
+                ("camera_make", "TEXT"),
+                ("camera_model", "TEXT"),
+                ("gps_latitude", "REAL"),
+                ("gps_longitude", "REAL"),
+            ]
+            for col_name, col_type in media_columns:
+                with contextlib.suppress(Exception):
+                    self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash)")
             self._conn.commit()
 
     def close(self) -> None:
@@ -158,6 +220,12 @@ class Catalog:
         cur = self.conn.execute("SELECT id, first_seen FROM files WHERE path = ?", (row.path,))
         existing = cur.fetchone()
 
+        media_cols = (
+            row.duration_seconds, row.width, row.height, row.video_codec,
+            row.audio_codec, row.bitrate, row.phash, row.date_original,
+            row.camera_make, row.camera_model, row.gps_latitude, row.gps_longitude,
+        )
+
         if existing:
             file_id = existing[0]
             first_seen = existing[1]
@@ -165,12 +233,17 @@ class Catalog:
                 """UPDATE files SET
                     size=?, mtime=?, ctime=?, birthtime=?, ext=?, sha256=?,
                     inode=?, device=?, nlink=?, asset_key=?, asset_component=?,
-                    xattr_count=?, first_seen=?, last_scanned=?
+                    xattr_count=?, first_seen=?, last_scanned=?,
+                    duration_seconds=?, width=?, height=?, video_codec=?,
+                    audio_codec=?, bitrate=?, phash=?, date_original=?,
+                    camera_make=?, camera_model=?, gps_latitude=?, gps_longitude=?
                 WHERE id=?""",
                 (
                     row.size, row.mtime, row.ctime, row.birthtime, row.ext, row.sha256,
                     row.inode, row.device, row.nlink, row.asset_key, int(row.asset_component),
-                    row.xattr_count, first_seen, now, file_id,
+                    row.xattr_count, first_seen, now,
+                    *media_cols,
+                    file_id,
                 ),
             )
             return file_id
@@ -179,12 +252,16 @@ class Catalog:
                 """INSERT INTO files
                     (path, size, mtime, ctime, birthtime, ext, sha256,
                      inode, device, nlink, asset_key, asset_component,
-                     xattr_count, first_seen, last_scanned)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     xattr_count, first_seen, last_scanned,
+                     duration_seconds, width, height, video_codec,
+                     audio_codec, bitrate, phash, date_original,
+                     camera_make, camera_model, gps_latitude, gps_longitude)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     row.path, row.size, row.mtime, row.ctime, row.birthtime, row.ext, row.sha256,
                     row.inode, row.device, row.nlink, row.asset_key, int(row.asset_component),
                     row.xattr_count, now, now,
+                    *media_cols,
                 ),
             )
             return cur.lastrowid  # type: ignore[return-value]
@@ -266,6 +343,12 @@ class Catalog:
         max_size: int | None = None,
         path_contains: str | None = None,
         has_sha256: bool | None = None,
+        camera: str | None = None,
+        min_duration: float | None = None,
+        max_duration: float | None = None,
+        min_width: int | None = None,
+        has_gps: bool | None = None,
+        has_phash: bool | None = None,
         limit: int = 10000,
     ) -> list[CatalogFileRow]:
         conditions: list[str] = []
@@ -293,6 +376,26 @@ class Catalog:
             conditions.append("sha256 IS NOT NULL")
         elif has_sha256 is False:
             conditions.append("sha256 IS NULL")
+        if camera is not None:
+            conditions.append("(camera_make LIKE ? OR camera_model LIKE ?)")
+            params.extend([f"%{camera}%", f"%{camera}%"])
+        if min_duration is not None:
+            conditions.append("duration_seconds >= ?")
+            params.append(min_duration)
+        if max_duration is not None:
+            conditions.append("duration_seconds <= ?")
+            params.append(max_duration)
+        if min_width is not None:
+            conditions.append("width >= ?")
+            params.append(min_width)
+        if has_gps is True:
+            conditions.append("gps_latitude IS NOT NULL")
+        elif has_gps is False:
+            conditions.append("gps_latitude IS NULL")
+        if has_phash is True:
+            conditions.append("phash IS NOT NULL")
+        elif has_phash is False:
+            conditions.append("phash IS NULL")
 
         where = " AND ".join(conditions) if conditions else "1=1"
         sql = f"SELECT * FROM files WHERE {where} ORDER BY path LIMIT ?"  # noqa: S608
@@ -315,6 +418,11 @@ class Catalog:
             groups.setdefault(group_id, []).append(file_row)
         return list(groups.items())
 
+    def get_all_phashes(self) -> dict[str, str]:
+        """Return dict of path → phash for all files with a phash."""
+        cur = self.conn.execute("SELECT path, phash FROM files WHERE phash IS NOT NULL")
+        return {row[0]: row[1] for row in cur.fetchall()}
+
     def stats(self) -> dict[str, object]:
         """Return library statistics from catalog."""
         conn = self.conn
@@ -326,21 +434,36 @@ class Catalog:
         labeled_files = conn.execute("SELECT COUNT(*) FROM labels WHERE people != '' OR place != ''").fetchone()[0]
         scans = conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
         last_scan = conn.execute("SELECT MAX(finished_at) FROM scans").fetchone()[0]
+        phashed_files = conn.execute("SELECT COUNT(*) FROM files WHERE phash IS NOT NULL").fetchone()[0]
+        media_probed = conn.execute("SELECT COUNT(*) FROM files WHERE duration_seconds IS NOT NULL OR width IS NOT NULL").fetchone()[0]
+        gps_files = conn.execute("SELECT COUNT(*) FROM files WHERE gps_latitude IS NOT NULL").fetchone()[0]
 
         ext_counts = {}
         for row in conn.execute("SELECT ext, COUNT(*) as cnt FROM files GROUP BY ext ORDER BY cnt DESC LIMIT 20"):
             ext_counts[row[0] or "(noext)"] = row[1]
 
+        camera_counts = {}
+        cam_sql = (
+            "SELECT camera_model, COUNT(*) as cnt FROM files "
+            "WHERE camera_model IS NOT NULL GROUP BY camera_model ORDER BY cnt DESC LIMIT 10"
+        )
+        for row in conn.execute(cam_sql):
+            camera_counts[row[0]] = row[1]
+
         return {
             "total_files": total_files,
             "total_size_bytes": total_size,
             "hashed_files": hashed_files,
+            "phashed_files": phashed_files,
+            "media_probed": media_probed,
+            "gps_files": gps_files,
             "duplicate_groups": dup_groups,
             "duplicate_files": dup_files,
             "labeled_files": labeled_files,
             "total_scans": scans,
             "last_scan": last_scan,
             "top_extensions": ext_counts,
+            "top_cameras": camera_counts,
         }
 
     def all_paths(self) -> set[str]:
@@ -423,6 +546,18 @@ class Catalog:
             xattr_count=row[13],
             first_seen=row[14],
             last_scanned=row[15],
+            duration_seconds=row[16] if len(row) > 16 else None,
+            width=row[17] if len(row) > 17 else None,
+            height=row[18] if len(row) > 18 else None,
+            video_codec=row[19] if len(row) > 19 else None,
+            audio_codec=row[20] if len(row) > 20 else None,
+            bitrate=row[21] if len(row) > 21 else None,
+            phash=row[22] if len(row) > 22 else None,
+            date_original=row[23] if len(row) > 23 else None,
+            camera_make=row[24] if len(row) > 24 else None,
+            camera_model=row[25] if len(row) > 25 else None,
+            gps_latitude=row[26] if len(row) > 26 else None,
+            gps_longitude=row[27] if len(row) > 27 else None,
         )
 
 

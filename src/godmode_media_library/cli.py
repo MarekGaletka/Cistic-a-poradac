@@ -14,11 +14,12 @@ from .config import format_config, load_config
 from .delete_ops import apply_delete_plan, create_delete_plan
 from .logging_config import setup_logging
 from .models import PlanPolicy
+from .perceptual_hash import find_similar
 from .planning import create_plan, write_plan_files
 from .prune_recommend import recommend_prune
 from .scanner import incremental_scan
 from .tree_ops import apply_tree_plan, create_tree_plan, write_tree_plan
-from .utils import ensure_dir, utc_stamp
+from .utils import ensure_dir, utc_stamp, write_tsv
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +418,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
             roots,
             force_rehash=args.force_rehash,
             min_size_bytes=args.min_size_kb * 1024,
+            extract_media=not args.no_media,
+            compute_phash=not args.no_phash,
         )
     print(f"catalog={catalog.db_path}")
     print(f"files_scanned={stats.files_scanned}")
@@ -445,10 +448,20 @@ def cmd_query(args: argparse.Namespace) -> int:
             min_size=args.min_size * 1024 if args.min_size else None,
             max_size=args.max_size * 1024 if args.max_size else None,
             path_contains=args.path_contains,
+            camera=args.camera,
+            min_duration=args.duration_min,
+            max_duration=args.duration_max,
+            min_width=args.resolution_min,
+            has_gps=False if args.no_gps else None,
             limit=args.limit,
         )
         for f in rows:
-            print(f"{f.path}\t{f.size}\t{f.ext}\t{f.sha256 or ''}")
+            extra = ""
+            if f.camera_model:
+                extra += f"\t{f.camera_model}"
+            if f.duration_seconds:
+                extra += f"\t{f.duration_seconds:.1f}s"
+            print(f"{f.path}\t{f.size}\t{f.ext}\t{f.sha256 or ''}{extra}")
         print(f"\n# {len(rows)} files")
     return 0
 
@@ -478,6 +491,29 @@ def cmd_catalog_export(args: argparse.Namespace) -> int:
         count = catalog.export_inventory_tsv(out_path)
     print(f"exported={count}")
     print(f"path={out_path}")
+    return 0
+
+
+def cmd_similar(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args)
+    out_path = Path(args.out).expanduser().resolve() if args.out else None
+    with catalog:
+        hashes = catalog.get_all_phashes()
+        if not hashes:
+            print("No perceptual hashes in catalog. Run 'gml scan' first.")
+            return 0
+        pairs = find_similar(hashes, threshold=args.threshold)
+        for pair in pairs:
+            print(f"dist={pair.distance}\t{pair.path_a}\t{pair.path_b}")
+        if out_path:
+            ensure_dir(out_path.parent)
+            write_tsv(
+                out_path,
+                ["distance", "path_a", "path_b", "hash_a", "hash_b"],
+                [(p.distance, p.path_a, p.path_b, p.hash_a, p.hash_b) for p in pairs],
+            )
+            print(f"out={out_path}")
+        print(f"\n# {len(pairs)} similar pairs (threshold={args.threshold})")
     return 0
 
 
@@ -523,6 +559,8 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--catalog", default=None, help="Catalog DB path (default: ~/.config/gml/catalog.db)")
     ps.add_argument("--force-rehash", action="store_true", help="Recompute SHA-256 for all files")
     ps.add_argument("--min-size-kb", type=int, default=0, help="Min file size for hashing (KB)")
+    ps.add_argument("--no-media", action="store_true", help="Skip media metadata extraction (ffprobe/EXIF)")
+    ps.add_argument("--no-phash", action="store_true", help="Skip perceptual hash computation")
     ps.set_defaults(func=cmd_scan)
 
     pq = sub.add_parser("query", help="Search files in catalog")
@@ -534,6 +572,11 @@ def build_parser() -> argparse.ArgumentParser:
     pq.add_argument("--max-size", type=int, default=None, help="Max file size (KB)")
     pq.add_argument("--path-contains", default=None, help="Path substring filter")
     pq.add_argument("--duplicates", action="store_true", help="List duplicate groups")
+    pq.add_argument("--camera", default=None, help="Filter by camera make/model substring")
+    pq.add_argument("--duration-min", type=float, default=None, help="Min duration in seconds")
+    pq.add_argument("--duration-max", type=float, default=None, help="Max duration in seconds")
+    pq.add_argument("--resolution-min", type=int, default=None, help="Min width in pixels")
+    pq.add_argument("--no-gps", action="store_true", help="Only files without GPS data")
     pq.add_argument("--limit", type=int, default=10000, help="Max results")
     pq.set_defaults(func=cmd_query)
 
@@ -550,6 +593,12 @@ def build_parser() -> argparse.ArgumentParser:
     pce.add_argument("--out", required=True, help="Output TSV path")
     pce.add_argument("--catalog", default=None, help="Catalog DB path")
     pce.set_defaults(func=cmd_catalog_export)
+
+    psim = sub.add_parser("similar", help="Find visually similar images via perceptual hash")
+    psim.add_argument("--catalog", default=None, help="Catalog DB path")
+    psim.add_argument("--threshold", type=int, default=10, help="Max Hamming distance (0=identical, lower=stricter)")
+    psim.add_argument("--out", default=None, help="Optional output TSV path")
+    psim.set_defaults(func=cmd_similar)
 
     # ── Legacy commands ──────────────────────────────────────────────
 
