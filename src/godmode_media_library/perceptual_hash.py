@@ -104,12 +104,22 @@ class SimilarPair:
     hash_b: str
 
 
+def _is_same_hash_type(hash_a: str, hash_b: str) -> bool:
+    """Check if two hashes are comparable (same length = same type)."""
+    return len(hash_a) == len(hash_b)
+
+
 def find_similar(
     hashes: dict[str, str],
     *,
     threshold: int = 10,
 ) -> list[SimilarPair]:
-    """Find all pairs of images within Hamming distance threshold.
+    """Find all pairs of files within Hamming distance threshold.
+
+    Supports both image dHash (16 hex chars) and video composite dHash
+    (N*16 hex chars). Only compares hashes of the same type/length.
+
+    For video hashes, uses average per-frame Hamming distance.
 
     Args:
         hashes: Dict mapping file path → hex hash string.
@@ -121,11 +131,29 @@ def find_similar(
     items = list(hashes.items())
     pairs: list[SimilarPair] = []
 
+    # Standard image hash length (hash_size=8 → 16 hex chars)
+    image_hash_len = HASH_SIZE * HASH_SIZE // 4
+
     for i in range(len(items)):
         path_a, hash_a = items[i]
         for j in range(i + 1, len(items)):
             path_b, hash_b = items[j]
-            dist = hamming_distance(hash_a, hash_b)
+
+            # Only compare hashes of same length/type
+            if not _is_same_hash_type(hash_a, hash_b):
+                continue
+
+            if len(hash_a) == image_hash_len:
+                # Standard image comparison
+                dist = hamming_distance(hash_a, hash_b)
+            elif len(hash_a) > image_hash_len:
+                # Video composite hash — average frame distance
+                from .video_hash import video_hamming_distance
+                dist_float = video_hamming_distance(hash_a, hash_b)
+                dist = int(round(dist_float))
+            else:
+                continue
+
             if dist <= threshold:
                 pairs.append(SimilarPair(
                     path_a=path_a,

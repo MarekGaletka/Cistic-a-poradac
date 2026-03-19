@@ -12,6 +12,7 @@ from .exif_reader import ExifMeta, can_read_exif, read_exif
 from .media_probe import MediaMeta, is_media_ext, probe_file
 from .perceptual_hash import dhash, is_image_ext
 from .utils import iter_files, meaningful_xattr_count, safe_stat_birthtime, sha256_file
+from .video_hash import is_video_ext, video_dhash
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +141,8 @@ def incremental_scan(
 
         if is_new_or_changed and extract_media:
             paths_for_media.append((len(file_infos) - 1, path, ext))
-        if is_new_or_changed and compute_phash and is_image_ext(ext):
-            paths_for_phash.append((len(file_infos) - 1, path))
+        if is_new_or_changed and compute_phash and (is_image_ext(ext) or is_video_ext(ext)):
+            paths_for_phash.append((len(file_infos) - 1, path, ext))
 
     # ── Phase 2: Parallel SHA-256 hashing ─────────────────────────────
     if paths_to_hash:
@@ -187,17 +188,24 @@ def incremental_scan(
                 file_infos[fi_idx]["media_meta"] = mm
                 file_infos[fi_idx]["exif_meta"] = em
 
-    # ── Phase 4: Parallel perceptual hash ─────────────────────────────
+    # ── Phase 4: Parallel perceptual hash (image + video) ──────────────
+    def _compute_phash(p: Path, ext: str) -> str | None:
+        if is_image_ext(ext):
+            return dhash(p)
+        if is_video_ext(ext):
+            return video_dhash(p)
+        return None
+
     if paths_for_phash:
         if effective_workers > 1:
             with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-                futures = {pool.submit(dhash, p): fi_idx for fi_idx, p in paths_for_phash}
+                futures = {pool.submit(_compute_phash, p, ext): fi_idx for fi_idx, p, ext in paths_for_phash}
                 for future in as_completed(futures):
                     fi_idx = futures[future]
                     file_infos[fi_idx]["phash"] = future.result()
         else:
-            for fi_idx, p in paths_for_phash:
-                file_infos[fi_idx]["phash"] = dhash(p)
+            for fi_idx, p, ext in paths_for_phash:
+                file_infos[fi_idx]["phash"] = _compute_phash(p, ext)
 
     # ── Phase 5: Sequential catalog upsert ────────────────────────────
     for info in file_infos:
