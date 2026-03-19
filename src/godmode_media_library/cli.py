@@ -12,7 +12,10 @@ from .autolabel_place import auto_place_labels
 from .catalog import Catalog, default_catalog_path
 from .config import format_config, load_config
 from .delete_ops import apply_delete_plan, create_delete_plan
+from .exiftool_extract import extract_all_metadata
 from .logging_config import setup_logging
+from .metadata_merge import create_merge_plan, execute_merge, write_merge_plan_tsv
+from .metadata_richness import compute_group_diff, compute_richness
 from .models import PlanPolicy
 from .perceptual_hash import find_similar
 from .planning import create_plan, write_plan_files
@@ -494,6 +497,150 @@ def cmd_catalog_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_metadata_extract(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args)
+    with catalog:
+        if args.force:
+            # Re-extract all
+            rows = catalog.query_files(limit=1_000_000)
+            paths = [Path(r.path) for r in rows]
+        else:
+            # Only extract for files without metadata
+            path_strs = catalog.paths_without_metadata()
+            paths = [Path(p) for p in path_strs]
+
+        if not paths:
+            print("All files already have metadata extracted.")
+            return 0
+
+        print(f"Extracting metadata for {len(paths)} files...")
+        all_meta = extract_all_metadata(paths, bin_path=args.exiftool_bin)
+
+        count = 0
+        for path, meta in all_meta.items():
+            path_str = str(path)
+            richness = compute_richness(meta)
+            catalog.upsert_file_metadata(path_str, json.dumps(meta, ensure_ascii=False))
+            catalog.update_metadata_richness(path_str, richness.total)
+            count += 1
+
+        catalog.commit()
+    print(f"catalog={catalog.db_path}")
+    print(f"extracted={count}")
+    print(f"total_paths={len(paths)}")
+    return 0
+
+
+def cmd_metadata_diff(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args)
+    with catalog:
+        group_ids = [args.group] if args.group else catalog.get_all_duplicate_group_ids()
+
+        if not group_ids:
+            print("No duplicate groups found.")
+            return 0
+
+        report = []
+        for gid in group_ids:
+            group_meta = catalog.get_group_metadata(gid)
+            if len(group_meta) < 2:
+                continue
+            diff = compute_group_diff(group_meta)
+            group_report = {
+                "group_id": gid,
+                "files": len(group_meta),
+                "scores": diff.scores,
+                "unanimous_tags": len(diff.unanimous),
+                "partial_tags": len(diff.partial),
+                "conflict_tags": len(diff.conflicts),
+                "partial_details": {tag: list(paths.keys()) for tag, paths in diff.partial.items()},
+                "conflict_details": {
+                    tag: {p: str(v) for p, v in paths.items()}
+                    for tag, paths in diff.conflicts.items()
+                },
+            }
+            report.append(group_report)
+
+        if args.out:
+            out_path = Path(args.out).expanduser().resolve()
+            ensure_dir(out_path.parent)
+            with out_path.open("w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+            print(f"out={out_path}")
+        else:
+            for r in report:
+                print(f"group={r['group_id']} files={r['files']} partial={r['partial_tags']} conflicts={r['conflict_tags']}")
+                for path, score in r["scores"].items():
+                    print(f"  {score:.1f}  {path}")
+
+        print(f"\n# {len(report)} groups analyzed")
+    return 0
+
+
+def cmd_metadata_merge(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args)
+    with catalog:
+        group_ids = [args.group] if args.group else catalog.get_all_duplicate_group_ids()
+
+        if not group_ids:
+            print("No duplicate groups found.")
+            return 0
+
+        total_merged = 0
+        total_conflicts = 0
+        total_skipped = 0
+        plans_written = 0
+
+        out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir else None
+        if out_dir:
+            ensure_dir(out_dir)
+
+        for gid in group_ids:
+            group_meta = catalog.get_group_metadata(gid)
+            if len(group_meta) < 2:
+                continue
+            # Skip groups where no file has metadata
+            if all(not meta for _, meta in group_meta):
+                continue
+
+            diff = compute_group_diff(group_meta)
+            if not diff.partial and not diff.conflicts:
+                continue
+
+            # Choose richest file as survivor
+            scored = sorted(diff.scores.items(), key=lambda x: x[1], reverse=True)
+            survivor_path = scored[0][0]
+            survivor_meta = dict(next(meta for p, meta in group_meta if p == survivor_path))
+
+            plan = create_merge_plan(survivor_path, survivor_meta, diff)
+
+            if out_dir:
+                plan_path = out_dir / f"merge_{gid[:16]}.tsv"
+                write_merge_plan_tsv(plan_path, plan)
+                plans_written += 1
+
+            if args.apply:
+                result = execute_merge(plan, bin_path=args.exiftool_bin, dry_run=args.dry_run)
+                total_merged += result.applied
+                total_conflicts += result.conflicts
+                total_skipped += result.skipped
+                if result.error:
+                    print(f"error={result.error} group={gid}")
+            else:
+                total_merged += len(plan.actions)
+                total_conflicts += len(plan.conflicts)
+                total_skipped += len(plan.skipped)
+
+    print(f"groups_processed={len(group_ids)}")
+    print(f"tags_to_merge={total_merged}")
+    print(f"conflicts={total_conflicts}")
+    print(f"skipped={total_skipped}")
+    if out_dir:
+        print(f"plans_written={plans_written}")
+        print(f"out_dir={out_dir}")
+    return 0
+
+
 def cmd_similar(args: argparse.Namespace) -> int:
     catalog = _get_catalog(args)
     out_path = Path(args.out).expanduser().resolve() if args.out else None
@@ -599,6 +746,29 @@ def build_parser() -> argparse.ArgumentParser:
     psim.add_argument("--threshold", type=int, default=10, help="Max Hamming distance (0=identical, lower=stricter)")
     psim.add_argument("--out", default=None, help="Optional output TSV path")
     psim.set_defaults(func=cmd_similar)
+
+    # ── Metadata precision commands ──────────────────────────────────
+
+    pme = sub.add_parser("metadata-extract", help="Deep metadata extraction via ExifTool for all catalog files")
+    pme.add_argument("--catalog", default=None, help="Catalog DB path")
+    pme.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
+    pme.add_argument("--force", action="store_true", help="Re-extract metadata for all files")
+    pme.set_defaults(func=cmd_metadata_extract)
+
+    pmd = sub.add_parser("metadata-diff", help="Compare metadata across duplicate groups")
+    pmd.add_argument("--catalog", default=None, help="Catalog DB path")
+    pmd.add_argument("--group", default=None, help="Specific duplicate group ID to analyze")
+    pmd.add_argument("--out", default=None, help="Output JSON report path")
+    pmd.set_defaults(func=cmd_metadata_diff)
+
+    pmm = sub.add_parser("metadata-merge", help="Merge metadata from donors into survivor files")
+    pmm.add_argument("--catalog", default=None, help="Catalog DB path")
+    pmm.add_argument("--group", default=None, help="Specific duplicate group ID to merge")
+    pmm.add_argument("--out-dir", default=None, help="Directory for merge plan TSV files")
+    pmm.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
+    pmm.add_argument("--apply", action="store_true", help="Execute the merge (without this, only plans are generated)")
+    pmm.add_argument("--dry-run", action="store_true", help="Simulate merge execution")
+    pmm.set_defaults(func=cmd_metadata_merge)
 
     # ── Legacy commands ──────────────────────────────────────────────
 

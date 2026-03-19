@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .models import DuplicateRow, FileRecord, ManualReviewRow, PlanPolicy, PlanRow
 from .utils import path_startswith, write_tsv
+
+if TYPE_CHECKING:
+    from .catalog import Catalog
 
 
 def _origin_time(rec: FileRecord) -> float:
@@ -14,20 +18,51 @@ def _origin_time(rec: FileRecord) -> float:
     return rec.mtime
 
 
-def _score(rec: FileRecord, policy: PlanPolicy) -> float:
+def _score(rec: FileRecord, policy: PlanPolicy, catalog: Catalog | None = None) -> float:
+    """Score a file for primary selection. Higher score = more likely to be kept.
+
+    When a catalog is provided, uses metadata richness, resolution, and bitrate
+    for much more informed scoring. Without catalog, falls back to xattr count.
+    """
     score = 0.0
 
+    # 1. Preferred roots (highest priority — user explicitly chose these)
     rank = path_startswith(rec.path, policy.prefer_roots)
     if rank is not None:
         score += 1000.0 - (rank * 50.0)
 
+    # 2. Origin time — older file is more likely the original
     if policy.prefer_earliest_origin_time:
         score += -_origin_time(rec) / 1_000_000_000.0
 
+    # 3. Metadata richness — comprehensive ExifTool-based scoring
     if policy.prefer_richer_metadata:
-        score += rec.meaningful_xattr_count * 3.0
+        if catalog is not None:
+            richness = catalog.get_metadata_richness(str(rec.path))
+            if richness is not None:
+                # Up to ~500 points for max richness (100 * 5.0)
+                score += richness * 5.0
+            else:
+                # Fallback when no ExifTool metadata available
+                score += rec.meaningful_xattr_count * 3.0
 
+            # 4. Resolution preference — higher resolution = better quality
+            file_row = catalog.get_file_by_path(str(rec.path))
+            if file_row:
+                w = file_row.width or 0
+                h = file_row.height or 0
+                megapixels = (w * h) / 1_000_000
+                score += min(megapixels, 50.0)  # Up to 50 pts
+
+                # 5. Bitrate preference for video/audio
+                if file_row.bitrate:
+                    score += min(file_row.bitrate / 1_000_000, 30.0)  # Up to 30 pts for Mbps
+        else:
+            score += rec.meaningful_xattr_count * 3.0
+
+    # 6. Path length penalty — shorter paths are slightly preferred (tiebreaker)
     score += -(len(str(rec.path)) / 10_000.0)
+
     return score
 
 
@@ -35,6 +70,7 @@ def create_plan(
     duplicates: list[DuplicateRow],
     inventory: dict[Path, FileRecord],
     policy: PlanPolicy,
+    catalog: Catalog | None = None,
 ) -> tuple[list[PlanRow], list[ManualReviewRow]]:
     by_hash: dict[str, list[DuplicateRow]] = defaultdict(list)
     for row in duplicates:
@@ -78,7 +114,7 @@ def create_plan(
             continue
 
         scored = sorted(
-            ((rec, _score(rec, policy)) for rec in group_recs),
+            ((rec, _score(rec, policy, catalog)) for rec in group_recs),
             key=lambda x: x[1],
             reverse=True,
         )

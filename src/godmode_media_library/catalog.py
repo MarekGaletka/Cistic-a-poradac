@@ -12,7 +12,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -49,13 +49,21 @@ CREATE TABLE IF NOT EXISTS files (
     camera_make     TEXT,
     camera_model    TEXT,
     gps_latitude    REAL,
-    gps_longitude   REAL
+    gps_longitude   REAL,
+    metadata_richness REAL
 );
 
-CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
-CREATE INDEX IF NOT EXISTS idx_files_ext    ON files(ext);
-CREATE INDEX IF NOT EXISTS idx_files_size   ON files(size);
-CREATE INDEX IF NOT EXISTS idx_files_phash  ON files(phash);
+CREATE INDEX IF NOT EXISTS idx_files_sha256    ON files(sha256);
+CREATE INDEX IF NOT EXISTS idx_files_ext       ON files(ext);
+CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size);
+CREATE INDEX IF NOT EXISTS idx_files_phash     ON files(phash);
+CREATE INDEX IF NOT EXISTS idx_files_richness  ON files(metadata_richness);
+
+CREATE TABLE IF NOT EXISTS file_metadata (
+    file_id      INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    raw_json     TEXT    NOT NULL,
+    extracted_at TEXT    NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS labels (
     file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -193,6 +201,19 @@ class Catalog:
                     self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash)")
             self._conn.commit()
+        if from_version < 3:
+            logger.info("Migrating catalog schema v%d → v3: adding metadata richness and file_metadata table", from_version)
+            with contextlib.suppress(Exception):
+                self._conn.execute("ALTER TABLE files ADD COLUMN metadata_richness REAL")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_richness ON files(metadata_richness)")
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS file_metadata (
+                    file_id      INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                    raw_json     TEXT    NOT NULL,
+                    extracted_at TEXT    NOT NULL
+                )
+            """)
+            self._conn.commit()
 
     def close(self) -> None:
         if self._conn:
@@ -289,6 +310,83 @@ class Catalog:
 
     def commit(self) -> None:
         self.conn.commit()
+
+    # ── File metadata (deep ExifTool) ─────────────────────────────────
+
+    def upsert_file_metadata(self, path: str, raw_json: str) -> None:
+        """Store full ExifTool metadata JSON for a file."""
+        cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        file_id = row[0]
+        now = utc_stamp()
+        self.conn.execute(
+            """INSERT INTO file_metadata (file_id, raw_json, extracted_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(file_id) DO UPDATE SET raw_json=excluded.raw_json, extracted_at=excluded.extracted_at""",
+            (file_id, raw_json, now),
+        )
+
+    def get_file_metadata(self, path: str) -> dict | None:
+        """Retrieve full ExifTool metadata dict for a file. Returns None if not available."""
+        import json
+        cur = self.conn.execute(
+            "SELECT fm.raw_json FROM file_metadata fm JOIN files f ON fm.file_id = f.id WHERE f.path = ?",
+            (path,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def get_metadata_richness(self, path: str) -> float | None:
+        """Get metadata richness score for a file."""
+        cur = self.conn.execute("SELECT metadata_richness FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return float(row[0])
+
+    def update_metadata_richness(self, path: str, score: float) -> None:
+        """Update metadata richness score for a file."""
+        self.conn.execute("UPDATE files SET metadata_richness = ? WHERE path = ?", (score, path))
+
+    def get_group_metadata(self, group_id: str) -> list[tuple[str, dict]]:
+        """Get full metadata for all files in a duplicate group."""
+        import json
+        cur = self.conn.execute(
+            """SELECT f.path, fm.raw_json
+               FROM duplicates d
+               JOIN files f ON d.file_id = f.id
+               LEFT JOIN file_metadata fm ON fm.file_id = f.id
+               WHERE d.group_id = ?
+               ORDER BY f.path""",
+            (group_id,),
+        )
+        result = []
+        for row in cur.fetchall():
+            try:
+                meta = json.loads(row[1]) if row[1] else {}
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+            result.append((row[0], meta))
+        return result
+
+    def get_all_duplicate_group_ids(self) -> list[str]:
+        """Return all unique duplicate group IDs."""
+        cur = self.conn.execute("SELECT DISTINCT group_id FROM duplicates ORDER BY group_id")
+        return [row[0] for row in cur.fetchall()]
+
+    def paths_without_metadata(self) -> list[str]:
+        """Return paths of files that don't have ExifTool metadata extracted yet."""
+        cur = self.conn.execute(
+            "SELECT f.path FROM files f LEFT JOIN file_metadata fm ON fm.file_id = f.id WHERE fm.file_id IS NULL ORDER BY f.path"
+        )
+        return [row[0] for row in cur.fetchall()]
 
     # ── Scan tracking ────────────────────────────────────────────────
 
