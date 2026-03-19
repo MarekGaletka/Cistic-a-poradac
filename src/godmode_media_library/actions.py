@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-import shutil
-from typing import Iterable
 
 from .utils import ensure_dir, read_tsv_dict, sha256_file, write_tsv
 

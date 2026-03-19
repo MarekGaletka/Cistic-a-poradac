@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -11,10 +10,10 @@ class FileRecord:
     size: int
     mtime: float
     ctime: float
-    birthtime: Optional[float]
+    birthtime: float | None
     ext: str
     meaningful_xattr_count: int
-    asset_key: Optional[str]
+    asset_key: str | None
     asset_component: bool
 
 
@@ -59,5 +58,5 @@ class TreePlanRow:
     destination_path: Path
     mode: str
     bucket: str
-    asset_key: Optional[str]
+    asset_key: str | None
     is_asset_component: bool

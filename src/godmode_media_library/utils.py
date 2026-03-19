@@ -4,8 +4,8 @@ import csv
 import datetime as dt
 import hashlib
 import os
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
 
 NOISE_XATTR_NAMES = {
     "com.apple.quarantine",
@@ -42,7 +42,7 @@ def iter_files(roots: Iterable[Path]) -> Iterator[Path]:
                 yield path
 
 
-def safe_stat_birthtime(path: Path) -> Optional[float]:
+def safe_stat_birthtime(path: Path) -> float | None:
     st = path.stat()
     birth = getattr(st, "st_birthtime", None)
     if birth is not None:
@@ -83,7 +83,7 @@ def read_tsv_dict(path: Path) -> list[dict[str, str]]:
         return [dict(row) for row in reader]
 
 
-def path_startswith(path: Path, prefixes: tuple[str, ...]) -> Optional[int]:
+def path_startswith(path: Path, prefixes: tuple[str, ...]) -> int | None:
     path_text = str(path)
     for idx, prefix in enumerate(prefixes):
         if path_text.startswith(prefix):

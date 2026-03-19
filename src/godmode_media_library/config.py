@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        tomllib = None  # type: ignore[assignment]
+
+
+@dataclass
+class GMLConfig:
+    """Resolved configuration with CLI > project-local > global precedence."""
+
+    min_size_kb: int = 500
+    large_file_threshold_mb: int = 500
+    protect_asset_components: bool = True
+    prefer_earliest_origin_time: bool = True
+    prefer_richer_metadata: bool = True
+    prefer_roots: list[str] = field(default_factory=list)
+    exiftool_bin: str = "exiftool"
+    person_prefix: str = "Person"
+    geocode_min_delay_seconds: float = 1.1
+    max_dimension: int = 1600
+    eps: float = 0.5
+    min_samples: int = 2
+
+
+def _global_config_path() -> Path:
+    return Path.home() / ".config" / "gml" / "config.toml"
+
+
+def _project_config_path() -> Path:
+    return Path.cwd() / "gml.toml"
+
+
+def _load_toml(path: Path) -> dict:
+    if tomllib is None:
+        return {}
+    if not path.is_file():
+        return {}
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def load_config(
+    cli_overrides: dict | None = None,
+    global_path: Path | None = None,
+    project_path: Path | None = None,
+) -> GMLConfig:
+    """Load configuration with precedence: CLI args > project-local > global > defaults.
+
+    Args:
+        cli_overrides: Dict of CLI-provided values (only non-None entries are used).
+        global_path: Override path for global config (default: ~/.config/gml/config.toml).
+        project_path: Override path for project config (default: ./gml.toml).
+    """
+    global_path = global_path or _global_config_path()
+    project_path = project_path or _project_config_path()
+
+    global_conf = _load_toml(global_path)
+    project_conf = _load_toml(project_path)
+
+    merged: dict = {}
+    merged.update(global_conf)
+    merged.update(project_conf)
+    if cli_overrides:
+        merged.update({k: v for k, v in cli_overrides.items() if v is not None})
+
+    config = GMLConfig()
+    for f in fields(config):
+        if f.name in merged:
+            value = merged[f.name]
+            if f.type == "bool" and isinstance(value, str):
+                value = value.lower() in ("true", "1", "yes")
+            elif f.type == "int" and not isinstance(value, int):
+                value = int(value)
+            elif f.type == "float" and not isinstance(value, float):
+                value = float(value)
+            object.__setattr__(config, f.name, value)
+
+    return config
+
+
+def format_config(config: GMLConfig) -> str:
+    """Format config as TOML string for display."""
+    lines = ["# GOD MODE Media Library — resolved configuration", ""]
+    for f in fields(config):
+        value = getattr(config, f.name)
+        if isinstance(value, bool):
+            lines.append(f"{f.name} = {'true' if value else 'false'}")
+        elif isinstance(value, str):
+            lines.append(f'{f.name} = "{value}"')
+        elif isinstance(value, list):
+            items = ", ".join(f'"{v}"' for v in value)
+            lines.append(f"{f.name} = [{items}]")
+        else:
+            lines.append(f"{f.name} = {value}")
+    return "\n".join(lines) + "\n"

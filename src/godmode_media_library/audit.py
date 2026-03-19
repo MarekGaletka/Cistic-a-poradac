@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
-from dataclasses import asdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from .asset_sets import build_asset_membership, summarize_asset_sets
 from .models import DuplicateRow, FileRecord

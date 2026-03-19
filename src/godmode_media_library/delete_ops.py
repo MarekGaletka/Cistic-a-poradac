@@ -41,7 +41,7 @@ def _inode_key(path: Path) -> tuple[int, int] | None:
 
 
 def _inode_id(key: tuple[int, int]) -> str:
-    raw = f"{key[0]}:{key[1]}".encode("utf-8")
+    raw = f"{key[0]}:{key[1]}".encode()
     return hashlib.sha1(raw).hexdigest()[:16]
 
 

@@ -276,13 +276,12 @@ def apply_tree_plan(
                 continue
             if collision_policy == "rename":
                 final_dst = _allocate_destination(final_dst, set())
-            elif collision_policy == "overwrite":
-                if not dry_run:
-                    if final_dst.is_dir():
-                        skipped += 1
-                        log_rows.append((str(src), str(final_dst), operation, "skip", "collision_is_directory"))
-                        continue
-                    final_dst.unlink()
+            elif collision_policy == "overwrite" and not dry_run:
+                if final_dst.is_dir():
+                    skipped += 1
+                    log_rows.append((str(src), str(final_dst), operation, "skip", "collision_is_directory"))
+                    continue
+                final_dst.unlink()
 
         if not dry_run:
             ensure_dir(final_dst.parent)

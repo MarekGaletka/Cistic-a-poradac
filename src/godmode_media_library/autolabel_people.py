@@ -155,7 +155,7 @@ def auto_people_labels(
     labels_by_path: dict[Path, set[str]] = defaultdict(set)
     cluster_members: dict[str, list[Path]] = defaultdict(list)
 
-    for (path, face_idx), cluster_id_raw in zip(origin, cluster_labels):
+    for (path, face_idx), cluster_id_raw in zip(origin, cluster_labels, strict=False):
         cluster_id = int(cluster_id_raw)
         person_label = person_name_by_cluster.get(cluster_id, "")
         if person_label:

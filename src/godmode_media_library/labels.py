@@ -72,12 +72,10 @@ def merge_label_updates(
         incoming_people = (patch.get("people") or "").strip()
         incoming_place = (patch.get("place") or "").strip()
 
-        if incoming_people:
-            if overwrite_people or not before_people:
-                existing["people"] = incoming_people
-        if incoming_place:
-            if overwrite_place or not before_place:
-                existing["place"] = incoming_place
+        if incoming_people and (overwrite_people or not before_people):
+            existing["people"] = incoming_people
+        if incoming_place and (overwrite_place or not before_place):
+            existing["place"] = incoming_place
 
         table[p] = existing
         touched += 1

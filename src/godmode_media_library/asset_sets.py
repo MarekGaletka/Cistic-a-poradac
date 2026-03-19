@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 IMAGE_EXTS = {"heic", "jpg", "jpeg", "png", "tif", "tiff", "dng", "cr2", "cr3", "nef", "arw", "raw"}
 VIDEO_EXTS = {"mov", "mp4", "m4v", "avi", "mkv"}

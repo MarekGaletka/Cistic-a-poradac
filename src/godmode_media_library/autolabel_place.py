@@ -83,7 +83,7 @@ def _chunks(items: list[Path], size: int) -> list[list[Path]]:
 
 
 def _to_float(value: object) -> float | None:
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         text = value.strip()
@@ -365,10 +365,7 @@ def auto_place_labels(
             continue
 
         lat, lon = coords
-        if reverse_geocode:
-            place_label = geocoded.get(coords, _coord_label(lat, lon))
-        else:
-            place_label = _coord_label(lat, lon)
+        place_label = geocoded.get(coords, _coord_label(lat, lon)) if reverse_geocode else _coord_label(lat, lon)
 
         if key:
             members = key_to_paths.get(key, [path])

@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 from .actions import apply_plan, promote_from_manifest, restore_from_log
+from .audit import collect_file_records, load_exact_duplicates, load_inventory, write_audit_run
 from .autolabel_people import auto_people_labels
 from .autolabel_place import auto_place_labels
-from .audit import collect_file_records, load_exact_duplicates, load_inventory, write_audit_run
+from .config import format_config, load_config
 from .delete_ops import apply_delete_plan, create_delete_plan
+from .logging_config import setup_logging
 from .models import PlanPolicy
 from .planning import create_plan, write_plan_files
 from .prune_recommend import recommend_prune
 from .tree_ops import apply_tree_plan, create_tree_plan, write_tree_plan
 from .utils import ensure_dir, utc_stamp
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_roots(value: list[str]) -> list[Path]:
@@ -159,10 +164,7 @@ def cmd_tree_plan(args: argparse.Namespace) -> int:
     target_root = Path(args.target_root).expanduser().resolve()
     run_dir = Path(args.out_dir).expanduser().resolve()
     ensure_dir(run_dir)
-    if args.run_name:
-        plan_dir = run_dir / args.run_name
-    else:
-        plan_dir = run_dir / f"tree_{args.mode}_{utc_stamp()}"
+    plan_dir = run_dir / args.run_name if args.run_name else run_dir / f"tree_{args.mode}_{utc_stamp()}"
     ensure_dir(plan_dir)
 
     labels_tsv = Path(args.labels_tsv).expanduser().resolve() if args.labels_tsv else None
@@ -330,10 +332,7 @@ def cmd_prune_recommend(args: argparse.Namespace) -> int:
     roots = _parse_roots(args.roots)
     out_dir = Path(args.out_dir).expanduser().resolve()
     ensure_dir(out_dir)
-    if args.run_name:
-        run_dir = out_dir / args.run_name
-    else:
-        run_dir = out_dir / f"prune_recommend_{utc_stamp()}"
+    run_dir = out_dir / args.run_name if args.run_name else out_dir / f"prune_recommend_{utc_stamp()}"
     ensure_dir(run_dir)
 
     policy = _build_policy(args)
@@ -396,6 +395,12 @@ def cmd_delete_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config_show(args: argparse.Namespace) -> int:
+    config = load_config()
+    print(format_config(config), end="")
+    return 0
+
+
 def cmd_delete_apply(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan).expanduser().resolve()
     quarantine_root = Path(args.quarantine_root).expanduser().resolve()
@@ -423,8 +428,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gml",
         description="GOD MODE media organizer with metadata-first safety",
     )
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v INFO, -vv DEBUG)")
+    parser.add_argument("--log-file", default=None, help="Path for JSON-formatted log file")
 
     sub = parser.add_subparsers(dest="command", required=True)
+
+    pcfg = sub.add_parser("config", help="Show resolved configuration")
+    pcfg.set_defaults(func=cmd_config_show)
 
     pa = sub.add_parser("audit", help="Scan roots, detect duplicates, create safe plan")
     pa.add_argument("--roots", nargs="+", required=True, help="Root directories to scan")
@@ -478,7 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
     pta = sub.add_parser("tree-apply", help="Apply tree restructuring plan")
     pta.add_argument("--plan", required=True, help="Path to tree_plan.tsv")
     pta.add_argument("--operation", choices=["move", "copy", "hardlink", "symlink"], default="move", help="Apply operation")
-    pta.add_argument("--collision-policy", choices=["skip", "rename", "overwrite"], default="rename", help="What to do on destination collision")
+    pta.add_argument("--collision-policy", choices=["skip", "rename", "overwrite"], default="rename", help="Collision policy")
     pta.add_argument("--log", default=None, help="Optional output log path")
     pta.add_argument("--dry-run", action="store_true", help="Do not modify filesystem, only simulate")
     pta.set_defaults(func=cmd_tree_apply)
@@ -550,6 +560,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    log_file = Path(args.log_file) if args.log_file else None
+    setup_logging(verbosity=args.verbose, log_file=log_file)
+    logger.debug("command=%s args=%s", args.command, vars(args))
     return int(args.func(args))
 
 
