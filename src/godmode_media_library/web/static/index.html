@@ -1,36 +1,58 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="cs">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="GOD MODE Media Library — media organizer with metadata-first safety">
+  <meta name="description" content="GOD MODE Media Library — správce médií s důrazem na metadata a bezpečnost">
   <title>GOD MODE Media Library</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#content">Skip to content</a>
+  <a class="skip-link" href="#content">Přeskočit na obsah</a>
   <div class="app">
-    <nav aria-label="Main navigation" role="navigation">
+    <nav aria-label="Hlavní navigace" role="navigation">
       <div class="nav-header">
         <h1>GOD MODE</h1>
-        <button class="nav-toggle" aria-label="Toggle navigation menu" aria-expanded="false">&#9776;</button>
+        <button class="nav-toggle" aria-label="Přepnout navigační menu" aria-expanded="false">&#9776;</button>
       </div>
-      <a href="#dashboard" class="active" data-page="dashboard" aria-current="page">Dashboard</a>
-      <a href="#files" data-page="files">Files</a>
-      <a href="#duplicates" data-page="duplicates">Duplicates</a>
-      <a href="#similar" data-page="similar">Similar</a>
-      <a href="#timeline" data-page="timeline">Timeline</a>
-      <a href="#map" data-page="map">Map</a>
-      <a href="#pipeline" data-page="pipeline">Pipeline</a>
-      <a href="#doctor" data-page="doctor">Doctor</a>
+      <div class="nav-group-label">KNIHOVNA</div>
+      <a href="#dashboard" class="active" data-page="dashboard" aria-current="page">&#128202; Přehled</a>
+      <a href="#files" data-page="files">&#128193; Soubory</a>
+      <a href="#timeline" data-page="timeline">&#128197; Časová osa</a>
+      <a href="#map" data-page="map">&#127758; Mapa</a>
+      <div class="nav-group-label">DUPLICITY</div>
+      <a href="#duplicates" data-page="duplicates">&#128203; Duplicity</a>
+      <a href="#similar" data-page="similar">&#127912; Podobné</a>
+      <div class="nav-group-label">NÁSTROJE</div>
+      <a href="#pipeline" data-page="pipeline">&#9881; Pipeline</a>
+      <a href="#doctor" data-page="doctor">&#128137; Diagnostika</a>
     </nav>
     <main id="content" role="main" aria-live="polite">
-      <div class="loading"><div class="spinner" role="status" aria-label="Loading"></div>Loading...</div>
+      <div class="loading"><div class="spinner" role="status" aria-label="Načítání"></div>Načítání...</div>
     </main>
+    <!-- Task drawer toggle -->
+    <button id="task-drawer-toggle" class="task-drawer-btn" aria-label="Úlohy" title="Úlohy">
+      &#9881;<span id="task-badge" class="task-badge hidden">0</span>
+    </button>
   </div>
+
+  <!-- Floating action bar (selection) -->
+  <div id="floating-action-bar" class="floating-action-bar hidden" role="toolbar" aria-label="Akce s vybranými soubory"></div>
+
+  <!-- Task drawer (slide-out from right) -->
+  <div id="task-drawer" class="task-drawer" aria-hidden="true" role="complementary" aria-label="Úlohy">
+    <div class="task-drawer-header">
+      <h3>Úlohy</h3>
+      <button id="task-drawer-close" class="task-drawer-close" aria-label="Zavřít">&times;</button>
+    </div>
+    <div class="task-drawer-content">
+      <div class="empty"><div class="empty-text">Žádné aktivní úlohy</div></div>
+    </div>
+  </div>
+
   <div id="toast-container" role="alert" aria-live="assertive"></div>
-  <script src="/app.js"></script>
+  <script type="module" src="/js/main.js"></script>
 </body>
 </html>

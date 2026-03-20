@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import shutil
 import threading
 import time
 import uuid
@@ -30,6 +31,41 @@ class ScanConfig(BaseModel):
     roots: list[str] | None = None
     workers: int = 1
     extract_exiftool: bool = True
+
+
+class QuarantineRequest(BaseModel):
+    paths: list[str]
+    quarantine_root: str | None = None
+
+
+class DeleteRequest(BaseModel):
+    paths: list[str]
+
+
+class RenameItem(BaseModel):
+    path: str
+    new_name: str
+
+
+class RenameRequest(BaseModel):
+    renames: list[RenameItem]
+
+
+class MoveRequest(BaseModel):
+    paths: list[str]
+    destination: str
+
+
+class DuplicateKeepRequest(BaseModel):
+    keep_path: str
+
+
+class RestoreRequest(BaseModel):
+    paths: list[str]
+    quarantine_root: str | None = None
+
+
+_DEFAULT_QUARANTINE_ROOT = Path.home() / ".config" / "gml" / "quarantine"
 
 
 # ── Background task tracking ──────────────────────────────────────────
@@ -550,6 +586,338 @@ async def ws_task(websocket: WebSocket, task_id: str):
             conns = _ws_connections.get(task_id, [])
             if websocket in conns:
                 conns.remove(websocket)
+
+
+# ── Action endpoints ──────────────────────────────────────────────────
+
+
+def _quarantine_dest(quarantine_root: Path, original_path: Path) -> Path:
+    """Compute quarantine destination preserving absolute path structure."""
+    rest = str(original_path).lstrip("/")
+    return quarantine_root / rest
+
+
+@router.post("/files/quarantine")
+def quarantine_files(request: Request, body: QuarantineRequest) -> dict:
+    """Move files to quarantine directory."""
+    quarantine_root = Path(body.quarantine_root) if body.quarantine_root else _DEFAULT_QUARANTINE_ROOT
+    cat = _open_catalog(request)
+    moved = 0
+    skipped = 0
+    errors: list[str] = []
+    try:
+        for path_str in body.paths:
+            p = Path(path_str)
+            if not p.exists():
+                skipped += 1
+                errors.append(f"File not found on disk: {path_str}")
+                continue
+            row = cat.get_file_by_path(path_str)
+            if row is None:
+                skipped += 1
+                errors.append(f"File not in catalog: {path_str}")
+                continue
+            dest = _quarantine_dest(quarantine_root, p)
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    suffix = 1
+                    candidate = Path(f"{dest}.dup{suffix}")
+                    while candidate.exists():
+                        suffix += 1
+                        candidate = Path(f"{dest}.dup{suffix}")
+                    dest = candidate
+                shutil.move(str(p), str(dest))
+                cat.delete_file_by_path(path_str)
+                moved += 1
+            except OSError as e:
+                errors.append(f"Failed to move {path_str}: {e}")
+                skipped += 1
+        cat.commit()
+    finally:
+        cat.close()
+    return {"moved": moved, "skipped": skipped, "errors": errors}
+
+
+@router.post("/files/delete")
+def delete_files(request: Request, body: DeleteRequest) -> dict:
+    """Permanently delete files."""
+    cat = _open_catalog(request)
+    deleted = 0
+    skipped = 0
+    errors: list[str] = []
+    try:
+        for path_str in body.paths:
+            p = Path(path_str)
+            if not p.exists():
+                skipped += 1
+                errors.append(f"File not found on disk: {path_str}")
+                continue
+            try:
+                p.unlink()
+                cat.delete_file_by_path(path_str)
+                deleted += 1
+            except OSError as e:
+                errors.append(f"Failed to delete {path_str}: {e}")
+                skipped += 1
+        cat.commit()
+    finally:
+        cat.close()
+    return {"deleted": deleted, "skipped": skipped, "errors": errors}
+
+
+@router.post("/files/rename")
+def rename_files(request: Request, body: RenameRequest) -> dict:
+    """Rename files."""
+    cat = _open_catalog(request)
+    renamed = 0
+    skipped = 0
+    errors: list[str] = []
+    try:
+        for item in body.renames:
+            p = Path(item.path)
+            if not p.exists():
+                skipped += 1
+                errors.append(f"File not found: {item.path}")
+                continue
+            new_path = p.parent / item.new_name
+            if new_path.exists():
+                skipped += 1
+                errors.append(f"Target already exists: {new_path}")
+                continue
+            try:
+                p.rename(new_path)
+                cat.update_file_path(item.path, str(new_path))
+                renamed += 1
+            except OSError as e:
+                errors.append(f"Failed to rename {item.path}: {e}")
+                skipped += 1
+        cat.commit()
+    finally:
+        cat.close()
+    return {"renamed": renamed, "skipped": skipped, "errors": errors}
+
+
+@router.post("/files/move")
+def move_files(request: Request, body: MoveRequest) -> dict:
+    """Move files to a destination directory."""
+    dest_dir = Path(body.destination)
+    if not dest_dir.is_dir():
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=f"Cannot create destination: {e}") from e
+
+    cat = _open_catalog(request)
+    moved = 0
+    skipped = 0
+    errors: list[str] = []
+    try:
+        for path_str in body.paths:
+            p = Path(path_str)
+            if not p.exists():
+                skipped += 1
+                errors.append(f"File not found: {path_str}")
+                continue
+            new_path = dest_dir / p.name
+            if new_path.exists():
+                skipped += 1
+                errors.append(f"Target already exists: {new_path}")
+                continue
+            try:
+                shutil.move(str(p), str(new_path))
+                cat.update_file_path(path_str, str(new_path))
+                moved += 1
+            except OSError as e:
+                errors.append(f"Failed to move {path_str}: {e}")
+                skipped += 1
+        cat.commit()
+    finally:
+        cat.close()
+    return {"moved": moved, "skipped": skipped, "errors": errors}
+
+
+@router.post("/duplicates/{group_id}/quarantine")
+def quarantine_duplicate_group(request: Request, group_id: str, body: DuplicateKeepRequest) -> dict:
+    """Quarantine all files in a duplicate group except the keeper."""
+    quarantine_root = _DEFAULT_QUARANTINE_ROOT
+    cat = _open_catalog(request)
+    quarantined = 0
+    errors: list[str] = []
+    try:
+        group_data = cat.query_duplicates()
+        group_rows = None
+        for gid, rows in group_data:
+            if gid == group_id:
+                group_rows = rows
+                break
+        if group_rows is None:
+            raise HTTPException(status_code=404, detail="Duplicate group not found")
+
+        all_paths = [r.path for r in group_rows]
+        if body.keep_path not in all_paths:
+            raise HTTPException(status_code=400, detail="keep_path not in this duplicate group")
+
+        for row in group_rows:
+            if row.path == body.keep_path:
+                continue
+            p = Path(row.path)
+            if not p.exists():
+                errors.append(f"File not found on disk: {row.path}")
+                continue
+            dest = _quarantine_dest(quarantine_root, p)
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    suffix = 1
+                    candidate = Path(f"{dest}.dup{suffix}")
+                    while candidate.exists():
+                        suffix += 1
+                        candidate = Path(f"{dest}.dup{suffix}")
+                    dest = candidate
+                shutil.move(str(p), str(dest))
+                cat.delete_file_by_path(row.path)
+                quarantined += 1
+            except OSError as e:
+                errors.append(f"Failed to quarantine {row.path}: {e}")
+        cat.commit()
+    finally:
+        cat.close()
+    result: dict[str, Any] = {"quarantined": quarantined, "kept": body.keep_path}
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+@router.post("/duplicates/{group_id}/merge")
+def merge_duplicate_group(request: Request, group_id: str, body: DuplicateKeepRequest) -> dict:
+    """Merge metadata from all copies to keeper, then quarantine the rest."""
+    from ..metadata_merge import create_merge_plan, execute_merge
+    from ..metadata_richness import compute_group_diff
+
+    quarantine_root = _DEFAULT_QUARANTINE_ROOT
+    cat = _open_catalog(request)
+    quarantined = 0
+    merge_applied = False
+    errors: list[str] = []
+    try:
+        group_meta = cat.get_group_metadata(group_id)
+        if not group_meta:
+            raise HTTPException(status_code=404, detail="Duplicate group not found")
+
+        all_paths_in_group = [path for path, _ in group_meta]
+        if body.keep_path not in all_paths_in_group:
+            raise HTTPException(status_code=400, detail="keep_path not in this duplicate group")
+
+        # Attempt metadata merge if we have metadata for at least 2 files
+        if len(group_meta) >= 2:
+            try:
+                survivor_meta: dict[str, Any] = {}
+                for path, meta in group_meta:
+                    if path == body.keep_path:
+                        survivor_meta = meta
+                        break
+
+                diff = compute_group_diff(group_meta)
+                plan = create_merge_plan(body.keep_path, survivor_meta, diff)
+                if plan.actions:
+                    merge_result = execute_merge(plan)
+                    if merge_result.error:
+                        errors.append(f"Merge error: {merge_result.error}")
+                    else:
+                        merge_applied = True
+            except Exception as e:
+                errors.append(f"Metadata merge failed: {e}")
+
+        # Quarantine all but keeper
+        group_data = cat.query_duplicates()
+        group_rows = None
+        for gid, rows in group_data:
+            if gid == group_id:
+                group_rows = rows
+                break
+        if group_rows is None:
+            raise HTTPException(status_code=404, detail="Duplicate group not found")
+
+        for row in group_rows:
+            if row.path == body.keep_path:
+                continue
+            p = Path(row.path)
+            if not p.exists():
+                errors.append(f"File not found on disk: {row.path}")
+                continue
+            dest = _quarantine_dest(quarantine_root, p)
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    suffix = 1
+                    candidate = Path(f"{dest}.dup{suffix}")
+                    while candidate.exists():
+                        suffix += 1
+                        candidate = Path(f"{dest}.dup{suffix}")
+                    dest = candidate
+                shutil.move(str(p), str(dest))
+                cat.delete_file_by_path(row.path)
+                quarantined += 1
+            except OSError as e:
+                errors.append(f"Failed to quarantine {row.path}: {e}")
+        cat.commit()
+    finally:
+        cat.close()
+    result: dict[str, Any] = {
+        "merged": merge_applied,
+        "quarantined": quarantined,
+        "kept": body.keep_path,
+    }
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+@router.get("/tasks")
+def list_tasks() -> dict:
+    """List all tasks."""
+    with _tasks_lock:
+        tasks = [
+            {
+                "id": t.id,
+                "command": t.command,
+                "status": t.status,
+                "started_at": t.started_at,
+                "finished_at": t.finished_at,
+                "error": t.error,
+            }
+            for t in _tasks.values()
+        ]
+    return {"tasks": tasks}
+
+
+@router.post("/files/restore")
+def restore_files(request: Request, body: RestoreRequest) -> dict:
+    """Restore files from quarantine."""
+    quarantine_root = Path(body.quarantine_root) if body.quarantine_root else _DEFAULT_QUARANTINE_ROOT
+    cat = _open_catalog(request)
+    restored = 0
+    errors: list[str] = []
+    try:
+        for path_str in body.paths:
+            original_path = Path(path_str)
+            quarantined_path = _quarantine_dest(quarantine_root, original_path)
+            if not quarantined_path.exists():
+                errors.append(f"Not found in quarantine: {path_str}")
+                continue
+            if original_path.exists():
+                errors.append(f"Original path already occupied: {path_str}")
+                continue
+            try:
+                original_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(quarantined_path), str(original_path))
+                restored += 1
+            except OSError as e:
+                errors.append(f"Failed to restore {path_str}: {e}")
+    finally:
+        cat.close()
+    return {"restored": restored, "errors": errors}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

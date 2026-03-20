@@ -349,6 +349,16 @@ class Catalog:
         cur = self.conn.execute(f"DELETE FROM files WHERE path IN ({placeholders})", paths)  # noqa: S608
         return cur.rowcount
 
+    def delete_file_by_path(self, path: str) -> bool:
+        """Remove a file entry from catalog. Returns True if found and deleted."""
+        cur = self.conn.execute("DELETE FROM files WHERE path = ?", (path,))
+        return cur.rowcount > 0
+
+    def update_file_path(self, old_path: str, new_path: str) -> bool:
+        """Update a file's path in catalog after rename/move. Returns True if found and updated."""
+        cur = self.conn.execute("UPDATE files SET path = ? WHERE path = ?", (new_path, old_path))
+        return cur.rowcount > 0
+
     def commit(self) -> None:
         self.conn.commit()
 
