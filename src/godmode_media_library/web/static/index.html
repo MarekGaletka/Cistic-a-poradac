@@ -3,19 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GOD MODE Media Library — media organizer with metadata-first safety">
   <title>GOD MODE Media Library</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#content">Skip to content</a>
   <div class="app">
-    <nav>
+    <nav aria-label="Main navigation" role="navigation">
       <div class="nav-header">
         <h1>GOD MODE</h1>
-        <button class="nav-toggle" aria-label="Menu">&#9776;</button>
+        <button class="nav-toggle" aria-label="Toggle navigation menu" aria-expanded="false">&#9776;</button>
       </div>
-      <a href="#dashboard" class="active" data-page="dashboard">Dashboard</a>
+      <a href="#dashboard" class="active" data-page="dashboard" aria-current="page">Dashboard</a>
       <a href="#files" data-page="files">Files</a>
       <a href="#duplicates" data-page="duplicates">Duplicates</a>
       <a href="#similar" data-page="similar">Similar</a>
@@ -24,11 +26,11 @@
       <a href="#pipeline" data-page="pipeline">Pipeline</a>
       <a href="#doctor" data-page="doctor">Doctor</a>
     </nav>
-    <main id="content">
-      <div class="loading"><div class="spinner"></div>Loading...</div>
+    <main id="content" role="main" aria-live="polite">
+      <div class="loading"><div class="spinner" role="status" aria-label="Loading"></div>Loading...</div>
     </main>
   </div>
-  <div id="toast-container"></div>
+  <div id="toast-container" role="alert" aria-live="assertive"></div>
   <script src="/app.js"></script>
 </body>
 </html>

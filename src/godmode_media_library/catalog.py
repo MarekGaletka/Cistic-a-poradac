@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS duplicates (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dup_group ON duplicates(group_id);
+CREATE INDEX IF NOT EXISTS idx_dup_file ON duplicates(file_id);
 """
 
 
@@ -538,17 +539,21 @@ class Catalog:
         media_probed = conn.execute("SELECT COUNT(*) FROM files WHERE duration_seconds IS NOT NULL OR width IS NOT NULL").fetchone()[0]
         gps_files = conn.execute("SELECT COUNT(*) FROM files WHERE gps_latitude IS NOT NULL").fetchone()[0]
 
-        ext_counts = {}
+        ext_counts = []
         for row in conn.execute("SELECT ext, COUNT(*) as cnt FROM files GROUP BY ext ORDER BY cnt DESC LIMIT 20"):
-            ext_counts[row[0] or "(noext)"] = row[1]
+            ext_counts.append([row[0] or "(noext)", row[1]])
 
-        camera_counts = {}
+        camera_counts = []
         cam_sql = (
             "SELECT camera_model, COUNT(*) as cnt FROM files "
             "WHERE camera_model IS NOT NULL GROUP BY camera_model ORDER BY cnt DESC LIMIT 10"
         )
         for row in conn.execute(cam_sql):
-            camera_counts[row[0]] = row[1]
+            camera_counts.append([row[0], row[1]])
+
+        # Last scan root for pipeline re-use
+        last_scan_root_row = conn.execute("SELECT root FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+        last_scan_root = last_scan_root_row[0] if last_scan_root_row else ""
 
         return {
             "total_files": total_files,
@@ -562,6 +567,7 @@ class Catalog:
             "labeled_files": labeled_files,
             "total_scans": scans,
             "last_scan": last_scan,
+            "last_scan_root": last_scan_root,
             "top_extensions": ext_counts,
             "top_cameras": camera_counts,
         }

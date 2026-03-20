@@ -779,58 +779,61 @@ def cmd_delete_apply(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .i18n import t
+
     parser = argparse.ArgumentParser(
         prog="gml",
         description="GOD MODE media organizer with metadata-first safety",
     )
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v INFO, -vv DEBUG)")
     parser.add_argument("--log-file", default=None, help="Path for JSON-formatted log file")
+    parser.add_argument("--lang", choices=["en", "cs"], default=None, help="Language (en/cs)")
 
     sub = parser.add_subparsers(dest="command", required=True)
 
     pcfg = sub.add_parser("config", help="Show resolved configuration")
     pcfg.set_defaults(func=cmd_config_show)
 
-    pdoc = sub.add_parser("doctor", help="Check external dependencies and show install hints")
+    pdoc = sub.add_parser("doctor", help=t("help.doctor"))
     pdoc.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path to check")
     pdoc.set_defaults(func=cmd_doctor)
 
-    pauto = sub.add_parser("auto", help="Run full pipeline: scan → extract → diff → merge")
-    pauto.add_argument("--roots", nargs="+", required=True, help="Root directories to scan")
-    pauto.add_argument("--catalog", default=None, help="Catalog DB path")
+    pauto = sub.add_parser("auto", help=t("help.auto"))
+    pauto.add_argument("--roots", nargs="+", required=True, help=t("help.scan.roots"))
+    pauto.add_argument("--catalog", default=None, help=t("help.scan.catalog"))
     pauto.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
-    pauto.add_argument("--workers", type=int, default=1, help="Parallel workers")
+    pauto.add_argument("--workers", type=int, default=1, help=t("help.scan.workers"))
     pauto.add_argument("--min-size-kb", type=int, default=0, help="Min file size for hashing (KB)")
     pauto.add_argument("--dry-run", action="store_true", help="Simulate merges without writing")
     pauto.add_argument("--no-interactive", action="store_true", help="Skip confirmation prompts")
     pauto.add_argument("--skip", nargs="*", default=[], help="Steps to skip: scan, extract, diff, merge")
     pauto.set_defaults(func=cmd_auto)
 
-    pcld = sub.add_parser("cloud", help="Show cloud storage status and setup guide")
+    pcld = sub.add_parser("cloud", help=t("help.cloud"))
     pcld.set_defaults(func=cmd_cloud)
 
-    psrv = sub.add_parser("serve", help="Start web UI server")
+    psrv = sub.add_parser("serve", help=t("help.serve"))
     psrv.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     psrv.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
-    psrv.add_argument("--catalog", default=None, help="Catalog DB path")
+    psrv.add_argument("--catalog", default=None, help=t("help.scan.catalog"))
     psrv.add_argument("--no-browser", action="store_true", help="Don't open browser automatically")
     psrv.set_defaults(func=cmd_serve)
 
     # ── Catalog commands ─────────────────────────────────────────────
 
-    ps = sub.add_parser("scan", help="Incremental scan: update catalog from filesystem")
-    ps.add_argument("--roots", nargs="+", required=True, help="Root directories to scan")
-    ps.add_argument("--catalog", default=None, help="Catalog DB path (default: ~/.config/gml/catalog.db)")
-    ps.add_argument("--force-rehash", action="store_true", help="Recompute SHA-256 for all files")
+    ps = sub.add_parser("scan", help=t("help.scan"))
+    ps.add_argument("--roots", nargs="+", required=True, help=t("help.scan.roots"))
+    ps.add_argument("--catalog", default=None, help=t("help.scan.catalog"))
+    ps.add_argument("--force-rehash", action="store_true", help=t("help.scan.force_rehash"))
     ps.add_argument("--min-size-kb", type=int, default=0, help="Min file size for hashing (KB)")
     ps.add_argument("--no-media", action="store_true", help="Skip media metadata extraction (ffprobe/EXIF)")
     ps.add_argument("--no-phash", action="store_true", help="Skip perceptual hash computation")
-    ps.add_argument("--exiftool", action="store_true", help="Run deep ExifTool metadata extraction after scan")
+    ps.add_argument("--exiftool", action="store_true", help=t("help.scan.exiftool"))
     ps.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
-    ps.add_argument("--workers", type=int, default=1, help="Parallel workers for hashing/media extraction (default: 1)")
+    ps.add_argument("--workers", type=int, default=1, help=t("help.scan.workers"))
     ps.set_defaults(func=cmd_scan)
 
-    pq = sub.add_parser("query", help="Search files in catalog")
+    pq = sub.add_parser("query", help=t("help.query"))
     pq.add_argument("--catalog", default=None, help="Catalog DB path")
     pq.add_argument("--ext", default=None, help="Filter by extension (e.g. jpg)")
     pq.add_argument("--date-from", default=None, help="Filter by date (YYYY-MM-DD)")
@@ -847,7 +850,7 @@ def build_parser() -> argparse.ArgumentParser:
     pq.add_argument("--limit", type=int, default=10000, help="Max results")
     pq.set_defaults(func=cmd_query)
 
-    pst = sub.add_parser("stats", help="Show catalog statistics")
+    pst = sub.add_parser("stats", help=t("help.stats"))
     pst.add_argument("--catalog", default=None, help="Catalog DB path")
     pst.set_defaults(func=cmd_stats)
 
@@ -861,7 +864,7 @@ def build_parser() -> argparse.ArgumentParser:
     pce.add_argument("--catalog", default=None, help="Catalog DB path")
     pce.set_defaults(func=cmd_catalog_export)
 
-    psim = sub.add_parser("similar", help="Find visually similar images via perceptual hash")
+    psim = sub.add_parser("similar", help=t("help.similar"))
     psim.add_argument("--catalog", default=None, help="Catalog DB path")
     psim.add_argument("--threshold", type=int, default=10, help="Max Hamming distance (0=identical, lower=stricter)")
     psim.add_argument("--out", default=None, help="Optional output TSV path")
@@ -869,19 +872,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── Metadata precision commands ──────────────────────────────────
 
-    pme = sub.add_parser("metadata-extract", help="Deep metadata extraction via ExifTool for all catalog files")
+    pme = sub.add_parser("metadata-extract", help=t("help.extract"))
     pme.add_argument("--catalog", default=None, help="Catalog DB path")
     pme.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
     pme.add_argument("--force", action="store_true", help="Re-extract metadata for all files")
     pme.set_defaults(func=cmd_metadata_extract)
 
-    pmd = sub.add_parser("metadata-diff", help="Compare metadata across duplicate groups")
+    pmd = sub.add_parser("metadata-diff", help=t("help.diff"))
     pmd.add_argument("--catalog", default=None, help="Catalog DB path")
     pmd.add_argument("--group", default=None, help="Specific duplicate group ID to analyze")
     pmd.add_argument("--out", default=None, help="Output JSON report path")
     pmd.set_defaults(func=cmd_metadata_diff)
 
-    pmm = sub.add_parser("metadata-merge", help="Merge metadata from donors into survivor files")
+    pmm = sub.add_parser("metadata-merge", help=t("help.merge"))
     pmm.add_argument("--catalog", default=None, help="Catalog DB path")
     pmm.add_argument("--group", default=None, help="Specific duplicate group ID to merge")
     pmm.add_argument("--out-dir", default=None, help="Directory for merge plan TSV files")
@@ -1014,8 +1017,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    from .i18n import set_lang
+
     parser = build_parser()
     args = parser.parse_args()
+    if args.lang:
+        set_lang(args.lang)
     log_file = Path(args.log_file) if args.log_file else None
     setup_logging(verbosity=args.verbose, log_file=log_file)
     logger.debug("command=%s args=%s", args.command, vars(args))

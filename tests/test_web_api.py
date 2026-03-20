@@ -8,6 +8,7 @@ import pytest
 
 try:
     from fastapi.testclient import TestClient
+
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
@@ -34,10 +35,13 @@ def catalog_with_files(tmp_path):
 
     # Scan them into catalog
     from godmode_media_library.scanner import incremental_scan
-    with patch("godmode_media_library.scanner.probe_file", return_value=None), \
-         patch("godmode_media_library.scanner.read_exif", return_value=None), \
-         patch("godmode_media_library.scanner.dhash", return_value=None), \
-         patch("godmode_media_library.scanner.video_dhash", return_value=None):
+
+    with (
+        patch("godmode_media_library.scanner.probe_file", return_value=None),
+        patch("godmode_media_library.scanner.read_exif", return_value=None),
+        patch("godmode_media_library.scanner.dhash", return_value=None),
+        patch("godmode_media_library.scanner.video_dhash", return_value=None),
+    ):
         incremental_scan(cat, [root])
     cat.close()
     return db_path
@@ -47,6 +51,7 @@ def catalog_with_files(tmp_path):
 def client(catalog_with_files):
     """Create a test client with a populated catalog."""
     from godmode_media_library.web.app import create_app
+
     app = create_app(catalog_path=catalog_with_files)
     return TestClient(app)
 
@@ -57,6 +62,11 @@ def test_get_stats(client):
     data = resp.json()
     assert "total_files" in data
     assert data["total_files"] == 4
+    # top_extensions should be a list of [ext, count] pairs
+    assert isinstance(data["top_extensions"], list)
+    if data["top_extensions"]:
+        assert isinstance(data["top_extensions"][0], list)
+        assert len(data["top_extensions"][0]) == 2
 
 
 def test_get_files(client):
@@ -153,8 +163,8 @@ def test_get_files_with_phash_filter(client):
 
 def test_task_progress_field(client):
     """Verify task response includes progress field."""
-    # Create a mock task manually
     from godmode_media_library.web.api import _create_task, _update_progress
+
     task = _create_task("test")
     _update_progress(task.id, {"phase": "hashing", "total": 100, "processed": 42})
     resp = client.get(f"/api/tasks/{task.id}")
@@ -184,3 +194,116 @@ def test_get_files_with_pagination(client):
     paths1 = {f["path"] for f in d1["files"]}
     paths2 = {f["path"] for f in d2["files"]}
     assert paths1.isdisjoint(paths2)
+
+
+# ── Security tests ────────────────────────────────────
+
+
+def test_thumbnail_path_traversal_blocked(client):
+    """Thumbnail endpoint must not serve files outside the catalog."""
+    # Attempt to access /etc/passwd via path traversal
+    resp = client.get("/api/thumbnail/etc/passwd")
+    assert resp.status_code == 404
+
+
+def test_thumbnail_dot_dot_traversal(client):
+    """Path traversal with .. must be blocked."""
+    resp = client.get("/api/thumbnail/../../../etc/passwd")
+    # FastAPI normalizes the path, but our catalog check should still block it
+    assert resp.status_code in (404, 400, 422)
+
+
+def test_security_headers(client):
+    """Response should include security headers."""
+    resp = client.get("/api/stats")
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert resp.headers.get("x-frame-options") == "DENY"
+    assert resp.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+
+# ── POST endpoint tests ──────────────────────────────
+
+
+def test_post_scan_no_roots(client):
+    """POST /scan without roots should start and report error in task."""
+    resp = client.post("/api/scan", json={"workers": 1})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "task_id" in data
+    assert data["status"] == "started"
+
+
+def test_post_scan_with_roots(catalog_with_files, client):
+    """POST /scan with valid roots should start a scan task."""
+    # Get the media root from the catalog
+    cat = Catalog(catalog_with_files)
+    cat.open()
+    paths = cat.all_paths()
+    cat.close()
+    # Extract root directory from first path
+    first_path = next(iter(paths))
+    root = str(first_path.rsplit("/", 1)[0])
+
+    with (
+        patch("godmode_media_library.scanner.probe_file", return_value=None),
+        patch("godmode_media_library.scanner.read_exif", return_value=None),
+        patch("godmode_media_library.scanner.dhash", return_value=None),
+        patch("godmode_media_library.scanner.video_dhash", return_value=None),
+    ):
+        resp = client.post("/api/scan", json={"roots": [root], "workers": 1, "extract_exiftool": False})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "started"
+
+
+def test_post_pipeline_starts(client):
+    """POST /pipeline should return task_id."""
+    resp = client.post("/api/pipeline", json={"workers": 1})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "task_id" in data
+    assert data["status"] == "started"
+
+
+# ── Task eviction tests ──────────────────────────────
+
+
+def test_task_eviction():
+    """Old completed tasks should be evicted."""
+    from godmode_media_library.web.api import (
+        _create_task,
+        _evict_old_tasks,
+        _finish_task,
+        _tasks,
+        _tasks_lock,
+    )
+
+    # Save existing tasks and clear for isolated test
+    with _tasks_lock:
+        saved_tasks = dict(_tasks)
+        _tasks.clear()
+
+    try:
+        # Create and finish some tasks
+        old_ids = []
+        for i in range(5):
+            task = _create_task(f"evict-test-{i}")
+            _finish_task(task.id, result={"ok": True})
+            with _tasks_lock:
+                _tasks[task.id]._created_ts -= 7200  # 2 hours ago
+            old_ids.append(task.id)
+
+        # Create a fresh task
+        fresh = _create_task("fresh")
+
+        # Eviction should remove old tasks but keep fresh one
+        with _tasks_lock:
+            _evict_old_tasks()
+            assert fresh.id in _tasks
+            # Old tasks should be gone
+            for old_id in old_ids:
+                assert old_id not in _tasks
+    finally:
+        # Restore original tasks
+        with _tasks_lock:
+            _tasks.clear()
+            _tasks.update(saved_tasks)

@@ -283,7 +283,7 @@ def test_stats(tmp_path: Path) -> None:
         assert s["total_files"] == 4
         assert s["total_size_bytes"] == 1000 + 5000 + 200 + 8000
         assert s["duplicate_groups"] == 0
-        assert isinstance(s["top_extensions"], dict)
+        assert isinstance(s["top_extensions"], list)
 
 
 # ── All paths ────────────────────────────────────────────────────────

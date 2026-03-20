@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import io
+import logging
 import threading
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,7 +16,13 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# Maximum completed tasks to keep in memory before eviction
+_MAX_COMPLETED_TASKS = 50
+_TASK_TTL_SECONDS = 3600  # 1 hour
 
 
 class ScanConfig(BaseModel):
@@ -35,10 +43,29 @@ class TaskStatus:
     started_at: str = ""
     finished_at: str | None = None
     error: str | None = None
+    _created_ts: float = field(default_factory=time.monotonic, repr=False)
 
 
 _tasks: dict[str, TaskStatus] = {}
 _tasks_lock = threading.Lock()
+
+
+def _evict_old_tasks() -> None:
+    """Remove completed/failed tasks older than TTL. Must be called under _tasks_lock."""
+    now = time.monotonic()
+    to_remove = [
+        tid
+        for tid, t in _tasks.items()
+        if t.status in ("completed", "failed") and (now - t._created_ts) > _TASK_TTL_SECONDS
+    ]
+    for tid in to_remove:
+        del _tasks[tid]
+    # Hard cap: if still too many completed, remove oldest
+    completed = [(tid, t._created_ts) for tid, t in _tasks.items() if t.status in ("completed", "failed")]
+    if len(completed) > _MAX_COMPLETED_TASKS:
+        completed.sort(key=lambda x: x[1])
+        for tid, _ in completed[: len(completed) - _MAX_COMPLETED_TASKS]:
+            del _tasks[tid]
 
 
 def _create_task(command: str) -> TaskStatus:
@@ -48,6 +75,7 @@ def _create_task(command: str) -> TaskStatus:
         started_at=datetime.now(timezone.utc).isoformat(),
     )
     with _tasks_lock:
+        _evict_old_tasks()
         _tasks[task.id] = task
     return task
 
@@ -260,11 +288,21 @@ def get_deps() -> dict:
 
 
 @router.get("/thumbnail/{file_path:path}")
-def get_thumbnail(file_path: str, size: int = Query(default=200, le=800)) -> StreamingResponse:
+def get_thumbnail(request: Request, file_path: str, size: int = Query(default=200, le=800)) -> StreamingResponse:
     """Generate and serve a thumbnail for an image file."""
-    full_path = Path(f"/{file_path}")
+    full_path = Path(f"/{file_path}").resolve()
+
+    # Security: verify the file is within the catalog (exists in DB)
+    cat = _open_catalog(request)
+    try:
+        row = cat.get_file_by_path(str(full_path))
+        if row is None:
+            raise HTTPException(status_code=404, detail="File not found in catalog")
+    finally:
+        cat.close()
+
     if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="File not found on disk")
 
     ext = full_path.suffix.lower()
     image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif", ".webp", ".heic", ".heif"}
@@ -273,24 +311,30 @@ def get_thumbnail(file_path: str, size: int = Query(default=200, le=800)) -> Str
 
     try:
         from PIL import Image
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Pillow not installed") from None
 
-        if ext in (".heic", ".heif"):
-            try:
-                import pillow_heif
-                pillow_heif.register_heif_opener()
-            except ImportError:
-                raise HTTPException(status_code=400, detail="pillow-heif required for HEIC") from None
+    if ext in (".heic", ".heif"):
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except ImportError:
+            raise HTTPException(status_code=400, detail="pillow-heif required for HEIC") from None
 
+    try:
         with Image.open(full_path) as img:
             img.thumbnail((size, size), Image.LANCZOS)
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=80)
             buf.seek(0)
-            return StreamingResponse(buf, media_type="image/jpeg")
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Pillow not installed") from None
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+            return StreamingResponse(
+                buf,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+    except (OSError, ValueError) as e:
+        logger.warning("Thumbnail generation failed for %s: %s", full_path, e)
+        raise HTTPException(status_code=500, detail="Failed to generate thumbnail") from e
 
 
 @router.post("/scan")

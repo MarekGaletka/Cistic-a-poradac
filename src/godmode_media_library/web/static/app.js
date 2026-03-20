@@ -36,7 +36,7 @@ function fileName(path) {
 
 function escapeHtml(str) {
   if (typeof str !== "string") return String(str ?? "");
-  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // ── Toast ────────────────────────────────────────────
@@ -46,10 +46,11 @@ function showToast(message, type = "info") {
   if (!container) return;
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
+  toast.setAttribute("role", "status");
   toast.textContent = message;
   toast.addEventListener("click", () => toast.remove());
   container.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 4000);
 }
 
 // ── Modal ────────────────────────────────────────────
@@ -61,13 +62,15 @@ function closeModal() {
 
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 
-const IMAGE_EXTS = new Set(["jpg","jpeg","png","bmp","tiff","tif","gif","webp","heic","heif"]);
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif"]);
 
 async function showFileDetail(filePath) {
   // Create overlay immediately with loading state
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
-  overlay.innerHTML = `<div class="modal"><button class="modal-close" onclick="closeModal()">&times;</button><div class="loading"><div class="spinner"></div>Loading...</div></div>`;
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", "File detail");
+  overlay.innerHTML = `<div class="modal"><button class="modal-close" aria-label="Close" onclick="closeModal()">&times;</button><div class="loading"><div class="spinner" role="status" aria-label="Loading"></div>Loading...</div></div>`;
   overlay.addEventListener("click", e => { if (e.target === overlay) closeModal(); });
   document.body.appendChild(overlay);
 
@@ -81,7 +84,8 @@ async function showFileDetail(filePath) {
     // Thumbnail or placeholder
     let thumbHtml;
     if (isImage) {
-      thumbHtml = `<img class="modal-thumb" src="/api/thumbnail${f.path}?size=400" onerror="this.outerHTML='<div class=\\'modal-thumb-placeholder\\'>&#128444;</div>'" alt="">`;
+      const thumbSrc = `/api/thumbnail${encodeURI(f.path)}?size=400`;
+      thumbHtml = `<img class="modal-thumb" src="${thumbSrc}" onerror="this.outerHTML='<div class=\\'modal-thumb-placeholder\\'>&#128444;</div>'" alt="${escapeHtml(fileName(f.path))}">`;
     } else {
       const icon = (f.ext || "").match(/^(mp4|mov|avi|mkv|wmv|flv|webm)$/i) ? "&#127910;" : "&#128196;";
       thumbHtml = `<div class="modal-thumb-placeholder">${icon}</div>`;
@@ -97,7 +101,7 @@ async function showFileDetail(filePath) {
     // GPS link
     let gpsHtml = "";
     if (f.gps_latitude && f.gps_longitude) {
-      gpsHtml = `<div class="meta-row"><span class="meta-label">GPS</span><a class="gps-link" href="https://maps.google.com/?q=${f.gps_latitude},${f.gps_longitude}" target="_blank" rel="noopener">${f.gps_latitude.toFixed(6)}, ${f.gps_longitude.toFixed(6)} &#x2197;</a></div>`;
+      gpsHtml = `<div class="meta-row"><span class="meta-label">GPS</span><a class="gps-link" href="https://maps.google.com/?q=${f.gps_latitude},${f.gps_longitude}" target="_blank" rel="noopener noreferrer">${f.gps_latitude.toFixed(6)}, ${f.gps_longitude.toFixed(6)} &#x2197;</a></div>`;
     }
 
     // Basic info rows
@@ -106,14 +110,14 @@ async function showFileDetail(filePath) {
     const infoRows = [
       ["Size", formatBytes(f.size)],
       ["Extension", f.ext],
-      ["Date", f.date_original || "—"],
+      ["Date", f.date_original || "\u2014"],
       cam ? ["Camera", cam] : null,
       res ? ["Resolution", res] : null,
       f.duration_seconds ? ["Duration", `${f.duration_seconds.toFixed(1)}s`] : null,
       f.video_codec ? ["Video", f.video_codec] : null,
       f.audio_codec ? ["Audio", f.audio_codec] : null,
-      f.sha256 ? ["SHA-256", f.sha256.slice(0, 16) + "..."] : null,
-      f.phash ? ["PHash", f.phash.slice(0, 16) + "..."] : null,
+      f.sha256 ? ["SHA-256", f.sha256.slice(0, 16) + "\u2026"] : null,
+      f.phash ? ["PHash", f.phash.slice(0, 16) + "\u2026"] : null,
     ].filter(Boolean);
 
     // Deep metadata table
@@ -130,14 +134,14 @@ async function showFileDetail(filePath) {
 
     const modalEl = overlay.querySelector(".modal");
     modalEl.innerHTML = `
-      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <button class="modal-close" aria-label="Close" onclick="closeModal()">&times;</button>
       <div class="modal-header">
         ${thumbHtml}
         <div class="modal-info">
           <h3>${escapeHtml(fileName(f.path))}</h3>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;word-break:break-all">${escapeHtml(f.path)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;word-break:break-all">${escapeHtml(f.path)}</div>
           ${richnessHtml ? `<div style="margin-bottom:12px">${richnessHtml}</div>` : ""}
-          ${infoRows.map(([l,v]) => `<div class="meta-row"><span class="meta-label">${escapeHtml(l)}</span><span>${escapeHtml(v)}</span></div>`).join("")}
+          ${infoRows.map(([l, v]) => `<div class="meta-row"><span class="meta-label">${escapeHtml(l)}</span><span>${escapeHtml(v)}</span></div>`).join("")}
           ${gpsHtml}
         </div>
       </div>
@@ -145,7 +149,7 @@ async function showFileDetail(filePath) {
     `;
   } catch (e) {
     const modalEl = overlay.querySelector(".modal");
-    modalEl.innerHTML = `<button class="modal-close" onclick="closeModal()">&times;</button><div class="empty">Error loading file detail: ${escapeHtml(e.message)}</div>`;
+    modalEl.innerHTML = `<button class="modal-close" aria-label="Close" onclick="closeModal()">&times;</button><div class="empty">Error loading file detail: ${escapeHtml(e.message)}</div>`;
   }
 }
 window.showFileDetail = showFileDetail;
@@ -156,13 +160,41 @@ window.closeModal = closeModal;
 const pages = { dashboard: renderDashboard, files: renderFiles, duplicates: renderDuplicates, similar: renderSimilar, timeline: renderTimeline, map: renderMap, pipeline: renderPipeline, doctor: renderDoctor };
 
 function navigate(page) {
-  $$("nav a").forEach(a => a.classList.toggle("active", a.dataset.page === page));
-  content().innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
+  // Cleanup before navigating away
+  _cleanupCurrentPage();
+
+  $$("nav a").forEach(a => {
+    const isActive = a.dataset.page === page;
+    a.classList.toggle("active", isActive);
+    if (isActive) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  });
+  content().innerHTML = '<div class="loading"><div class="spinner" role="status" aria-label="Loading"></div>Loading...</div>';
   if (pages[page]) pages[page]();
 }
 
+function _cleanupCurrentPage() {
+  // Clear any polling intervals
+  if (_pollInterval) {
+    clearInterval(_pollInterval);
+    _pollInterval = null;
+  }
+  // Clean up Leaflet map
+  if (_leafletMap) {
+    _leafletMap.remove();
+    _leafletMap = null;
+  }
+}
+
 // Hamburger toggle for mobile
-$(".nav-toggle")?.addEventListener("click", () => $("nav").classList.toggle("open"));
+const navToggle = $(".nav-toggle");
+if (navToggle) {
+  navToggle.addEventListener("click", () => {
+    const nav = $("nav");
+    const isOpen = nav.classList.toggle("open");
+    navToggle.setAttribute("aria-expanded", isOpen);
+  });
+}
 
 document.addEventListener("click", e => {
   const link = e.target.closest("nav a[data-page]");
@@ -171,6 +203,7 @@ document.addEventListener("click", e => {
     navigate(link.dataset.page);
     // Close nav on mobile after navigation
     $("nav").classList.remove("open");
+    navToggle?.setAttribute("aria-expanded", "false");
   }
 });
 
@@ -198,17 +231,21 @@ async function renderDashboard() {
     }
     html += "</div>";
 
-    if (stats.top_extensions?.length) {
+    // top_extensions is an array of [ext, count] pairs
+    const exts = stats.top_extensions;
+    if (exts && exts.length) {
       html += "<h2>Top Extensions</h2><table><tr><th>Extension</th><th>Count</th></tr>";
-      for (const [ext, count] of stats.top_extensions) {
+      for (const [ext, count] of exts) {
         html += `<tr><td>.${escapeHtml(ext)}</td><td>${count.toLocaleString()}</td></tr>`;
       }
       html += "</table>";
     }
 
-    if (stats.top_cameras?.length) {
+    // top_cameras is an array of [camera, count] pairs
+    const cams = stats.top_cameras;
+    if (cams && cams.length) {
       html += "<h2>Top Cameras</h2><table><tr><th>Camera</th><th>Count</th></tr>";
-      for (const [cam, count] of stats.top_cameras) {
+      for (const [cam, count] of cams) {
         html += `<tr><td>${escapeHtml(cam)}</td><td>${count.toLocaleString()}</td></tr>`;
       }
       html += "</table>";
@@ -228,22 +265,31 @@ let _filesOffset = 0;
 async function renderFiles() {
   _filesOffset = 0;
   let html = `<h2>Files</h2>
-    <div class="filters">
-      <input type="text" id="f-ext" placeholder="Extension (jpg)" size="10">
-      <input type="text" id="f-camera" placeholder="Camera" size="15">
-      <input type="text" id="f-path" placeholder="Path contains..." size="20">
-      <button onclick="_filesOffset=0;loadFiles()">Search</button>
+    <div class="filters" role="search" aria-label="File filters">
+      <input type="text" id="f-ext" placeholder="Extension (jpg)" size="10" aria-label="Filter by extension">
+      <input type="text" id="f-camera" placeholder="Camera" size="15" aria-label="Filter by camera">
+      <input type="text" id="f-path" placeholder="Path contains..." size="20" aria-label="Filter by path">
+      <button onclick="_filesOffset=0;loadFiles()" aria-label="Search files">Search</button>
     </div>
     <div class="filters filters-advanced">
-      <div class="filter-group"><label>From</label><input type="date" id="f-date-from"></div>
-      <div class="filter-group"><label>To</label><input type="date" id="f-date-to"></div>
-      <div class="filter-group"><label>Min KB</label><input type="number" id="f-min-size" min="0" style="width:80px"></div>
-      <div class="filter-group"><label>Max KB</label><input type="number" id="f-max-size" min="0" style="width:80px"></div>
+      <div class="filter-group"><label for="f-date-from">From</label><input type="date" id="f-date-from"></div>
+      <div class="filter-group"><label for="f-date-to">To</label><input type="date" id="f-date-to"></div>
+      <div class="filter-group"><label for="f-min-size">Min KB</label><input type="number" id="f-min-size" min="0" style="width:80px"></div>
+      <div class="filter-group"><label for="f-max-size">Max KB</label><input type="number" id="f-max-size" min="0" style="width:80px"></div>
       <label class="filter-checkbox"><input type="checkbox" id="f-has-gps"> GPS</label>
       <label class="filter-checkbox"><input type="checkbox" id="f-has-phash"> PHash</label>
     </div>
-    <div id="files-table"></div>`;
+    <div id="files-table" aria-live="polite"></div>`;
   content().innerHTML = html;
+
+  // Enter key triggers search
+  const searchInputs = content().querySelectorAll(".filters input");
+  searchInputs.forEach(input => {
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") { _filesOffset = 0; loadFiles(); }
+    });
+  });
+
   loadFiles();
 }
 
@@ -279,7 +325,7 @@ async function loadFiles() {
       const gps = f.gps_latitude ? `${f.gps_latitude.toFixed(4)}, ${f.gps_longitude.toFixed(4)}` : "";
       const res = f.width && f.height ? `${f.width}x${f.height}` : "";
       const cam = [f.camera_make, f.camera_model].filter(Boolean).join(" ");
-      t += `<tr style="cursor:pointer" onclick="showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')">
+      t += `<tr style="cursor:pointer" tabindex="0" role="button" aria-label="View ${escapeHtml(fileName(f.path))}" onclick="showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')">
         <td class="path" title="${escapeHtml(f.path)}">${escapeHtml(fileName(f.path))}</td>
         <td>${escapeHtml(f.ext)}</td>
         <td>${formatBytes(f.size)}</td>
@@ -294,14 +340,14 @@ async function loadFiles() {
     const pageNum = Math.floor(_filesOffset / FILES_PER_PAGE) + 1;
     const from = _filesOffset + 1;
     const to = _filesOffset + data.count;
-    t += `<div class="pagination">
-      <button ${_filesOffset === 0 ? "disabled" : ""} onclick="filesPagePrev()">&#8592; Previous</button>
-      <span class="page-info">Showing ${from}–${to} (page ${pageNum})</span>
-      <button ${!data.has_more ? "disabled" : ""} onclick="filesPageNext()">Next &#8594;</button>
+    t += `<div class="pagination" role="navigation" aria-label="Pagination">
+      <button ${_filesOffset === 0 ? "disabled" : ""} onclick="filesPagePrev()" aria-label="Previous page">&#8592; Previous</button>
+      <span class="page-info" aria-live="polite">Showing ${from}\u2013${to} (page ${pageNum})</span>
+      <button ${!data.has_more ? "disabled" : ""} onclick="filesPageNext()" aria-label="Next page">Next &#8594;</button>
     </div>`;
     $("#files-table").innerHTML = t;
   } catch (e) {
-    $("#files-table").innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+    $("#files-table").innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 function filesPageNext() { _filesOffset += FILES_PER_PAGE; loadFiles(); }
@@ -310,6 +356,13 @@ function filesPagePrev() { _filesOffset = Math.max(0, _filesOffset - FILES_PER_P
 window.loadFiles = loadFiles;
 window.filesPageNext = filesPageNext;
 window.filesPagePrev = filesPagePrev;
+
+// Keyboard support for table rows
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches("tr[role='button']")) {
+    e.target.click();
+  }
+});
 
 // ── Duplicates ───────────────────────────────────────
 
@@ -327,24 +380,24 @@ async function renderDuplicates() {
         <td class="path">${escapeHtml(g.group_id.slice(0, 12))}</td>
         <td>${g.file_count}</td>
         <td>${formatBytes(g.total_size)}</td>
-        <td><button onclick="showDiff('${escapeHtml(g.group_id)}')">Diff</button></td>
+        <td><button onclick="showDiff('${escapeHtml(g.group_id)}')" aria-label="Show diff for group ${escapeHtml(g.group_id.slice(0, 8))}">Diff</button></td>
       </tr>`;
     }
     html += "</table>";
-    html += '<div id="diff-detail"></div>';
+    html += '<div id="diff-detail" aria-live="polite"></div>';
     content().innerHTML = html;
   } catch (e) {
-    content().innerHTML = `<h2>Duplicates</h2><div class="empty">Error: ${e.message}</div>`;
+    content().innerHTML = `<h2>Duplicates</h2><div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
 async function showDiff(groupId) {
   const el = $("#diff-detail");
-  el.innerHTML = '<div class="loading"><div class="spinner"></div>Loading diff...</div>';
+  el.innerHTML = '<div class="loading"><div class="spinner" role="status" aria-label="Loading"></div>Loading diff...</div>';
   try {
     const [groupData, diffData] = await Promise.all([
-      api(`/duplicates/${groupId}`),
-      api(`/duplicates/${groupId}/diff`),
+      api(`/duplicates/${encodeURIComponent(groupId)}`),
+      api(`/duplicates/${encodeURIComponent(groupId)}/diff`),
     ]);
 
     const files = groupData.files || [];
@@ -357,7 +410,7 @@ async function showDiff(groupId) {
       if (score > winnerScore) { winnerScore = score; winnerPath = path; }
     }
 
-    let html = `<h2 style="margin-top:20px">Metadata Diff — ${groupId.slice(0,12)}</h2>`;
+    let html = `<h2 style="margin-top:20px">Metadata Diff \u2014 ${escapeHtml(groupId.slice(0, 12))}</h2>`;
 
     // Side-by-side file comparison with thumbnails
     html += '<div class="dup-compare">';
@@ -366,7 +419,8 @@ async function showDiff(groupId) {
       const score = scores[path];
       const isWinner = path === winnerPath && files.length > 1;
       html += `<div class="dup-column ${isWinner ? "dup-winner" : ""}">`;
-      html += `<img class="dup-thumb" src="/api/thumbnail${path}?size=250" onerror="this.outerHTML='<div class=\\'dup-thumb-placeholder\\'>&#128444;</div>'" alt="">`;
+      const thumbSrc = `/api/thumbnail${encodeURI(path)}?size=250`;
+      html += `<img class="dup-thumb" src="${thumbSrc}" onerror="this.outerHTML='<div class=\\'dup-thumb-placeholder\\'>&#128444;</div>'" alt="${escapeHtml(fileName(path))}">`;
       html += `<div class="dup-filename">${escapeHtml(fileName(path))}</div>`;
       if (score != null) {
         const level = score >= 30 ? "high" : score >= 15 ? "medium" : "low";
@@ -387,7 +441,7 @@ async function showDiff(groupId) {
     }
 
     if (Object.keys(diffData.partial).length) {
-      html += `<details class="diff-section" open><summary class="diff-toggle partial">Partial (${Object.keys(diffData.partial).length} tags — merge candidates)</summary>`;
+      html += `<details class="diff-section" open><summary class="diff-toggle partial">Partial (${Object.keys(diffData.partial).length} tags \u2014 merge candidates)</summary>`;
       for (const [tag, sources] of Object.entries(diffData.partial)) {
         for (const [path, val] of Object.entries(sources)) {
           html += `<div class="tag-row"><span class="tag-name">${escapeHtml(tag)}</span><span class="tag-value">${escapeHtml(fileName(path))}: ${escapeHtml(JSON.stringify(val))}</span></div>`;
@@ -408,7 +462,7 @@ async function showDiff(groupId) {
 
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 window.showDiff = showDiff;
@@ -425,13 +479,15 @@ async function renderSimilar() {
     let html = `<h2>Similar Images <span style="color:var(--text-muted);font-size:14px">(${data.total_pairs} pairs)</span></h2>`;
     html += '<div class="similar-grid">';
     for (const p of data.pairs) {
+      const srcA = `/api/thumbnail${encodeURI(p.path_a)}?size=200`;
+      const srcB = `/api/thumbnail${encodeURI(p.path_b)}?size=200`;
       html += `<div class="similar-pair">
         <div class="distance">Distance: ${p.distance}</div>
         <div class="thumbs">
-          <img src="/api/thumbnail${p.path_a}?size=200" alt="${escapeHtml(fileName(p.path_a))}" onerror="this.style.display='none'">
-          <img src="/api/thumbnail${p.path_b}?size=200" alt="${escapeHtml(fileName(p.path_b))}" onerror="this.style.display='none'">
+          <img src="${srcA}" alt="${escapeHtml(fileName(p.path_a))}" onerror="this.style.display='none'">
+          <img src="${srcB}" alt="${escapeHtml(fileName(p.path_b))}" onerror="this.style.display='none'">
         </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-muted)">
+        <div style="margin-top:6px;font-size:12px;color:var(--text-muted)">
           ${escapeHtml(fileName(p.path_a))}<br>${escapeHtml(fileName(p.path_b))}
         </div>
       </div>`;
@@ -439,7 +495,7 @@ async function renderSimilar() {
     html += "</div>";
     content().innerHTML = html;
   } catch (e) {
-    content().innerHTML = `<h2>Similar Images</h2><div class="empty">Error: ${e.message}</div>`;
+    content().innerHTML = `<h2>Similar Images</h2><div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -459,7 +515,6 @@ async function renderTimeline() {
     const groups = {};
     for (const f of files) {
       const date = f.date_original;
-      // Extract YYYY-MM from various date formats
       const match = date.match(/^(\d{4})[:\-/](\d{2})/);
       const key = match ? `${match[1]}-${match[2]}` : "Unknown";
       if (!groups[key]) groups[key] = [];
@@ -484,9 +539,9 @@ async function renderTimeline() {
       for (const f of monthFiles.slice(0, 20)) {
         const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
         const thumb = isImage
-          ? `<img src="/api/thumbnail${f.path}?size=150" onerror="this.style.display='none'" alt="">`
-          : `<div class="timeline-icon">${f.ext}</div>`;
-        html += `<div class="timeline-item" onclick="showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')" title="${escapeHtml(f.path)}">
+          ? `<img src="/api/thumbnail${encodeURI(f.path)}?size=150" onerror="this.style.display='none'" alt="${escapeHtml(fileName(f.path))}">`
+          : `<div class="timeline-icon">${escapeHtml(f.ext)}</div>`;
+        html += `<div class="timeline-item" tabindex="0" role="button" onclick="showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')" title="${escapeHtml(f.path)}">
           ${thumb}
           <div class="timeline-name">${escapeHtml(fileName(f.path))}</div>
         </div>`;
@@ -500,13 +555,14 @@ async function renderTimeline() {
     html += '</div>';
     content().innerHTML = html;
   } catch (e) {
-    content().innerHTML = `<h2>Timeline</h2><div class="empty">Error: ${e.message}</div>`;
+    content().innerHTML = `<h2>Timeline</h2><div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
 // ── Map ──────────────────────────────────────────────
 
 let _leafletMap = null;
+let _mapMarkers = [];
 
 async function renderMap() {
   content().innerHTML = '<h2>Map</h2><div id="map-container"></div>';
@@ -520,8 +576,9 @@ async function renderMap() {
       return;
     }
 
-    // Initialize Leaflet map
+    // Clean up previous map instance
     if (_leafletMap) { _leafletMap.remove(); _leafletMap = null; }
+    _mapMarkers = [];
 
     if (typeof L === "undefined") {
       content().innerHTML = '<h2>Map</h2><div class="empty">Leaflet.js not loaded. Check your internet connection.</div>';
@@ -542,8 +599,8 @@ async function renderMap() {
       bounds.push([lat, lng]);
 
       const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
-      const thumbUrl = isImage ? `/api/thumbnail${f.path}?size=150` : "";
-      const thumbHtml = isImage ? `<img src="${thumbUrl}" style="width:120px;height:80px;object-fit:cover;border-radius:4px;margin-bottom:4px;display:block" onerror="this.style.display='none'">` : "";
+      const thumbUrl = isImage ? `/api/thumbnail${encodeURI(f.path)}?size=150` : "";
+      const thumbHtml = isImage ? `<img src="${thumbUrl}" style="width:120px;height:80px;object-fit:cover;border-radius:4px;margin-bottom:4px;display:block" onerror="this.style.display='none'" alt="">` : "";
 
       const popup = `<div style="font-size:12px;max-width:160px">
         ${thumbHtml}
@@ -552,7 +609,8 @@ async function renderMap() {
         <a href="#" onclick="event.preventDefault();closeAllPopups();showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')">Details</a>
       </div>`;
 
-      L.marker([lat, lng]).addTo(_leafletMap).bindPopup(popup);
+      const marker = L.marker([lat, lng]).addTo(_leafletMap).bindPopup(popup);
+      _mapMarkers.push(marker);
     }
 
     // Fit map to markers
@@ -561,10 +619,10 @@ async function renderMap() {
     }
 
     // Fix Leaflet tile rendering issue with dynamic containers
-    setTimeout(() => _leafletMap.invalidateSize(), 100);
+    setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
 
   } catch (e) {
-    content().innerHTML = `<h2>Map</h2><div class="empty">Error: ${e.message}</div>`;
+    content().innerHTML = `<h2>Map</h2><div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -579,25 +637,25 @@ let _pollInterval = null;
 
 async function renderPipeline() {
   content().innerHTML = `<h2>Pipeline</h2>
-    <p style="color:var(--text-muted);margin-bottom:16px">Run the full pipeline: scan → metadata extract → diff → merge</p>
+    <p style="color:var(--text-muted);margin-bottom:16px">Run the full pipeline: scan \u2192 metadata extract \u2192 diff \u2192 merge</p>
     <div class="config-form">
       <div class="form-group">
-        <label class="form-label">Roots (one per line)</label>
-        <textarea id="cfg-roots" rows="3" placeholder="/Users/me/Photos&#10;/Volumes/External/Backup"></textarea>
+        <label class="form-label" for="cfg-roots">Roots (one per line)</label>
+        <textarea id="cfg-roots" rows="3" placeholder="/Users/me/Photos&#10;/Volumes/External/Backup" aria-label="Scan root directories"></textarea>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Workers</label>
+          <label class="form-label" for="cfg-workers">Workers</label>
           <input type="number" id="cfg-workers" value="1" min="1" max="16" style="width:70px">
         </div>
         <label class="filter-checkbox"><input type="checkbox" id="cfg-exiftool" checked> ExifTool extraction</label>
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:20px">
-      <button class="primary" onclick="startPipeline()">Start Pipeline</button>
-      <button onclick="startScan()">Scan Only</button>
+      <button class="primary" onclick="startPipeline()" aria-label="Start full pipeline">Start Pipeline</button>
+      <button onclick="startScan()" aria-label="Start scan only">Scan Only</button>
     </div>
-    <div id="task-output"></div>`;
+    <div id="task-output" aria-live="polite"></div>`;
 }
 
 function _getScanConfig() {
@@ -617,7 +675,7 @@ async function startPipeline() {
     pollTask(data.task_id);
   } catch (e) {
     showToast("Failed to start pipeline: " + e.message, "error");
-    $("#task-output").innerHTML = `<div class="task-status failed">Error: ${e.message}</div>`;
+    $("#task-output").innerHTML = `<div class="task-status failed">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -628,26 +686,37 @@ async function startScan() {
     pollTask(data.task_id);
   } catch (e) {
     showToast("Failed to start scan: " + e.message, "error");
-    $("#task-output").innerHTML = `<div class="task-status failed">Error: ${e.message}</div>`;
+    $("#task-output").innerHTML = `<div class="task-status failed">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
 
+let _pollErrorCount = 0;
+
 function pollTask(taskId) {
   if (_pollInterval) clearInterval(_pollInterval);
+  _pollErrorCount = 0;
   const el = $("#task-output");
-  el.innerHTML = `<div class="task-status running">Task ${taskId}: running...</div>`;
+  if (!el) return;
+  el.innerHTML = `<div class="task-status running">Task ${escapeHtml(taskId)}: running...</div>`;
   _pollInterval = setInterval(async () => {
+    // Stop polling if the element is gone (navigated away)
+    if (!document.getElementById("task-output")) {
+      clearInterval(_pollInterval);
+      _pollInterval = null;
+      return;
+    }
     try {
-      const data = await api(`/tasks/${taskId}`);
+      const data = await api(`/tasks/${encodeURIComponent(taskId)}`);
+      _pollErrorCount = 0;
       if (data.status === "running") {
         let progressHtml = "";
         if (data.progress) {
           const p = data.progress;
           const pct = p.total > 0 ? Math.round((p.processed / p.total) * 100) : 0;
-          progressHtml = `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${p.phase}: ${p.processed.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)</div>`;
+          progressHtml = `<div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${escapeHtml(p.phase)}: ${p.processed.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)</div>`;
         }
-        el.innerHTML = `<div class="task-status running">Task ${taskId}: running... (started ${data.started_at})${progressHtml}</div>`;
+        el.innerHTML = `<div class="task-status running">Task ${escapeHtml(taskId)}: running... (started ${escapeHtml(data.started_at)})${progressHtml}</div>`;
       } else {
         clearInterval(_pollInterval);
         _pollInterval = null;
@@ -656,17 +725,20 @@ function pollTask(taskId) {
           if (data.result) {
             resultHtml = "<pre>" + escapeHtml(JSON.stringify(data.result, null, 2)) + "</pre>";
           }
-          el.innerHTML = `<div class="task-status completed">Task ${taskId}: completed${resultHtml}</div>`;
+          el.innerHTML = `<div class="task-status completed">Task ${escapeHtml(taskId)}: completed${resultHtml}</div>`;
           showToast("Task completed successfully", "success");
         } else {
-          el.innerHTML = `<div class="task-status failed">Task ${taskId}: failed — ${escapeHtml(data.error)}</div>`;
+          el.innerHTML = `<div class="task-status failed">Task ${escapeHtml(taskId)}: failed \u2014 ${escapeHtml(data.error)}</div>`;
           showToast("Task failed: " + (data.error || "unknown error"), "error");
         }
       }
     } catch (e) {
-      clearInterval(_pollInterval);
-      _pollInterval = null;
-      el.innerHTML = `<div class="task-status failed">Error polling task: ${e.message}</div>`;
+      _pollErrorCount++;
+      if (_pollErrorCount >= 5) {
+        clearInterval(_pollInterval);
+        _pollInterval = null;
+        el.innerHTML = `<div class="task-status failed">Lost connection to server after ${_pollErrorCount} retries: ${escapeHtml(e.message)}</div>`;
+      }
     }
   }, 2000);
 }
@@ -686,7 +758,7 @@ async function renderDoctor() {
       const ver = d.version ? ` (${escapeHtml(d.version)})` : "";
       const hint = d.install_hint ? `<span class="dep-hint">${escapeHtml(d.install_hint)}</span>` : "";
       html += `<div class="dep-item">
-        <div class="dep-status ${status}"></div>
+        <div class="dep-status ${status}" aria-label="${d.available ? "Available" : "Missing"}"></div>
         <strong>${escapeHtml(d.name)}</strong>${ver}
         ${hint}
       </div>`;
@@ -694,6 +766,6 @@ async function renderDoctor() {
     html += "</div>";
     content().innerHTML = html;
   } catch (e) {
-    content().innerHTML = `<h2>Doctor</h2><div class="empty">Error: ${e.message}</div>`;
+    content().innerHTML = `<h2>Doctor</h2><div class="empty">Error: ${escapeHtml(e.message)}</div>`;
   }
 }
