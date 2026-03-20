@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Rate limiting state
 _rate_limit_hits: dict[str, list[float]] = defaultdict(list)
 _RATE_LIMIT_WINDOW = 60.0  # seconds
-_RATE_LIMIT_MAX = 120  # requests per window
+_RATE_LIMIT_MAX = 600  # requests per window (generous for local UI)
 
 
 def create_app(catalog_path: Path | None = None) -> FastAPI:
