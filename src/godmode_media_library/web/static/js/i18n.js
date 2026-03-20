@@ -44,6 +44,14 @@ const translations = {
     "dashboard.scan_folder": "Naskenovat složku",
     "dashboard.last_scan": "Poslední sken",
     "dashboard.no_scan_yet": "Zatím neprovedeno",
+    "dashboard.managed_folders": "Spravované složky",
+    "dashboard.storage_breakdown": "Rozložení úložiště",
+    "dashboard.images": "Obrázky",
+    "dashboard.videos": "Videa",
+    "dashboard.other": "Ostatní",
+    "dashboard.last_scan_info": "Poslední sken: {date}",
+    "dashboard.no_folders": "Žádné složky nenastaveny",
+    "dashboard.open_settings": "Otevřít nastavení",
 
     // Files
     "files.title": "Soubory",
@@ -128,6 +136,14 @@ const translations = {
     "similar.compare": "Porovnat",
     "similar.empty_title": "Žádné podobné páry nenalezeny",
     "similar.empty_hint": "Zkuste zvýšit práh pro volnější porovnávání.",
+    "similar.threshold": "Práh podobnosti",
+    "similar.threshold_hint": "Nižší = přísnější shoda",
+    "similar.almost_identical": "Téměř identické",
+    "similar.very_similar": "Velmi podobné",
+    "similar.somewhat_similar": "Podobné",
+    "similar.total_pairs": "{count} nalezených párů",
+    "similar.resolve_pair": "Vyřešit",
+    "similar.resolve_all_pairs": "Vyřešit všechny páry",
 
     // Timeline
     "timeline.title": "Časová osa",
@@ -135,6 +151,10 @@ const translations = {
     "timeline.more": "+{count} dalších",
     "timeline.empty_title": "Žádné soubory s datem nenalezeny",
     "timeline.empty_hint": "Soubory potřebují metadata date_original (z EXIF nebo ExifTool extrakce).",
+    "timeline.show_all": "Zobrazit vše ({count})",
+    "timeline.collapse": "Sbalit",
+    "timeline.year": "Rok {year}",
+    "timeline.no_date": "Bez data",
 
     // Map
     "map.title": "Mapa",
@@ -142,6 +162,10 @@ const translations = {
     "map.empty_title": "Žádné geotagované soubory nenalezeny",
     "map.empty_hint": "Soubory potřebují GPS metadata z EXIF. Spusťte ExifTool extrakci pro vyplnění GPS dat.",
     "map.leaflet_error": "Leaflet.js není načtený. Zkontrolujte připojení k internetu.",
+    "map.files_on_map": "{count} souborů na mapě",
+    "map.cluster_files": "{count} souborů",
+    "map.photo": "Fotografie",
+    "map.video": "Video",
 
     // Pipeline / Settings
     "pipeline.title": "Pipeline",
@@ -184,6 +208,18 @@ const translations = {
     "doctor.available": "Dostupné",
     "doctor.missing": "Nedostupné",
     "doctor.install": "Nainstalovat",
+    "doctor.system_info": "Systémové informace",
+    "doctor.catalog_path": "Cesta ke katalogu",
+    "doctor.catalog_size": "Velikost katalogu",
+    "doctor.quarantine_size": "Velikost karantény",
+    "doctor.python_version": "Python",
+    "doctor.platform": "Platforma",
+    "doctor.total_files": "Celkem souborů",
+    "doctor.total_size": "Celková velikost",
+    "doctor.install_command": "Příkaz k instalaci",
+    "doctor.copy_command": "Kopírovat příkaz",
+    "doctor.all_ok": "Vše v pořádku",
+    "doctor.issues_found": "{count} problémů nalezeno",
 
     // Actions
     "action.quarantine": "Přesunout do karantény",
@@ -205,6 +241,16 @@ const translations = {
     "vdiff.side_by_side": "Vedle sebe",
     "vdiff.slider": "Posuvník",
     "vdiff.overlay": "Překryv",
+
+    // Lightbox
+    "lightbox.info": "Informace",
+    "lightbox.close": "Zavřít",
+    "lightbox.zoom_in": "Přiblížit",
+    "lightbox.zoom_out": "Oddálit",
+    "lightbox.counter": "{current} / {total}",
+    "lightbox.no_preview": "Náhled není k dispozici",
+    "lightbox.video": "Video",
+    "lightbox.download": "Stáhnout",
 
     // Folder picker
     "folder.picker_title": "Vyberte složku",
@@ -228,6 +274,22 @@ const translations = {
     "dashboard.or_quick_add": "Nebo rychle přidejte:",
     "pipeline.configured_roots": "Nastavené složky",
     "pipeline.no_roots": "Žádné složky nejsou nastaveny",
+
+    // File sorting
+    "files.sort_by": "Řadit podle",
+    "files.sort_name": "Název",
+    "files.sort_date": "Datum",
+    "files.sort_size": "Velikost",
+    "files.sort_ext": "Přípona",
+    "files.sort_asc": "Vzestupně",
+    "files.sort_desc": "Sestupně",
+
+    // Keyboard shortcuts
+    "shortcuts.title": "Klávesové zkratky",
+    "shortcuts.navigate": "1\u20136: Navigace mezi str\u00e1nkami",
+    "shortcuts.search": "/: Hledat",
+    "shortcuts.close": "Esc: Zav\u0159\u00edt",
+    "shortcuts.help": "?: N\u00e1pov\u011bda",
 
     // General
     "general.loading": "Načítání...",

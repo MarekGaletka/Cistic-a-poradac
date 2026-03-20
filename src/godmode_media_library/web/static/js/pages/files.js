@@ -4,7 +4,10 @@ import { api } from "../api.js";
 import { $, content, formatBytes, escapeHtml, fileName, IMAGE_EXTS } from "../utils.js";
 import { t } from "../i18n.js";
 import { showFileDetail } from "../modal.js";
+import { openLightbox } from "../lightbox.js";
 import { toggleSelect, selectAll, deselectAll, isSelected, getSelectedPaths, getSelectedCount } from "../selection.js";
+
+const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
 
 const FILES_PER_PAGE = 50;
 let _filesOffset = 0;
@@ -12,6 +15,8 @@ let _currentFiles = [];
 let _viewMode = "grid"; // Default to grid (photo gallery)
 let _selectionMode = false;
 let _filtersVisible = false;
+let _sortField = "date"; // name, date, size, ext
+let _sortDir = "desc";   // asc, desc
 
 export async function render(container) {
   _filesOffset = 0;
@@ -22,7 +27,7 @@ export async function render(container) {
       <h2>${t("files.title")}</h2>
       <div class="files-header-actions">
         <button id="btn-toggle-filters" class="btn-icon" title="${t("files.filters_toggle")}">
-          &#128270; ${t("files.filters_toggle")}
+          &#128270; ${t("files.filters_toggle")}<span id="filter-badge-count" class="filter-badge" style="display:none"></span>
         </button>
         <div class="view-toggle">
           <button id="btn-view-grid" class="${_viewMode === 'grid' ? 'active' : ''}" aria-label="Grid view" title="Galerie">&#9783;</button>
@@ -55,8 +60,35 @@ export async function render(container) {
       <button id="btn-deselect-all" class="small">${t("action.deselect_all")}</button>
       <button id="btn-exit-selection" class="small">${t("files.exit_selection")}</button>
     </div>
+    <div class="sort-controls" id="sort-controls">
+      <label for="sort-field">${t("files.sort_by")}:</label>
+      <select id="sort-field">
+        <option value="date" ${_sortField === "date" ? "selected" : ""}>${t("files.sort_date")}</option>
+        <option value="name" ${_sortField === "name" ? "selected" : ""}>${t("files.sort_name")}</option>
+        <option value="size" ${_sortField === "size" ? "selected" : ""}>${t("files.sort_size")}</option>
+        <option value="ext" ${_sortField === "ext" ? "selected" : ""}>${t("files.sort_ext")}</option>
+      </select>
+      <button id="btn-sort-dir" title="${_sortDir === "asc" ? t("files.sort_asc") : t("files.sort_desc")}">
+        ${_sortDir === "asc" ? "\u2191" : "\u2193"} ${_sortDir === "asc" ? t("files.sort_asc") : t("files.sort_desc")}
+      </button>
+    </div>
     <div id="files-table" aria-live="polite"></div>`;
   container.innerHTML = html;
+
+  // Bind sort events
+  container.querySelector("#sort-field").addEventListener("change", (e) => {
+    _sortField = e.target.value;
+    sortAndRender();
+  });
+  container.querySelector("#btn-sort-dir").addEventListener("click", () => {
+    _sortDir = _sortDir === "asc" ? "desc" : "asc";
+    const btn = container.querySelector("#btn-sort-dir");
+    if (btn) {
+      btn.title = _sortDir === "asc" ? t("files.sort_asc") : t("files.sort_desc");
+      btn.innerHTML = `${_sortDir === "asc" ? "\u2191" : "\u2193"} ${_sortDir === "asc" ? t("files.sort_asc") : t("files.sort_desc")}`;
+    }
+    sortAndRender();
+  });
 
   // Bind events
   container.querySelector("#btn-files-search").addEventListener("click", () => { _filesOffset = 0; loadFiles(); });
@@ -94,6 +126,47 @@ export async function render(container) {
   });
 
   loadFiles();
+}
+
+function sortAndRender() {
+  if (!_currentFiles.length) return;
+  _currentFiles.sort((a, b) => {
+    let cmp = 0;
+    if (_sortField === "name") {
+      const nameA = (a.path || "").split("/").pop().toLowerCase();
+      const nameB = (b.path || "").split("/").pop().toLowerCase();
+      cmp = nameA.localeCompare(nameB);
+    } else if (_sortField === "date") {
+      cmp = (a.date_original || "").localeCompare(b.date_original || "");
+    } else if (_sortField === "size") {
+      cmp = (a.size || 0) - (b.size || 0);
+    } else if (_sortField === "ext") {
+      cmp = (a.ext || "").localeCompare(b.ext || "");
+    }
+    return _sortDir === "asc" ? cmp : -cmp;
+  });
+  renderCurrentFiles();
+}
+
+function updateFilterBadge() {
+  const badge = document.querySelector("#filter-badge-count");
+  if (!badge) return;
+  let count = 0;
+  if ($("#f-ext")?.value) count++;
+  if ($("#f-camera")?.value) count++;
+  if ($("#f-path")?.value) count++;
+  if ($("#f-date-from")?.value) count++;
+  if ($("#f-date-to")?.value) count++;
+  if ($("#f-min-size")?.value) count++;
+  if ($("#f-max-size")?.value) count++;
+  if ($("#f-has-gps")?.checked) count++;
+  if ($("#f-has-phash")?.checked) count++;
+  if (count > 0) {
+    badge.textContent = String(count);
+    badge.style.display = "";
+  } else {
+    badge.style.display = "none";
+  }
 }
 
 function updateViewToggle(container) {
@@ -135,6 +208,7 @@ async function loadFiles() {
     const data = await api(q);
     _lastData = data;
     _currentFiles = data.files;
+    updateFilterBadge();
     if (!data.files.length) {
       $("#files-table").innerHTML = `<div class="empty-state-hero" style="padding:40px 0">
         <div class="empty-state-icon" style="font-size:48px">&#128269;</div>
@@ -247,15 +321,29 @@ function bindFileEvents(el) {
     });
   }
 
-  // Row/card clicks (excluding checkboxes)
+  // Row/card clicks (excluding checkboxes) — open lightbox for images/videos, modal for others
+  const allPaths = _currentFiles.map(f => f.path);
+  const lightboxPaths = _currentFiles
+    .filter(f => {
+      const ext = (f.ext || "").toLowerCase();
+      return IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
+    })
+    .map(f => f.path);
+
   el.querySelectorAll("[data-file-path]").forEach(row => {
-    row.addEventListener("click", e => {
+    const handler = (e) => {
+      if (e.type === "keydown" && e.key !== "Enter") return;
       if (e.target.matches("input[type=checkbox]")) return;
-      showFileDetail(row.dataset.filePath);
-    });
-    row.addEventListener("keydown", e => {
-      if (e.key === "Enter") showFileDetail(row.dataset.filePath);
-    });
+      const filePath = row.dataset.filePath;
+      const lbIndex = lightboxPaths.indexOf(filePath);
+      if (lbIndex >= 0) {
+        openLightbox(lightboxPaths, lbIndex);
+      } else {
+        showFileDetail(filePath);
+      }
+    };
+    row.addEventListener("click", handler);
+    row.addEventListener("keydown", handler);
   });
 
   // Pagination

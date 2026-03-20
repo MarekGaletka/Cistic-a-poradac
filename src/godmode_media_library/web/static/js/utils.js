@@ -26,13 +26,19 @@ export function escapeHtml(str) {
 export function showToast(message, type = "info") {
   const container = $("#toast-container");
   if (!container) return;
+  const icons = { success: "\u2713", error: "\u2717", info: "\u2139" };
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
   toast.setAttribute("role", "status");
-  toast.textContent = message;
-  toast.addEventListener("click", () => toast.remove());
+  toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span class="toast-message"></span><div class="toast-progress"></div>`;
+  toast.querySelector(".toast-message").textContent = message;
+  const dismiss = () => {
+    toast.classList.add("dismissing");
+    toast.addEventListener("animationend", () => { if (toast.parentNode) toast.remove(); }, { once: true });
+  };
+  toast.addEventListener("click", dismiss);
   container.appendChild(toast);
-  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 4000);
+  setTimeout(() => { if (toast.parentNode && !toast.classList.contains("dismissing")) dismiss(); }, 4000);
 }
 
 export function content() {

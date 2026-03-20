@@ -7,7 +7,10 @@
   <title>GOD MODE Media Library</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#content">Přeskočit na obsah</a>
@@ -87,6 +90,11 @@
       </div>
       <div class="folder-picker-footer" id="folder-picker-footer"></div>
     </div>
+  </div>
+
+  <!-- Lightbox (fullscreen image/video viewer) -->
+  <div id="lightbox-overlay" class="lightbox-overlay hidden" role="dialog" aria-label="Prohlížeč" aria-hidden="true">
+    <div class="lightbox-content" id="lightbox-content"></div>
   </div>
 
   <div id="toast-container" role="alert" aria-live="assertive"></div>

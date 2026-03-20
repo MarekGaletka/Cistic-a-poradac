@@ -18,7 +18,7 @@ export async function render(container) {
       return;
     }
 
-    renderDashboard(container, stats);
+    await renderDashboard(container, stats);
   } catch (e) {
     // API error likely means no catalog — show empty state
     await renderEmptyState(container);
@@ -161,7 +161,21 @@ function _renderEmptyContent(container, bookmarks) {
   }
 }
 
-function renderDashboard(container, stats) {
+async function renderDashboard(container, stats) {
+  // Load roots and system info in parallel
+  let roots = [];
+  let sysInfo = null;
+  try {
+    const [rootsData, sysData] = await Promise.all([
+      api("/roots").catch(() => ({ roots: [] })),
+      api("/system-info").catch(() => null),
+    ]);
+    roots = rootsData.roots || [];
+    sysInfo = sysData;
+  } catch {
+    // silent
+  }
+
   const statCards = [
     { icon: "&#128247;", label: t("dashboard.total_files"), value: stats.total_files?.toLocaleString() ?? "0", color: "accent" },
     { icon: "&#128190;", label: t("dashboard.total_size"), value: formatBytes(stats.total_size_bytes), color: "accent" },
@@ -175,8 +189,19 @@ function renderDashboard(container, stats) {
     <div class="dashboard-header">
       <h2>${t("dashboard.title")}</h2>
       <button class="btn-refresh" id="btn-dashboard-refresh" title="${t("dashboard.refresh")}">&#8635; ${t("dashboard.refresh")}</button>
-    </div>
-    <div class="stats-grid-v2">`;
+    </div>`;
+
+  // Last scan info
+  const lastScanRoot = stats.last_scan_root || (sysInfo && sysInfo.last_scan_root) || "";
+  if (lastScanRoot) {
+    const scanDate = stats.last_scan_date || "";
+    const displayDate = scanDate || "\u2014";
+    html += `<div style="margin-bottom:12px;padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)">
+      ${t("dashboard.last_scan_info", { date: displayDate })}
+    </div>`;
+  }
+
+  html += `<div class="stats-grid-v2">`;
 
   for (const card of statCards) {
     const linkStart = card.link ? `<a href="${card.link}" class="stat-card-v2-link">` : "";
@@ -190,6 +215,21 @@ function renderDashboard(container, stats) {
     </div>${linkEnd}`;
   }
 
+  html += `</div>`;
+
+  // Managed folders section
+  html += `<div class="dashboard-section" style="margin-top:16px">
+    <h3>${t("dashboard.managed_folders")}</h3>`;
+  if (roots.length > 0) {
+    html += `<div style="display:flex;flex-wrap:wrap;gap:6px">`;
+    for (const root of roots) {
+      const name = root.split("/").pop() || root;
+      html += `<span class="folder-chip" style="cursor:default"><span class="folder-chip-icon">\u{1F4C1}</span> ${escapeHtml(name)}<span class="folder-chip-path" style="font-size:10px;color:var(--text-muted);margin-left:4px">${escapeHtml(root)}</span></span>`;
+    }
+    html += `</div>`;
+  } else {
+    html += `<div style="font-size:12px;color:var(--text-muted);padding:8px 0">${t("dashboard.no_folders")} <a href="#" id="btn-dashboard-open-settings" style="color:var(--accent)">${t("dashboard.open_settings")}</a></div>`;
+  }
   html += `</div>`;
 
   // Quick actions
@@ -212,6 +252,40 @@ function renderDashboard(container, stats) {
         </button>
       </div>
     </div>`;
+
+  // Storage breakdown (donut chart using CSS conic-gradient)
+  const topExts = stats.top_extensions || [];
+  if (topExts.length > 0) {
+    const imageExts = new Set(["jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif", "raw", "cr2", "nef", "arw", "dng"]);
+    const videoExts = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "mts"]);
+    let imageCount = 0, videoCount = 0, otherCount = 0;
+    for (const [ext, count] of topExts) {
+      const lext = ext.toLowerCase();
+      if (imageExts.has(lext)) imageCount += count;
+      else if (videoExts.has(lext)) videoCount += count;
+      else otherCount += count;
+    }
+    const total = imageCount + videoCount + otherCount;
+    if (total > 0) {
+      const imagePct = Math.round((imageCount / total) * 100);
+      const videoPct = Math.round((videoCount / total) * 100);
+      const otherPct = 100 - imagePct - videoPct;
+      const imageEnd = imagePct;
+      const videoEnd = imagePct + videoPct;
+
+      html += `<div class="dashboard-section">
+        <h3>${t("dashboard.storage_breakdown")}</h3>
+        <div style="display:flex;align-items:center;gap:24px">
+          <div style="width:80px;height:80px;border-radius:50%;background:conic-gradient(#3b82f6 0% ${imageEnd}%, #eab308 ${imageEnd}% ${videoEnd}%, #6b7280 ${videoEnd}% 100%);flex-shrink:0"></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block"></span> ${t("dashboard.images")} — ${imageCount.toLocaleString()} (${imagePct}%)</div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:10px;height:10px;border-radius:2px;background:#eab308;display:inline-block"></span> ${t("dashboard.videos")} — ${videoCount.toLocaleString()} (${videoPct}%)</div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:10px;height:10px;border-radius:2px;background:#6b7280;display:inline-block"></span> ${t("dashboard.other")} — ${otherCount.toLocaleString()} (${otherPct}%)</div>
+          </div>
+        </div>
+      </div>`;
+    }
+  }
 
   // Top extensions as visual bars
   const exts = stats.top_extensions;
@@ -262,6 +336,16 @@ function renderDashboard(container, stats) {
   if (scanBtn) {
     scanBtn.addEventListener("click", () => {
       // Open settings panel (which has the pipeline form)
+      const settingsBtn = $("#btn-settings");
+      if (settingsBtn) settingsBtn.click();
+    });
+  }
+
+  // Bind open settings link (for empty managed folders)
+  const openSettingsLink = container.querySelector("#btn-dashboard-open-settings");
+  if (openSettingsLink) {
+    openSettingsLink.addEventListener("click", (e) => {
+      e.preventDefault();
       const settingsBtn = $("#btn-settings");
       if (settingsBtn) settingsBtn.click();
     });

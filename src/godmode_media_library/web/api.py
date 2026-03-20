@@ -360,6 +360,33 @@ def get_similar(
         cat.close()
 
 
+@router.get("/system-info")
+def get_system_info(request: Request) -> dict:
+    """System information for the Doctor page."""
+    import platform
+    import sys
+
+    cat = _open_catalog(request)
+    try:
+        stats = cat.stats()
+        cat_path = request.app.state.catalog_path
+        cat_size = cat_path.stat().st_size if cat_path.exists() else 0
+        quarantine_path = Path.home() / ".config" / "gml" / "quarantine"
+        quarantine_size = sum(f.stat().st_size for f in quarantine_path.rglob("*") if f.is_file()) if quarantine_path.exists() else 0
+        return {
+            "python_version": sys.version,
+            "platform": platform.platform(),
+            "catalog_path": str(cat_path),
+            "catalog_size": cat_size,
+            "total_files": stats.get("total_files", 0),
+            "total_size": stats.get("total_size_bytes", 0),
+            "quarantine_size": quarantine_size,
+            "last_scan_root": stats.get("last_scan_root", ""),
+        }
+    finally:
+        cat.close()
+
+
 @router.get("/deps")
 def get_deps() -> dict:
     """Check dependency status."""

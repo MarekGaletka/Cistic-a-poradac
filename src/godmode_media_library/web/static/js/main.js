@@ -1,8 +1,9 @@
 /* GOD MODE Media Library — Main entry point (ES module) */
 
 import { t } from "./i18n.js";
-import { $, $$, content } from "./utils.js";
+import { $, $$, content, showToast } from "./utils.js";
 import { closeAllModals } from "./modal.js";
+import { closeLightbox } from "./lightbox.js";
 import { cleanupTasks } from "./tasks.js";
 import { cleanup as cleanupMap } from "./pages/map.js";
 import { initGlobalProgress } from "./tasks.js";
@@ -50,6 +51,10 @@ export function navigate(page) {
 
   const c = content();
   c.innerHTML = `<div class="loading"><div class="spinner" role="status" aria-label="${t("general.loading")}"></div>${t("general.loading")}</div>`;
+  c.classList.remove("page-enter");
+  // Force reflow to restart animation
+  void c.offsetWidth;
+  c.classList.add("page-enter");
   pages[page].render(c);
 }
 
@@ -197,16 +202,100 @@ document.addEventListener("DOMContentLoaded", () => {
   updateDuplicateBadge();
 });
 
+// ── Drag & drop folder support ──────────────────────
+
+document.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  document.body.classList.add("drag-over");
+});
+
+document.addEventListener("dragleave", (e) => {
+  if (e.relatedTarget === null) document.body.classList.remove("drag-over");
+});
+
+document.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  document.body.classList.remove("drag-over");
+  const items = e.dataTransfer?.items;
+  if (!items) return;
+  const folderPaths = [];
+  for (const item of items) {
+    if (item.kind === "file") {
+      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+      const file = item.getAsFile();
+      if (entry && entry.isDirectory) {
+        // Directory entry — use the path from file if available
+        if (file && file.path) folderPaths.push(file.path);
+        else folderPaths.push("/" + entry.fullPath.replace(/^\//, ""));
+      } else if (file && file.path) {
+        // Single file — extract parent directory
+        const dir = file.path.replace(/\/[^/]+$/, "");
+        if (dir && !folderPaths.includes(dir)) folderPaths.push(dir);
+      }
+    }
+  }
+  if (folderPaths.length > 0) {
+    try {
+      const { apiPost } = await import("./api.js");
+      const existing = await (await import("./api.js")).api("/roots");
+      const merged = [...new Set([...(existing.roots || []), ...folderPaths])];
+      await apiPost("/roots", { roots: merged });
+      showToast(t("folder.add_folder") + ": " + folderPaths.join(", "), "success");
+      navigate(_currentPage || "dashboard");
+    } catch (err) {
+      showToast(t("general.error", { message: err.message }), "error");
+    }
+  }
+});
+
 // ── Keyboard shortcuts ──────────────────────────────
 
+const _pageKeys = { "1": "dashboard", "2": "files", "3": "duplicates", "4": "similar", "5": "timeline", "6": "map" };
+
+function showShortcutsModal() {
+  closeAllModals();
+  const overlay = document.createElement("div");
+  overlay.className = "shortcuts-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.innerHTML = `<div class="shortcuts-modal">
+    <h3>${t("shortcuts.title")}</h3>
+    <div class="shortcuts-row"><span>${t("shortcuts.navigate")}</span><span class="shortcuts-key">1-6</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.search")}</span><span class="shortcuts-key">/</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.close")}</span><span class="shortcuts-key">Esc</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.help")}</span><span class="shortcuts-key">?</span></div>
+  </div>`;
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
 document.addEventListener("keydown", e => {
+  // Close shortcuts modal on Escape
+  const shortcutsOverlay = $(".shortcuts-overlay");
   if (e.key === "Escape") {
+    if (shortcutsOverlay) { shortcutsOverlay.remove(); return; }
     closeAllModals();
     closeSettingsPanel();
     return;
   }
 
   if (e.target.matches("input, textarea, select")) return;
+
+  // Number keys 1-6 navigate to pages
+  if (_pageKeys[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    const page = _pageKeys[e.key];
+    location.hash = page;
+    navigate(page);
+    return;
+  }
+
+  // ? shows shortcuts help
+  if (e.key === "?" && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (shortcutsOverlay) shortcutsOverlay.remove();
+    else showShortcutsModal();
+    return;
+  }
 
   if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
     const searchInput = $("#f-ext") || $("#f-path");
