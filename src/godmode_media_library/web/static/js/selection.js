@@ -67,7 +67,7 @@ function updateActionBar() {
     if (!confirm(t("confirm.quarantine", { count: selectedPaths.size }))) return;
     try {
       const result = await apiPost("/files/quarantine", { paths: getSelectedPaths() });
-      showToast(`Karanténováno: ${result.moved}, přeskočeno: ${result.skipped}`, "success");
+      showToast(`${t("action.quarantine")}: ${result.moved}`, "success");
       deselectAll();
     } catch (err) {
       showToast(t("general.error", { message: err.message }), "error");
@@ -78,7 +78,7 @@ function updateActionBar() {
     if (!confirm(t("confirm.delete", { count: selectedPaths.size }))) return;
     try {
       const result = await apiPost("/files/delete", { paths: getSelectedPaths() });
-      showToast(`Smazáno: ${result.deleted}, přeskočeno: ${result.skipped}`, "success");
+      showToast(`${t("action.delete")}: ${result.deleted}`, "success");
       deselectAll();
     } catch (err) {
       showToast(t("general.error", { message: err.message }), "error");

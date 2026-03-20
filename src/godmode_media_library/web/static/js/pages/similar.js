@@ -1,4 +1,4 @@
-/* GOD MODE Media Library — Similar page */
+/* GOD MODE Media Library — Similar page (improved) */
 
 import { api } from "../api.js";
 import { escapeHtml, fileName } from "../utils.js";
@@ -9,24 +9,36 @@ export async function render(container) {
   try {
     const data = await api("/similar?threshold=10&limit=50");
     if (!data.pairs.length) {
-      container.innerHTML = `<h2>${t("similar.title")}</h2><div class="empty"><div class="empty-icon">&#127912;</div><div class="empty-text">${t("similar.empty_title")}</div><div class="empty-hint">${t("similar.empty_hint")}</div></div>`;
+      container.innerHTML = `
+        <div class="page-header"><h2>${t("similar.title")}</h2></div>
+        <div class="empty-state-hero" style="padding:40px 0">
+          <div class="empty-state-icon" style="font-size:48px">&#127912;</div>
+          <h3 class="empty-state-title">${t("similar.empty_title")}</h3>
+          <p class="empty-state-subtitle">${t("similar.empty_hint")}</p>
+        </div>`;
       return;
     }
-    let html = `<h2>${t("similar.title")} <span style="color:var(--text-muted);font-size:14px">(${t("similar.pairs", { count: data.total_pairs })})</span></h2>`;
+    let html = `
+      <div class="page-header">
+        <h2>${t("similar.title")} <span class="header-count">${t("similar.pairs", { count: data.total_pairs })}</span></h2>
+      </div>`;
     html += '<div class="similar-grid">';
     for (const p of data.pairs) {
       const srcA = `/api/thumbnail${encodeURI(p.path_a)}?size=200`;
       const srcB = `/api/thumbnail${encodeURI(p.path_b)}?size=200`;
+      // Color-code distance
+      const distColor = p.distance <= 3 ? "var(--red)" : p.distance <= 6 ? "var(--yellow)" : "var(--text-muted)";
       html += `<div class="similar-pair">
-        <div class="distance">${t("similar.distance", { value: p.distance })}</div>
+        <div class="distance" style="color:${distColor}">${t("similar.distance", { value: p.distance })}</div>
         <div class="thumbs">
-          <img src="${srcA}" alt="${escapeHtml(fileName(p.path_a))}" onerror="this.style.display='none'">
-          <img src="${srcB}" alt="${escapeHtml(fileName(p.path_b))}" onerror="this.style.display='none'">
+          <img src="${srcA}" alt="${escapeHtml(fileName(p.path_a))}" onerror="this.style.display='none'" loading="lazy">
+          <img src="${srcB}" alt="${escapeHtml(fileName(p.path_b))}" onerror="this.style.display='none'" loading="lazy">
         </div>
-        <div style="margin-top:6px;font-size:12px;color:var(--text-muted)">
-          ${escapeHtml(fileName(p.path_a))}<br>${escapeHtml(fileName(p.path_b))}
+        <div class="similar-names">
+          <span>${escapeHtml(fileName(p.path_a))}</span>
+          <span>${escapeHtml(fileName(p.path_b))}</span>
         </div>
-        <button style="margin-top:6px;width:100%" class="btn-compare" data-pa="${escapeHtml(p.path_a)}" data-pb="${escapeHtml(p.path_b)}">${t("similar.compare")}</button>
+        <button class="btn-compare primary" data-pa="${escapeHtml(p.path_a)}" data-pb="${escapeHtml(p.path_b)}">${t("similar.compare")}</button>
       </div>`;
     }
     html += "</div>";
@@ -39,6 +51,6 @@ export async function render(container) {
       });
     });
   } catch (e) {
-    container.innerHTML = `<h2>${t("similar.title")}</h2><div class="empty">${t("general.error", { message: e.message })}</div>`;
+    container.innerHTML = `<div class="page-header"><h2>${t("similar.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
   }
 }

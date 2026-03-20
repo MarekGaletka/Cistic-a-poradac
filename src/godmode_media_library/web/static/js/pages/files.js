@@ -1,42 +1,59 @@
-/* GOD MODE Media Library — Files page */
+/* GOD MODE Media Library — Files page (redesigned as photo gallery) */
 
 import { api } from "../api.js";
-import { $, content, formatBytes, escapeHtml, fileName } from "../utils.js";
+import { $, content, formatBytes, escapeHtml, fileName, IMAGE_EXTS } from "../utils.js";
 import { t } from "../i18n.js";
 import { showFileDetail } from "../modal.js";
-import { toggleSelect, selectAll, deselectAll, isSelected, getSelectedPaths } from "../selection.js";
+import { toggleSelect, selectAll, deselectAll, isSelected, getSelectedPaths, getSelectedCount } from "../selection.js";
 
 const FILES_PER_PAGE = 50;
 let _filesOffset = 0;
 let _currentFiles = [];
-let _viewMode = "table"; // "table" or "grid"
+let _viewMode = "grid"; // Default to grid (photo gallery)
+let _selectionMode = false;
+let _filtersVisible = false;
 
 export async function render(container) {
   _filesOffset = 0;
-  let html = `<h2>${t("files.title")}</h2>
-    <div class="filters" role="search" aria-label="${t("files.title")}">
-      <input type="text" id="f-ext" placeholder="${t("files.ext_placeholder")}" size="10" aria-label="${t("files.ext_placeholder")}">
-      <input type="text" id="f-camera" placeholder="${t("files.camera_placeholder")}" size="15" aria-label="${t("files.camera_placeholder")}">
-      <input type="text" id="f-path" placeholder="${t("files.path_placeholder")}" size="20" aria-label="${t("files.path_placeholder")}">
-      <button id="btn-files-search" aria-label="${t("files.search")}">${t("files.search")}</button>
-    </div>
-    <div class="filters filters-advanced">
-      <div class="filter-group"><label for="f-date-from">${t("files.date_from")}</label><input type="date" id="f-date-from"></div>
-      <div class="filter-group"><label for="f-date-to">${t("files.date_to")}</label><input type="date" id="f-date-to"></div>
-      <div class="filter-group"><label for="f-min-size">${t("files.min_size")}</label><input type="number" id="f-min-size" min="0" style="width:80px"></div>
-      <div class="filter-group"><label for="f-max-size">${t("files.max_size")}</label><input type="number" id="f-max-size" min="0" style="width:80px"></div>
-      <label class="filter-checkbox"><input type="checkbox" id="f-has-gps"> ${t("files.has_gps")}</label>
-      <label class="filter-checkbox"><input type="checkbox" id="f-has-phash"> ${t("files.has_phash")}</label>
-    </div>
-    <div class="files-toolbar">
-      <div class="view-toggle">
-        <button id="btn-view-table" class="${_viewMode === 'table' ? 'active' : ''}" aria-label="Table view" title="Tabulka">&#9776;</button>
-        <button id="btn-view-grid" class="${_viewMode === 'grid' ? 'active' : ''}" aria-label="Grid view" title="Mřížka">&#9783;</button>
+  _selectionMode = false;
+
+  let html = `
+    <div class="page-header">
+      <h2>${t("files.title")}</h2>
+      <div class="files-header-actions">
+        <button id="btn-toggle-filters" class="btn-icon" title="${t("files.filters_toggle")}">
+          &#128270; ${t("files.filters_toggle")}
+        </button>
+        <div class="view-toggle">
+          <button id="btn-view-grid" class="${_viewMode === 'grid' ? 'active' : ''}" aria-label="Grid view" title="Galerie">&#9783;</button>
+          <button id="btn-view-table" class="${_viewMode === 'table' ? 'active' : ''}" aria-label="Table view" title="Tabulka">&#9776;</button>
+        </div>
+        <button id="btn-selection-mode" class="btn-icon" title="${t("files.selection_mode")}">
+          &#9744;
+        </button>
       </div>
-      <div class="files-select-actions">
-        <button id="btn-select-all" class="small">${t("action.select_all")}</button>
-        <button id="btn-deselect-all" class="small">${t("action.deselect_all")}</button>
+    </div>
+    <div class="filters-panel ${_filtersVisible ? '' : 'hidden'}" id="filters-panel">
+      <div class="filters" role="search" aria-label="${t("files.title")}">
+        <input type="text" id="f-ext" placeholder="${t("files.ext_placeholder")}" size="10" aria-label="${t("files.ext_placeholder")}">
+        <input type="text" id="f-camera" placeholder="${t("files.camera_placeholder")}" size="15" aria-label="${t("files.camera_placeholder")}">
+        <input type="text" id="f-path" placeholder="${t("files.path_placeholder")}" size="20" aria-label="${t("files.path_placeholder")}">
+        <button id="btn-files-search" class="primary" aria-label="${t("files.search")}">${t("files.search")}</button>
       </div>
+      <div class="filters filters-advanced">
+        <div class="filter-group"><label for="f-date-from">${t("files.date_from")}</label><input type="date" id="f-date-from"></div>
+        <div class="filter-group"><label for="f-date-to">${t("files.date_to")}</label><input type="date" id="f-date-to"></div>
+        <div class="filter-group"><label for="f-min-size">${t("files.min_size")}</label><input type="number" id="f-min-size" min="0" style="width:80px"></div>
+        <div class="filter-group"><label for="f-max-size">${t("files.max_size")}</label><input type="number" id="f-max-size" min="0" style="width:80px"></div>
+        <label class="filter-checkbox"><input type="checkbox" id="f-has-gps"> ${t("files.has_gps")}</label>
+        <label class="filter-checkbox"><input type="checkbox" id="f-has-phash"> ${t("files.has_phash")}</label>
+      </div>
+    </div>
+    <div id="selection-bar" class="selection-bar hidden">
+      <span id="selection-count" class="selection-count"></span>
+      <button id="btn-select-all" class="small">${t("action.select_all")}</button>
+      <button id="btn-deselect-all" class="small">${t("action.deselect_all")}</button>
+      <button id="btn-exit-selection" class="small">${t("files.exit_selection")}</button>
     </div>
     <div id="files-table" aria-live="polite"></div>`;
   container.innerHTML = html;
@@ -45,8 +62,29 @@ export async function render(container) {
   container.querySelector("#btn-files-search").addEventListener("click", () => { _filesOffset = 0; loadFiles(); });
   container.querySelector("#btn-view-table").addEventListener("click", () => { _viewMode = "table"; renderCurrentFiles(); updateViewToggle(container); });
   container.querySelector("#btn-view-grid").addEventListener("click", () => { _viewMode = "grid"; renderCurrentFiles(); updateViewToggle(container); });
-  container.querySelector("#btn-select-all").addEventListener("click", () => { selectAll(_currentFiles.map(f => f.path)); renderCurrentFiles(); });
-  container.querySelector("#btn-deselect-all").addEventListener("click", () => { deselectAll(); renderCurrentFiles(); });
+
+  container.querySelector("#btn-toggle-filters").addEventListener("click", () => {
+    _filtersVisible = !_filtersVisible;
+    const panel = container.querySelector("#filters-panel");
+    if (panel) panel.classList.toggle("hidden", !_filtersVisible);
+  });
+
+  container.querySelector("#btn-selection-mode").addEventListener("click", () => {
+    _selectionMode = !_selectionMode;
+    const selBar = container.querySelector("#selection-bar");
+    if (selBar) selBar.classList.toggle("hidden", !_selectionMode);
+    if (!_selectionMode) deselectAll();
+    renderCurrentFiles();
+  });
+
+  container.querySelector("#btn-select-all").addEventListener("click", () => { selectAll(_currentFiles.map(f => f.path)); renderCurrentFiles(); updateSelectionCount(container); });
+  container.querySelector("#btn-deselect-all").addEventListener("click", () => { deselectAll(); renderCurrentFiles(); updateSelectionCount(container); });
+  container.querySelector("#btn-exit-selection").addEventListener("click", () => {
+    _selectionMode = false;
+    deselectAll();
+    container.querySelector("#selection-bar")?.classList.add("hidden");
+    renderCurrentFiles();
+  });
 
   // Enter key triggers search
   container.querySelectorAll(".filters input").forEach(input => {
@@ -63,6 +101,11 @@ function updateViewToggle(container) {
   const grd = container.querySelector("#btn-view-grid");
   if (tbl) tbl.classList.toggle("active", _viewMode === "table");
   if (grd) grd.classList.toggle("active", _viewMode === "grid");
+}
+
+function updateSelectionCount(container) {
+  const el = container.querySelector("#selection-count");
+  if (el) el.textContent = t("general.selected", { count: getSelectedCount() });
 }
 
 let _lastData = null;
@@ -93,7 +136,11 @@ async function loadFiles() {
     _lastData = data;
     _currentFiles = data.files;
     if (!data.files.length) {
-      $("#files-table").innerHTML = `<div class="empty"><div class="empty-icon">&#128269;</div><div class="empty-text">${t("files.empty_title")}</div><div class="empty-hint">${t("files.empty_hint")}</div></div>`;
+      $("#files-table").innerHTML = `<div class="empty-state-hero" style="padding:40px 0">
+        <div class="empty-state-icon" style="font-size:48px">&#128269;</div>
+        <h3 class="empty-state-title">${t("files.empty_title")}</h3>
+        <p class="empty-state-subtitle">${t("files.empty_hint")}</p>
+      </div>`;
       return;
     }
     renderCurrentFiles();
@@ -116,15 +163,19 @@ function renderCurrentFiles() {
 }
 
 function renderTable(el, data) {
-  let html = `<table><tr><th></th><th>${t("files.name")}</th><th>${t("files.ext")}</th><th>${t("files.size")}</th><th>${t("files.camera")}</th><th>${t("files.date")}</th><th>${t("files.gps")}</th><th>${t("files.resolution")}</th></tr>`;
+  let html = `<table><tr>`;
+  if (_selectionMode) html += `<th class="select-cell"></th>`;
+  html += `<th>${t("files.name")}</th><th>${t("files.ext")}</th><th>${t("files.size")}</th><th>${t("files.camera")}</th><th>${t("files.date")}</th><th>${t("files.gps")}</th><th>${t("files.resolution")}</th></tr>`;
   for (const f of data.files) {
     const gps = f.gps_latitude ? `${f.gps_latitude.toFixed(4)}, ${f.gps_longitude.toFixed(4)}` : "";
     const res = f.width && f.height ? `${f.width}x${f.height}` : "";
     const cam = [f.camera_make, f.camera_model].filter(Boolean).join(" ");
     const checked = isSelected(f.path) ? "checked" : "";
-    html += `<tr class="file-row" tabindex="0" role="button" aria-label="${escapeHtml(fileName(f.path))}" data-file-path="${escapeHtml(f.path)}">
-      <td class="select-cell"><input type="checkbox" data-select-path="${escapeHtml(f.path)}" ${checked} aria-label="${t("action.select_all")}"></td>
-      <td class="path" title="${escapeHtml(f.path)}">${escapeHtml(fileName(f.path))}</td>
+    html += `<tr class="file-row" tabindex="0" role="button" aria-label="${escapeHtml(fileName(f.path))}" data-file-path="${escapeHtml(f.path)}">`;
+    if (_selectionMode) {
+      html += `<td class="select-cell"><input type="checkbox" data-select-path="${escapeHtml(f.path)}" ${checked} aria-label="${t("action.select_all")}"></td>`;
+    }
+    html += `<td class="path" title="${escapeHtml(f.path)}">${escapeHtml(fileName(f.path))}</td>
       <td>${escapeHtml(f.ext)}</td>
       <td>${formatBytes(f.size)}</td>
       <td>${escapeHtml(cam)}</td>
@@ -140,20 +191,33 @@ function renderTable(el, data) {
 }
 
 function renderGrid(el, data) {
-  const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif"]);
-  let html = '<div class="files-grid">';
+  let html = '<div class="files-grid files-grid-large">';
   for (const f of data.files) {
     const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
     const checked = isSelected(f.path) ? "checked" : "";
     const thumb = isImage
-      ? `<img src="/api/thumbnail${encodeURI(f.path)}?size=200" onerror="this.style.display='none'" alt="${escapeHtml(fileName(f.path))}">`
+      ? `<img src="/api/thumbnail${encodeURI(f.path)}?size=300" onerror="this.style.display='none'" alt="${escapeHtml(fileName(f.path))}" loading="lazy">`
       : `<div class="grid-icon">${escapeHtml(f.ext)}</div>`;
-    html += `<div class="file-grid-item" data-file-path="${escapeHtml(f.path)}" tabindex="0" role="button">
-      <div class="grid-select"><input type="checkbox" data-select-path="${escapeHtml(f.path)}" ${checked}></div>
-      <div class="grid-thumb">${thumb}</div>
-      <div class="grid-name" title="${escapeHtml(f.path)}">${escapeHtml(fileName(f.path))}</div>
-      <div class="grid-meta">${formatBytes(f.size)}</div>
+
+    const cam = [f.camera_make, f.camera_model].filter(Boolean).join(" ");
+    const dateStr = f.date_original ? f.date_original.split(" ")[0] : "";
+
+    html += `<div class="file-grid-item file-grid-item-large" data-file-path="${escapeHtml(f.path)}" tabindex="0" role="button">`;
+
+    // Only show checkbox in selection mode
+    if (_selectionMode) {
+      html += `<div class="grid-select"><input type="checkbox" data-select-path="${escapeHtml(f.path)}" ${checked}></div>`;
+    }
+
+    html += `<div class="grid-thumb grid-thumb-large">${thumb}</div>`;
+
+    // Hover overlay with key info
+    html += `<div class="grid-hover-overlay">
+      <div class="grid-hover-name">${escapeHtml(fileName(f.path))}</div>
+      <div class="grid-hover-meta">${formatBytes(f.size)}${dateStr ? ' &middot; ' + escapeHtml(dateStr) : ''}${cam ? ' &middot; ' + escapeHtml(cam) : ''}</div>
     </div>`;
+
+    html += `</div>`;
   }
   html += '</div>';
   html += renderPagination(data);
@@ -174,12 +238,14 @@ function renderPagination(data) {
 
 function bindFileEvents(el) {
   // Checkbox clicks
-  el.querySelectorAll("[data-select-path]").forEach(cb => {
-    cb.addEventListener("click", e => {
-      e.stopPropagation();
-      toggleSelect(cb.dataset.selectPath);
+  if (_selectionMode) {
+    el.querySelectorAll("[data-select-path]").forEach(cb => {
+      cb.addEventListener("click", e => {
+        e.stopPropagation();
+        toggleSelect(cb.dataset.selectPath);
+      });
     });
-  });
+  }
 
   // Row/card clicks (excluding checkboxes)
   el.querySelectorAll("[data-file-path]").forEach(row => {

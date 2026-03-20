@@ -1,4 +1,4 @@
-/* GOD MODE Media Library — Pipeline page */
+/* GOD MODE Media Library — Pipeline (settings panel content) */
 
 import { apiPost } from "../api.js";
 import { $, escapeHtml, showToast } from "../utils.js";
@@ -6,12 +6,12 @@ import { t } from "../i18n.js";
 import { pollTask } from "../tasks.js";
 
 export async function render(container) {
-  container.innerHTML = `<h2>${t("pipeline.title")}</h2>
-    <p style="color:var(--text-muted);margin-bottom:16px">${t("pipeline.description")}</p>
-    <div class="config-form">
+  container.innerHTML = `
+    <p style="color:var(--text-muted);margin-bottom:12px;font-size:13px">${t("pipeline.description")}</p>
+    <div class="config-form config-form-compact">
       <div class="form-group">
         <label class="form-label" for="cfg-roots">${t("pipeline.roots")}</label>
-        <textarea id="cfg-roots" rows="3" placeholder="${t("pipeline.roots_placeholder")}" aria-label="${t("pipeline.roots")}"></textarea>
+        <textarea id="cfg-roots" rows="2" placeholder="${t("pipeline.roots_placeholder")}" aria-label="${t("pipeline.roots")}"></textarea>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -21,11 +21,11 @@ export async function render(container) {
         <label class="filter-checkbox"><input type="checkbox" id="cfg-exiftool" checked> ${t("pipeline.exiftool")}</label>
       </div>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:20px">
+    <div style="display:flex;gap:8px;margin-top:12px">
       <button class="primary" id="btn-start-pipeline" aria-label="${t("pipeline.start_pipeline")}">${t("pipeline.start_pipeline")}</button>
       <button id="btn-start-scan" aria-label="${t("pipeline.scan_only")}">${t("pipeline.scan_only")}</button>
     </div>
-    <div id="task-output" aria-live="polite"></div>`;
+    <div id="task-output" aria-live="polite" style="margin-top:12px"></div>`;
 
   // Bind buttons
   container.querySelector("#btn-start-pipeline").addEventListener("click", startPipeline);

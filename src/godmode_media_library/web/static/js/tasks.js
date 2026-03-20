@@ -1,4 +1,4 @@
-/* GOD MODE Media Library — Task management */
+/* GOD MODE Media Library — Task management with global progress bar */
 
 import { api } from "./api.js";
 import { $, escapeHtml, showToast } from "./utils.js";
@@ -6,6 +6,104 @@ import { t } from "./i18n.js";
 
 let _pollInterval = null;
 let _pollErrorCount = 0;
+
+// ── Global progress bar ──────────────────────────────
+
+let _globalProgressActive = false;
+let _globalPollInterval = null;
+let _currentTaskId = null;
+
+export function initGlobalProgress() {
+  // Nothing needed at init, the bar is hidden by default
+}
+
+export function showGlobalProgress(taskId) {
+  _currentTaskId = taskId;
+  _globalProgressActive = true;
+  const bar = $("#global-progress");
+  if (bar) {
+    bar.classList.remove("hidden");
+    bar.classList.add("animating");
+    const fill = bar.querySelector(".global-progress-fill");
+    if (fill) fill.style.width = "10%";
+  }
+
+  // Poll task status for the global bar
+  if (_globalPollInterval) clearInterval(_globalPollInterval);
+  _globalPollInterval = setInterval(async () => {
+    try {
+      const data = await api(`/tasks/${encodeURIComponent(taskId)}`);
+      updateGlobalProgress(data);
+      if (data.status === "completed") {
+        completeGlobalProgress();
+        showToast(t("task.completed_toast"), "success");
+        clearInterval(_globalPollInterval);
+        _globalPollInterval = null;
+        // Auto-navigate to dashboard after scan
+        if (window._godmodeNavigate) {
+          setTimeout(() => window._godmodeNavigate("dashboard"), 1500);
+        }
+      } else if (data.status === "failed") {
+        failGlobalProgress();
+        showToast(t("task.failed_toast", { error: data.error || "unknown" }), "error");
+        clearInterval(_globalPollInterval);
+        _globalPollInterval = null;
+      }
+    } catch {
+      // Silent retry
+    }
+  }, 2000);
+}
+
+function updateGlobalProgress(data) {
+  const bar = $("#global-progress");
+  if (!bar) return;
+  const fill = bar.querySelector(".global-progress-fill");
+  if (!fill) return;
+
+  if (data.progress && data.progress.total > 0) {
+    const pct = Math.round((data.progress.processed / data.progress.total) * 100);
+    fill.style.width = `${Math.max(10, pct)}%`;
+    bar.setAttribute("aria-valuenow", pct);
+  }
+}
+
+function completeGlobalProgress() {
+  const bar = $("#global-progress");
+  if (!bar) return;
+  const fill = bar.querySelector(".global-progress-fill");
+  if (fill) {
+    fill.style.width = "100%";
+    fill.classList.add("complete");
+  }
+  bar.classList.remove("animating");
+  setTimeout(() => {
+    bar.classList.add("hidden");
+    if (fill) {
+      fill.style.width = "0%";
+      fill.classList.remove("complete");
+    }
+    _globalProgressActive = false;
+  }, 2000);
+}
+
+function failGlobalProgress() {
+  const bar = $("#global-progress");
+  if (!bar) return;
+  const fill = bar.querySelector(".global-progress-fill");
+  if (fill) fill.classList.add("failed");
+  bar.classList.remove("animating");
+  setTimeout(() => {
+    bar.classList.add("hidden");
+    if (fill) {
+      fill.style.width = "0%";
+      fill.classList.remove("failed");
+    }
+    _globalProgressActive = false;
+  }, 3000);
+}
+
+// ── Task polling (for settings panel task-output) ────
 
 export function cleanupTasks() {
   if (_pollInterval) {
@@ -17,6 +115,10 @@ export function cleanupTasks() {
 export function pollTask(taskId) {
   if (_pollInterval) clearInterval(_pollInterval);
   _pollErrorCount = 0;
+
+  // Always show global progress bar
+  showGlobalProgress(taskId);
+
   const el = $("#task-output");
   if (!el) return;
   el.innerHTML = `<div class="task-status running">${t("task.connecting", { id: taskId })}</div>`;
@@ -65,10 +167,8 @@ export function renderTaskStatus(el, taskId, data) {
       resultHtml = "<pre>" + escapeHtml(JSON.stringify(data.result, null, 2)) + "</pre>";
     }
     el.innerHTML = `<div class="task-status completed">${t("task.completed", { id: taskId })}${resultHtml}</div>`;
-    showToast(t("task.completed_toast"), "success");
   } else if (data.status === "failed") {
     el.innerHTML = `<div class="task-status failed">${t("task.failed", { id: taskId, error: data.error })}</div>`;
-    showToast(t("task.failed_toast", { error: data.error || "unknown" }), "error");
   }
 }
 
@@ -100,20 +200,7 @@ function _fallbackPollTask(taskId) {
   }, 2000);
 }
 
-// ── Task drawer ─────────────────────────────────────
+// ── Legacy drawer exports (kept for compatibility) ───
 
-export function openTaskDrawer() {
-  const drawer = $("#task-drawer");
-  if (drawer) {
-    drawer.classList.add("open");
-    drawer.setAttribute("aria-hidden", "false");
-  }
-}
-
-export function closeTaskDrawer() {
-  const drawer = $("#task-drawer");
-  if (drawer) {
-    drawer.classList.remove("open");
-    drawer.setAttribute("aria-hidden", "true");
-  }
-}
+export function openTaskDrawer() {}
+export function closeTaskDrawer() {}

@@ -17,21 +17,29 @@ export function cleanup() {
 }
 
 export async function render(container) {
-  container.innerHTML = `<h2>${t("map.title")}</h2><div id="map-container"></div>`;
+  container.innerHTML = `
+    <div class="page-header"><h2>${t("map.title")}</h2></div>
+    <div id="map-container"></div>`;
 
   try {
     const data = await api("/files?has_gps=true&limit=5000");
     const files = data.files.filter(f => f.gps_latitude && f.gps_longitude);
 
     if (!files.length) {
-      container.innerHTML = `<h2>${t("map.title")}</h2><div class="empty"><div class="empty-icon">&#127758;</div><div class="empty-text">${t("map.empty_title")}</div><div class="empty-hint">${t("map.empty_hint")}</div></div>`;
+      container.innerHTML = `
+        <div class="page-header"><h2>${t("map.title")}</h2></div>
+        <div class="empty-state-hero" style="padding:40px 0">
+          <div class="empty-state-icon" style="font-size:48px">&#127758;</div>
+          <h3 class="empty-state-title">${t("map.empty_title")}</h3>
+          <p class="empty-state-subtitle">${t("map.empty_hint")}</p>
+        </div>`;
       return;
     }
 
     cleanup();
 
     if (typeof L === "undefined") {
-      container.innerHTML = `<h2>${t("map.title")}</h2><div class="empty">${t("map.leaflet_error")}</div>`;
+      container.innerHTML = `<div class="page-header"><h2>${t("map.title")}</h2></div><div class="empty">${t("map.leaflet_error")}</div>`;
       return;
     }
 
@@ -80,6 +88,6 @@ export async function render(container) {
 
     setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
   } catch (e) {
-    container.innerHTML = `<h2>${t("map.title")}</h2><div class="empty">${t("general.error", { message: e.message })}</div>`;
+    container.innerHTML = `<div class="page-header"><h2>${t("map.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
   }
 }

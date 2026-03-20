@@ -11,6 +11,7 @@ const translations = {
     "nav.map": "Mapa",
     "nav.pipeline": "Pipeline",
     "nav.doctor": "Diagnostika",
+    "nav.settings": "Nastavení",
 
     // Sidebar groups
     "nav.group.library": "KNIHOVNA",
@@ -32,8 +33,17 @@ const translations = {
     "dashboard.extension": "Přípona",
     "dashboard.count": "Počet",
     "dashboard.camera": "Fotoaparát",
-    "dashboard.empty_title": "Žádná data katalogu",
-    "dashboard.empty_hint": "Spusťte <code>gml scan --roots /cesta</code> nebo použijte stránku Pipeline pro zahájení skenování.",
+    "dashboard.empty_title": "Zatím nemáte žádná data",
+    "dashboard.empty_hint": "Začněte skenováním složky s vašimi médii.",
+    "dashboard.empty_scan_btn": "Naskenovat složku",
+    "dashboard.scan_path_placeholder": "/Users/me/Photos",
+    "dashboard.quick_actions": "Rychlé akce",
+    "dashboard.view_duplicates": "Zkontrolovat duplicity",
+    "dashboard.view_files": "Procházet soubory",
+    "dashboard.refresh": "Aktualizovat",
+    "dashboard.scan_folder": "Naskenovat složku",
+    "dashboard.last_scan": "Poslední sken",
+    "dashboard.no_scan_yet": "Zatím neprovedeno",
 
     // Files
     "files.title": "Soubory",
@@ -59,6 +69,9 @@ const translations = {
     "files.previous": "Předchozí",
     "files.next": "Další",
     "files.showing": "Zobrazeno {from}–{to} (stránka {page})",
+    "files.selection_mode": "Režim výběru",
+    "files.exit_selection": "Zrušit výběr",
+    "files.filters_toggle": "Filtry",
 
     // File detail
     "detail.title": "Detail souboru",
@@ -86,6 +99,11 @@ const translations = {
     "duplicates.action": "Akce",
     "duplicates.diff": "Porovnat",
     "duplicates.keep": "Ponechat",
+    "duplicates.resolve": "Vyřešit",
+    "duplicates.resolve_all": "Vyřešit vše",
+    "duplicates.resolve_tooltip": "Ponechá nejlepší soubor a ostatní přesune do karantény",
+    "duplicates.resolving": "Řeším...",
+    "duplicates.resolved": "Vyřešeno",
     "duplicates.merge_quarantine": "Sloučit a karanténovat",
     "duplicates.match": "Shoda",
     "duplicates.partial_match": "Částečná shoda",
@@ -97,6 +115,11 @@ const translations = {
     "duplicates.visual_compare": "Porovnat vizuálně",
     "duplicates.empty_title": "Žádné duplicity nenalezeny",
     "duplicates.empty_hint": "Vaše knihovna neobsahuje duplicitní soubory. Skvělé!",
+    "duplicates.best_file": "Nejlepší",
+    "duplicates.will_quarantine": "Do karantény",
+    "duplicates.wasted_space": "Plýtvání místem",
+    "duplicates.potential_savings": "Úspora místa",
+    "duplicates.groups_remaining": "Zbývajících skupin",
 
     // Similar
     "similar.title": "Podobné obrázky",
@@ -120,7 +143,7 @@ const translations = {
     "map.empty_hint": "Soubory potřebují GPS metadata z EXIF. Spusťte ExifTool extrakci pro vyplnění GPS dat.",
     "map.leaflet_error": "Leaflet.js není načtený. Zkontrolujte připojení k internetu.",
 
-    // Pipeline
+    // Pipeline / Settings
     "pipeline.title": "Pipeline",
     "pipeline.description": "Spustit celou pipeline: sken → extrakce metadat → diff → sloučení",
     "pipeline.roots": "Kořenové složky (jedna na řádek)",
@@ -133,6 +156,13 @@ const translations = {
     "pipeline.scan_started": "Sken spuštěn",
     "pipeline.start_failed": "Nepodařilo se spustit pipeline: {message}",
     "pipeline.scan_failed": "Nepodařilo se spustit sken: {message}",
+
+    // Settings
+    "settings.title": "Nastavení",
+    "settings.pipeline_section": "Pipeline a skenování",
+    "settings.doctor_section": "Kontrola závislostí",
+    "settings.about_section": "O aplikaci",
+    "settings.about_text": "GOD MODE Media Library — pokročilý správce médií s důrazem na metadata, deduplikaci a bezpečnost.",
 
     // Tasks
     "task.connecting": "Úloha {id}: připojování...",
@@ -169,6 +199,7 @@ const translations = {
     // Confirmations
     "confirm.quarantine": "Opravdu přesunout {count} souborů do karantény?",
     "confirm.delete": "Opravdu smazat?",
+    "confirm.resolve_all": "Opravdu vyřešit všechny skupiny duplicit najednou? U každé skupiny bude ponechán nejlepší soubor a ostatní budou přesunuty do karantény.",
 
     // Visual diff
     "vdiff.side_by_side": "Vedle sebe",

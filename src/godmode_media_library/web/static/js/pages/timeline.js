@@ -11,7 +11,13 @@ export async function render(container) {
     const files = data.files.filter(f => f.date_original);
 
     if (!files.length) {
-      container.innerHTML = `<h2>${t("timeline.title")}</h2><div class="empty"><div class="empty-icon">&#128197;</div><div class="empty-text">${t("timeline.empty_title")}</div><div class="empty-hint">${t("timeline.empty_hint")}</div></div>`;
+      container.innerHTML = `
+        <div class="page-header"><h2>${t("timeline.title")}</h2></div>
+        <div class="empty-state-hero" style="padding:40px 0">
+          <div class="empty-state-icon" style="font-size:48px">&#128197;</div>
+          <h3 class="empty-state-title">${t("timeline.empty_title")}</h3>
+          <p class="empty-state-subtitle">${t("timeline.empty_hint")}</p>
+        </div>`;
       return;
     }
 
@@ -27,7 +33,10 @@ export async function render(container) {
 
     const sortedMonths = Object.keys(groups).sort().reverse();
 
-    let html = `<h2>${t("timeline.title")} <span style="color:var(--text-muted);font-size:14px">(${t("timeline.dated_files", { count: files.length })})</span></h2>`;
+    let html = `
+      <div class="page-header">
+        <h2>${t("timeline.title")} <span class="header-count">${t("timeline.dated_files", { count: files.length })}</span></h2>
+      </div>`;
     html += '<div class="timeline">';
 
     for (const month of sortedMonths) {
@@ -42,7 +51,7 @@ export async function render(container) {
       for (const f of monthFiles.slice(0, 20)) {
         const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
         const thumb = isImage
-          ? `<img src="/api/thumbnail${encodeURI(f.path)}?size=150" onerror="this.style.display='none'" alt="${escapeHtml(fileName(f.path))}">`
+          ? `<img src="/api/thumbnail${encodeURI(f.path)}?size=150" onerror="this.style.display='none'" alt="${escapeHtml(fileName(f.path))}" loading="lazy">`
           : `<div class="timeline-icon">${escapeHtml(f.ext)}</div>`;
         html += `<div class="timeline-item" tabindex="0" role="button" data-file-path="${escapeHtml(f.path)}" title="${escapeHtml(f.path)}">
           ${thumb}
@@ -64,6 +73,6 @@ export async function render(container) {
       item.addEventListener("keydown", e => { if (e.key === "Enter") showFileDetail(item.dataset.filePath); });
     });
   } catch (e) {
-    container.innerHTML = `<h2>${t("timeline.title")}</h2><div class="empty">${t("general.error", { message: e.message })}</div>`;
+    container.innerHTML = `<div class="page-header"><h2>${t("timeline.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
   }
 }

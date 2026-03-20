@@ -1,43 +1,110 @@
-/* GOD MODE Media Library — Duplicates page */
+/* GOD MODE Media Library — Duplicates page (redesigned) */
 
 import { api, apiPost } from "../api.js";
-import { $, content, formatBytes, escapeHtml, fileName, showToast } from "../utils.js";
+import { $, content, formatBytes, escapeHtml, fileName, showToast, IMAGE_EXTS } from "../utils.js";
 import { t } from "../i18n.js";
 import { showVisualDiff } from "../modal.js";
 
+let _allGroups = [];
+let _allGroupDetails = {};
+
 export async function render(container) {
   try {
-    const data = await api("/duplicates?limit=50");
+    const data = await api("/duplicates?limit=100");
     if (!data.groups.length) {
-      container.innerHTML = `<h2>${t("duplicates.title")}</h2><div class="empty"><div class="empty-icon">&#9989;</div><div class="empty-text">${t("duplicates.empty_title")}</div><div class="empty-hint">${t("duplicates.empty_hint")}</div></div>`;
+      container.innerHTML = `
+        <div class="page-header"><h2>${t("duplicates.title")}</h2></div>
+        <div class="empty-state-hero">
+          <div class="empty-state-icon" style="font-size:64px">&#9989;</div>
+          <h3 class="empty-state-title">${t("duplicates.empty_title")}</h3>
+          <p class="empty-state-subtitle">${t("duplicates.empty_hint")}</p>
+        </div>`;
       return;
     }
-    let html = `<h2>${t("duplicates.title")} <span style="color:var(--text-muted);font-size:14px">(${t("duplicates.groups", { count: data.total_groups })})</span></h2>`;
-    html += `<table><tr><th>${t("duplicates.group")}</th><th>${t("duplicates.files")}</th><th>${t("duplicates.size")}</th><th>${t("duplicates.action")}</th></tr>`;
+
+    _allGroups = data.groups;
+
+    // Calculate total wasted space
+    let totalWasted = 0;
     for (const g of data.groups) {
-      html += `<tr>
-        <td class="path">${escapeHtml(g.group_id.slice(0, 12))}</td>
-        <td>${g.file_count}</td>
-        <td>${formatBytes(g.total_size)}</td>
-        <td><button class="btn-diff" data-group-id="${escapeHtml(g.group_id)}" aria-label="${t("duplicates.diff")} ${escapeHtml(g.group_id.slice(0, 8))}">${t("duplicates.diff")}</button></td>
-      </tr>`;
+      // Approximate: (file_count - 1) * avg_size
+      if (g.file_count > 1 && g.total_size > 0) {
+        const avgSize = g.total_size / g.file_count;
+        totalWasted += avgSize * (g.file_count - 1);
+      }
     }
-    html += "</table>";
-    html += '<div id="diff-detail" aria-live="polite"></div>';
+
+    let html = `
+      <div class="page-header">
+        <h2>${t("duplicates.title")} <span class="header-count">${t("duplicates.groups", { count: data.total_groups })}</span></h2>
+        <button class="primary" id="btn-resolve-all" title="${t("duplicates.resolve_tooltip")}">
+          &#9889; ${t("duplicates.resolve_all")}
+        </button>
+      </div>`;
+
+    // Summary bar
+    html += `<div class="dup-summary">
+      <div class="dup-summary-item">
+        <span class="dup-summary-icon" style="color:var(--yellow)">&#9888;</span>
+        <span class="dup-summary-label">${t("duplicates.groups_remaining")}</span>
+        <span class="dup-summary-value" id="dup-groups-count">${data.total_groups}</span>
+      </div>
+      <div class="dup-summary-item">
+        <span class="dup-summary-icon" style="color:var(--red)">&#128190;</span>
+        <span class="dup-summary-label">${t("duplicates.potential_savings")}</span>
+        <span class="dup-summary-value">${formatBytes(totalWasted)}</span>
+      </div>
+    </div>`;
+
+    // Groups list — each group is an inline card with thumbnails
+    html += '<div class="dup-groups-list" id="dup-groups-list">';
+    for (const g of data.groups) {
+      html += renderGroupCard(g);
+    }
+    html += '</div>';
+
     container.innerHTML = html;
 
-    // Bind diff buttons
-    container.querySelectorAll(".btn-diff").forEach(btn => {
-      btn.addEventListener("click", () => showDiff(btn.dataset.groupId));
-    });
+    // Load details for each group (thumbnails, scores)
+    loadAllGroupDetails(container, data.groups);
+
+    // Bind resolve all
+    const resolveAllBtn = container.querySelector("#btn-resolve-all");
+    if (resolveAllBtn) {
+      resolveAllBtn.addEventListener("click", () => resolveAll(container));
+    }
   } catch (e) {
-    container.innerHTML = `<h2>${t("duplicates.title")}</h2><div class="empty">${t("general.error", { message: e.message })}</div>`;
+    container.innerHTML = `<div class="page-header"><h2>${t("duplicates.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
   }
 }
 
-async function showDiff(groupId) {
-  const el = $("#diff-detail");
-  el.innerHTML = `<div class="loading"><div class="spinner" role="status" aria-label="${t("general.loading")}"></div>${t("general.loading")}</div>`;
+function renderGroupCard(g) {
+  return `<div class="dup-group-card" id="dup-group-${escapeHtml(g.group_id)}" data-group-id="${escapeHtml(g.group_id)}">
+    <div class="dup-group-header">
+      <span class="dup-group-info">
+        <strong>${g.file_count} ${t("duplicates.files").toLowerCase()}</strong>
+        <span class="dup-group-size">${formatBytes(g.total_size)}</span>
+      </span>
+      <button class="btn-resolve-single" data-group-id="${escapeHtml(g.group_id)}" title="${t("duplicates.resolve_tooltip")}">
+        &#9889; ${t("duplicates.resolve")}
+      </button>
+    </div>
+    <div class="dup-group-thumbs" id="dup-thumbs-${escapeHtml(g.group_id)}">
+      <div class="loading-inline"><div class="spinner-small"></div></div>
+    </div>
+  </div>`;
+}
+
+async function loadAllGroupDetails(container, groups) {
+  // Load details for all groups in parallel (max 10 at a time)
+  const batchSize = 10;
+  for (let i = 0; i < groups.length; i += batchSize) {
+    const batch = groups.slice(i, i + batchSize);
+    await Promise.all(batch.map(g => loadGroupDetail(container, g.group_id)));
+  }
+}
+
+async function loadGroupDetail(container, groupId) {
   try {
     const [groupData, diffData] = await Promise.all([
       api(`/duplicates/${encodeURIComponent(groupId)}`),
@@ -47,80 +114,84 @@ async function showDiff(groupId) {
     const files = groupData.files || [];
     const scores = diffData.scores || {};
 
+    // Find winner
     let winnerPath = null;
     let winnerScore = -1;
     for (const [path, score] of Object.entries(scores)) {
       if (score > winnerScore) { winnerScore = score; winnerPath = path; }
     }
+    if (!winnerPath && files.length) winnerPath = files[0].path;
 
-    let html = `<h2 style="margin-top:20px">${t("duplicates.metadata_diff", { id: groupId.slice(0, 12) })}</h2>`;
+    // Store for resolve action
+    _allGroupDetails[groupId] = { files, scores, winnerPath, diffData };
 
-    // Side-by-side file comparison with thumbnails
-    html += '<div class="dup-compare">';
+    // Render thumbnails inline
+    const thumbsEl = $(`#dup-thumbs-${CSS.escape(groupId)}`);
+    if (!thumbsEl) return;
+
+    let html = '<div class="dup-inline-compare">';
     for (const f of files) {
       const path = f.path;
+      const isWinner = path === winnerPath;
       const score = scores[path];
-      const isWinner = path === winnerPath && files.length > 1;
-      html += `<div class="dup-column ${isWinner ? "dup-winner" : ""}">`;
-      const thumbSrc = `/api/thumbnail${encodeURI(path)}?size=250`;
-      html += `<img class="dup-thumb" src="${thumbSrc}" onerror="this.outerHTML='<div class=\\'dup-thumb-placeholder\\'>&#128444;</div>'" alt="${escapeHtml(fileName(path))}">`;
-      html += `<div class="dup-filename">${escapeHtml(fileName(path))}</div>`;
+      const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
+
+      html += `<div class="dup-inline-file ${isWinner ? 'dup-inline-winner' : 'dup-inline-loser'}">`;
+
+      // Status badge
+      if (isWinner) {
+        html += `<div class="dup-file-badge dup-badge-keep">&#9989; ${t("duplicates.best_file")}</div>`;
+      } else {
+        html += `<div class="dup-file-badge dup-badge-quarantine">&#128465; ${t("duplicates.will_quarantine")}</div>`;
+      }
+
+      // Thumbnail
+      if (isImage) {
+        const thumbSrc = `/api/thumbnail${encodeURI(path)}?size=200`;
+        html += `<img class="dup-inline-thumb" src="${thumbSrc}" onerror="this.outerHTML='<div class=\\'dup-inline-thumb-placeholder\\'>&#128444;</div>'" alt="${escapeHtml(fileName(path))}">`;
+      } else {
+        const icon = (f.ext || "").match(/^(mp4|mov|avi|mkv|wmv|flv|webm)$/i) ? "&#127910;" : "&#128196;";
+        html += `<div class="dup-inline-thumb-placeholder">${icon}</div>`;
+      }
+
+      // File info
+      html += `<div class="dup-inline-info">
+        <div class="dup-inline-name" title="${escapeHtml(path)}">${escapeHtml(fileName(path))}</div>
+        <div class="dup-inline-meta">${formatBytes(f.size)}</div>`;
+      if (f.width && f.height) {
+        html += `<div class="dup-inline-meta">${f.width}x${f.height}</div>`;
+      }
       if (score != null) {
         const level = score >= 30 ? "high" : score >= 15 ? "medium" : "low";
-        html += `<span class="richness-badge ${level}">${Number(score).toFixed(1)} pts${isWinner ? " &#9733;" : ""}</span>`;
+        html += `<span class="richness-badge ${level}">${Number(score).toFixed(1)} pts</span>`;
       }
-      html += `<div class="dup-path" title="${escapeHtml(path)}">${escapeHtml(path)}</div>`;
-      html += '</div>';
+      html += `</div>`;
+      html += `</div>`;
     }
     html += '</div>';
 
-    // Action buttons
-    if (files.length >= 2) {
-      html += '<div style="text-align:center;margin-bottom:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">';
-      if (files.length === 2) {
-        const pA = files[0].path;
-        const pB = files[1].path;
-        const sA = scores[pA] ?? null;
-        const sB = scores[pB] ?? null;
-        html += `<button class="primary btn-visual-compare" data-pa="${escapeHtml(pA)}" data-pb="${escapeHtml(pB)}" data-sa="${sA}" data-sb="${sB}">${t("duplicates.visual_compare")}</button>`;
-      }
-      html += `<button class="primary btn-merge-quarantine" data-group-id="${escapeHtml(groupId)}" data-keep-path="${escapeHtml(winnerPath || files[0].path)}">${t("duplicates.merge_quarantine")}</button>`;
-      html += '</div>';
+    // Key differences inline
+    if (diffData.conflicts && Object.keys(diffData.conflicts).length > 0) {
+      html += `<div class="dup-inline-diffs">
+        <span class="dup-diff-label">&#9888; ${Object.keys(diffData.conflicts).length} ${t("duplicates.conflicts").toLowerCase()}</span>
+      </div>`;
     }
 
-    // Diff sections
-    if (Object.keys(diffData.unanimous).length) {
-      html += `<details class="diff-section"><summary class="diff-toggle unanimous">${t("duplicates.unanimous", { count: Object.keys(diffData.unanimous).length })}</summary>`;
-      for (const [tag, val] of Object.entries(diffData.unanimous)) {
-        html += `<div class="tag-row"><span class="tag-name">${escapeHtml(tag)}</span><span class="tag-value">${escapeHtml(JSON.stringify(val))}</span></div>`;
-      }
-      html += "</details>";
+    // Visual compare for 2-file groups
+    if (files.length === 2) {
+      const pA = files[0].path;
+      const pB = files[1].path;
+      html += `<div class="dup-inline-actions">
+        <button class="btn-visual-inline" data-pa="${escapeHtml(pA)}" data-pb="${escapeHtml(pB)}" data-sa="${scores[pA] ?? 'null'}" data-sb="${scores[pB] ?? 'null'}">
+          &#128065; ${t("duplicates.visual_compare")}
+        </button>
+      </div>`;
     }
 
-    if (Object.keys(diffData.partial).length) {
-      html += `<details class="diff-section" open><summary class="diff-toggle partial">${t("duplicates.partial", { count: Object.keys(diffData.partial).length })}</summary>`;
-      for (const [tag, sources] of Object.entries(diffData.partial)) {
-        for (const [path, val] of Object.entries(sources)) {
-          html += `<div class="tag-row"><span class="tag-name">${escapeHtml(tag)}</span><span class="tag-value">${escapeHtml(fileName(path))}: ${escapeHtml(JSON.stringify(val))}</span></div>`;
-        }
-      }
-      html += "</details>";
-    }
+    thumbsEl.innerHTML = html;
 
-    if (Object.keys(diffData.conflicts).length) {
-      html += `<details class="diff-section" open><summary class="diff-toggle conflicts">${t("duplicates.conflicts_tags", { count: Object.keys(diffData.conflicts).length })}</summary>`;
-      for (const [tag, sources] of Object.entries(diffData.conflicts)) {
-        for (const [path, val] of Object.entries(sources)) {
-          html += `<div class="tag-row"><span class="tag-name">${escapeHtml(tag)}</span><span class="tag-value">${escapeHtml(fileName(path))}: ${escapeHtml(JSON.stringify(val))}</span></div>`;
-        }
-      }
-      html += "</details>";
-    }
-
-    el.innerHTML = html;
-
-    // Bind visual compare button
-    const vcBtn = el.querySelector(".btn-visual-compare");
+    // Bind visual compare
+    const vcBtn = thumbsEl.querySelector(".btn-visual-inline");
     if (vcBtn) {
       vcBtn.addEventListener("click", () => {
         const sa = vcBtn.dataset.sa === "null" ? null : Number(vcBtn.dataset.sa);
@@ -129,29 +200,79 @@ async function showDiff(groupId) {
       });
     }
 
-    // Bind merge + quarantine button
-    const mqBtn = el.querySelector(".btn-merge-quarantine");
-    if (mqBtn) {
-      mqBtn.addEventListener("click", async () => {
-        const gid = mqBtn.dataset.groupId;
-        const keepPath = mqBtn.dataset.keepPath;
-        if (!confirm(t("confirm.quarantine", { count: files.length - 1 }))) return;
-        mqBtn.disabled = true;
-        mqBtn.textContent = t("general.loading");
-        try {
-          const result = await apiPost(`/duplicates/${encodeURIComponent(gid)}/merge`, { keep_path: keepPath });
-          showToast(`${t("task.completed_toast")} — ${result.quarantined || 0} karanténováno`, "success");
-          // Refresh the duplicates page
-          const c = content();
-          render(c);
-        } catch (err) {
-          showToast(t("general.error", { message: err.message }), "error");
-          mqBtn.disabled = false;
-          mqBtn.textContent = t("duplicates.merge_quarantine");
-        }
-      });
+    // Bind single resolve button
+    const card = $(`#dup-group-${CSS.escape(groupId)}`);
+    if (card) {
+      const resolveBtn = card.querySelector(".btn-resolve-single");
+      if (resolveBtn) {
+        resolveBtn.addEventListener("click", () => resolveSingle(groupId, card));
+      }
     }
   } catch (e) {
-    el.innerHTML = `<div class="empty">${t("general.error", { message: e.message })}</div>`;
+    const thumbsEl = $(`#dup-thumbs-${CSS.escape(groupId)}`);
+    if (thumbsEl) {
+      thumbsEl.innerHTML = `<div class="dup-inline-error">${t("general.error", { message: e.message })}</div>`;
+    }
   }
+}
+
+async function resolveSingle(groupId, cardEl) {
+  const detail = _allGroupDetails[groupId];
+  if (!detail) return;
+
+  const resolveBtn = cardEl.querySelector(".btn-resolve-single");
+  if (resolveBtn) {
+    resolveBtn.disabled = true;
+    resolveBtn.innerHTML = `&#8987; ${t("duplicates.resolving")}`;
+  }
+
+  try {
+    await apiPost(`/duplicates/${encodeURIComponent(groupId)}/merge`, { keep_path: detail.winnerPath });
+    // Animate card removal
+    cardEl.classList.add("dup-resolved");
+    setTimeout(() => {
+      cardEl.remove();
+      updateGroupsCount();
+    }, 500);
+    showToast(`${t("duplicates.resolved")} &#9989;`, "success");
+  } catch (err) {
+    showToast(t("general.error", { message: err.message }), "error");
+    if (resolveBtn) {
+      resolveBtn.disabled = false;
+      resolveBtn.innerHTML = `&#9889; ${t("duplicates.resolve")}`;
+    }
+  }
+}
+
+async function resolveAll(container) {
+  if (!confirm(t("confirm.resolve_all"))) return;
+
+  const cards = container.querySelectorAll(".dup-group-card");
+  let resolved = 0;
+  let failed = 0;
+
+  for (const card of cards) {
+    const groupId = card.dataset.groupId;
+    const detail = _allGroupDetails[groupId];
+    if (!detail) continue;
+
+    try {
+      await apiPost(`/duplicates/${encodeURIComponent(groupId)}/merge`, { keep_path: detail.winnerPath });
+      card.classList.add("dup-resolved");
+      resolved++;
+    } catch {
+      failed++;
+    }
+  }
+
+  showToast(`${t("duplicates.resolved")}: ${resolved}${failed > 0 ? `, ${t("task.status.failed").toLowerCase()}: ${failed}` : ""}`, resolved > 0 ? "success" : "error");
+
+  // Refresh after a moment
+  setTimeout(() => render(container), 1000);
+}
+
+function updateGroupsCount() {
+  const countEl = $("#dup-groups-count");
+  const remaining = document.querySelectorAll(".dup-group-card:not(.dup-resolved)").length;
+  if (countEl) countEl.textContent = remaining;
 }
