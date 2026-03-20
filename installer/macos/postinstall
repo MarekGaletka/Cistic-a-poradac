@@ -4,6 +4,7 @@ set -euo pipefail
 APP_DIR="/Applications/GOD MODE Media Library"
 BIN_PATH="/usr/local/bin/gml"
 LAUNCHER="$APP_DIR/GodMode Media Library.command"
+APP_BUNDLE="/Applications/GOD MODE Media Library.app/Contents/MacOS/launcher"
 
 if [ -f "$BIN_PATH" ]; then
   chmod 755 "$BIN_PATH"
@@ -11,6 +12,15 @@ fi
 
 if [ -f "$LAUNCHER" ]; then
   chmod 755 "$LAUNCHER"
+fi
+
+if [ -f "$APP_BUNDLE" ]; then
+  chmod 755 "$APP_BUNDLE"
+fi
+
+# Remove quarantine attribute so the .app launches without Gatekeeper warning
+if [ -d "/Applications/GOD MODE Media Library.app" ]; then
+  xattr -cr "/Applications/GOD MODE Media Library.app" 2>/dev/null || true
 fi
 
 exit 0
