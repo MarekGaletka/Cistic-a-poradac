@@ -34,6 +34,19 @@ function escapeHtml(str) {
   return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
+// ── Toast ────────────────────────────────────────────
+
+function showToast(message, type = "info") {
+  const container = $("#toast-container");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  toast.addEventListener("click", () => toast.remove());
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
 // ── Modal ────────────────────────────────────────────
 
 function closeModal() {
@@ -417,8 +430,10 @@ async function renderPipeline() {
 async function startPipeline() {
   try {
     const data = await apiPost("/pipeline");
+    showToast("Pipeline started", "info");
     pollTask(data.task_id);
   } catch (e) {
+    showToast("Failed to start pipeline: " + e.message, "error");
     $("#task-output").innerHTML = `<div class="task-status failed">Error: ${e.message}</div>`;
   }
 }
@@ -426,8 +441,10 @@ async function startPipeline() {
 async function startScan() {
   try {
     const data = await apiPost("/scan");
+    showToast("Scan started", "info");
     pollTask(data.task_id);
   } catch (e) {
+    showToast("Failed to start scan: " + e.message, "error");
     $("#task-output").innerHTML = `<div class="task-status failed">Error: ${e.message}</div>`;
   }
 }
@@ -450,8 +467,10 @@ function pollTask(taskId) {
             resultHtml = "<pre>" + escapeHtml(JSON.stringify(data.result, null, 2)) + "</pre>";
           }
           el.innerHTML = `<div class="task-status completed">Task ${taskId}: completed${resultHtml}</div>`;
+          showToast("Task completed successfully", "success");
         } else {
           el.innerHTML = `<div class="task-status failed">Task ${taskId}: failed — ${escapeHtml(data.error)}</div>`;
+          showToast("Task failed: " + (data.error || "unknown error"), "error");
         }
       }
     } catch (e) {

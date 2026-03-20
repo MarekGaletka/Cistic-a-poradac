@@ -513,6 +513,36 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .empty-text { font-size: 14px; margin-bottom: 4px; }
 .empty-hint { font-size: 12px; color: var(--text-muted); opacity: 0.7; }
 
+/* ── Toast notifications ────────────────────────────── */
+
+#toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  max-width: 360px;
+  pointer-events: auto;
+  animation: toastIn 0.3s ease, toastOut 0.3s ease 3.7s forwards;
+  cursor: pointer;
+}
+
+.toast.success { background: rgba(63,185,80,0.15); border: 1px solid var(--green); color: var(--green); }
+.toast.error { background: rgba(248,81,73,0.15); border: 1px solid var(--red); color: var(--red); }
+.toast.info { background: rgba(88,166,255,0.15); border: 1px solid var(--accent); color: var(--accent); }
+
+@keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+
 /* ── Responsive ────────────────────────────────────── */
 
 @media (max-width: 768px) {
