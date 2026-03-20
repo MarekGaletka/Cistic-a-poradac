@@ -143,9 +143,17 @@ function navigate(page) {
   if (pages[page]) pages[page]();
 }
 
+// Hamburger toggle for mobile
+$(".nav-toggle")?.addEventListener("click", () => $("nav").classList.toggle("open"));
+
 document.addEventListener("click", e => {
   const link = e.target.closest("nav a[data-page]");
-  if (link) { e.preventDefault(); navigate(link.dataset.page); }
+  if (link) {
+    e.preventDefault();
+    navigate(link.dataset.page);
+    // Close nav on mobile after navigation
+    $("nav").classList.remove("open");
+  }
 });
 
 window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "dashboard"));

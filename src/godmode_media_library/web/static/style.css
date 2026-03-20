@@ -38,12 +38,28 @@ nav {
   overflow-y: auto;
 }
 
+nav .nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 16px;
+}
+
 nav h1 {
   font-size: 14px;
-  padding: 0 16px 16px;
   color: var(--accent);
   font-weight: 600;
   letter-spacing: 0.5px;
+}
+
+.nav-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
 }
 
 nav a {
@@ -475,4 +491,43 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   padding: 40px;
   color: var(--text-muted);
   font-style: italic;
+}
+
+/* ── Responsive ────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  nav {
+    position: fixed;
+    left: -220px;
+    z-index: 100;
+    transition: left 0.2s ease;
+  }
+
+  nav.open { left: 0; }
+
+  .nav-toggle { display: block !important; }
+
+  main {
+    margin-left: 0;
+    padding: 16px;
+  }
+
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .filters { flex-direction: column; }
+  .filters-advanced { flex-direction: column; }
+
+  .similar-grid { grid-template-columns: 1fr; }
+
+  .modal { width: 95%; max-height: 90vh; padding: 16px; }
+  .modal-header { flex-direction: column; align-items: center; text-align: center; }
+  .modal-thumb, .modal-thumb-placeholder { width: 150px; height: 150px; }
+
+  .pagination { flex-direction: column; gap: 8px; }
 }
