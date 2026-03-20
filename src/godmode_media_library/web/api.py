@@ -12,8 +12,15 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 router = APIRouter()
+
+
+class ScanConfig(BaseModel):
+    roots: list[str] | None = None
+    workers: int = 1
+    extract_exiftool: bool = True
 
 
 # ── Background task tracking ──────────────────────────────────────────
@@ -281,8 +288,13 @@ def get_thumbnail(file_path: str, size: int = Query(default=200, le=800)) -> Str
 
 
 @router.post("/scan")
-def start_scan(request: Request, background_tasks: BackgroundTasks) -> dict:
+def start_scan(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    config: ScanConfig | None = None,
+) -> dict:
     """Trigger an incremental scan as a background task."""
+    cfg = config or ScanConfig()
     task = _create_task("scan")
 
     def _run_scan():
@@ -291,14 +303,20 @@ def start_scan(request: Request, background_tasks: BackgroundTasks) -> dict:
             from ..scanner import incremental_scan
 
             cat = Catalog(request.app.state.catalog_path)
-            # Get roots from last scan
+            scan_roots = [Path(r) for r in cfg.roots] if cfg.roots else []
+            if not scan_roots:
+                with cat:
+                    last_scan = cat.stats().get("last_scan_root", "")
+                    scan_roots = [Path(r) for r in last_scan.split(";") if r] if last_scan else []
+            if not scan_roots:
+                _finish_task(task.id, error="No roots configured. Provide roots or run gml scan --roots first.")
+                return
             with cat:
-                last_scan = cat.stats().get("last_scan_root", "")
-                roots = [Path(r) for r in last_scan.split(";") if r] if last_scan else []
-                if not roots:
-                    _finish_task(task.id, error="No roots configured. Run gml scan --roots first.")
-                    return
-                stats = incremental_scan(cat, roots, extract_exiftool=True)
+                stats = incremental_scan(
+                    cat, scan_roots,
+                    extract_exiftool=cfg.extract_exiftool,
+                    workers=cfg.workers,
+                )
             _finish_task(task.id, result={
                 "files_scanned": stats.files_scanned,
                 "files_new": stats.files_new,
@@ -312,8 +330,13 @@ def start_scan(request: Request, background_tasks: BackgroundTasks) -> dict:
 
 
 @router.post("/pipeline")
-def start_pipeline(request: Request, background_tasks: BackgroundTasks) -> dict:
+def start_pipeline(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    config: ScanConfig | None = None,
+) -> dict:
     """Trigger the full pipeline as a background task."""
+    cfg = config or ScanConfig()
     task = _create_task("pipeline")
 
     def _run_pipeline():
@@ -321,21 +344,24 @@ def start_pipeline(request: Request, background_tasks: BackgroundTasks) -> dict:
             from ..catalog import Catalog
             from ..pipeline import PipelineConfig, run_pipeline
 
-            cat = Catalog(request.app.state.catalog_path)
-            with cat:
-                last_scan = cat.stats().get("last_scan_root", "")
-                roots = [Path(r) for r in last_scan.split(";") if r] if last_scan else []
-            if not roots:
-                _finish_task(task.id, error="No roots configured. Run gml scan --roots first.")
+            pipeline_roots = [Path(r) for r in cfg.roots] if cfg.roots else []
+            if not pipeline_roots:
+                cat = Catalog(request.app.state.catalog_path)
+                with cat:
+                    last_scan = cat.stats().get("last_scan_root", "")
+                    pipeline_roots = [Path(r) for r in last_scan.split(";") if r] if last_scan else []
+            if not pipeline_roots:
+                _finish_task(task.id, error="No roots configured. Provide roots or run gml scan --roots first.")
                 return
 
-            config = PipelineConfig(
-                roots=roots,
+            pipeline_config = PipelineConfig(
+                roots=pipeline_roots,
                 catalog_path=request.app.state.catalog_path,
                 interactive=False,
                 auto_merge=True,
+                workers=cfg.workers,
             )
-            result = run_pipeline(config)
+            result = run_pipeline(pipeline_config)
             _finish_task(task.id, result={
                 "files_scanned": result.files_scanned,
                 "metadata_extracted": result.metadata_extracted,

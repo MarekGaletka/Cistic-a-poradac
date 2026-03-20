@@ -10,8 +10,13 @@ async function api(path) {
   return res.json();
 }
 
-async function apiPost(path) {
-  const res = await fetch(`/api${path}`, { method: "POST" });
+async function apiPost(path, body = null) {
+  const opts = { method: "POST" };
+  if (body) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(`/api${path}`, opts);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -445,6 +450,19 @@ let _pollInterval = null;
 async function renderPipeline() {
   content().innerHTML = `<h2>Pipeline</h2>
     <p style="color:var(--text-muted);margin-bottom:16px">Run the full pipeline: scan → metadata extract → diff → merge</p>
+    <div class="config-form">
+      <div class="form-group">
+        <label class="form-label">Roots (one per line)</label>
+        <textarea id="cfg-roots" rows="3" placeholder="/Users/me/Photos&#10;/Volumes/External/Backup"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Workers</label>
+          <input type="number" id="cfg-workers" value="1" min="1" max="16" style="width:70px">
+        </div>
+        <label class="filter-checkbox"><input type="checkbox" id="cfg-exiftool" checked> ExifTool extraction</label>
+      </div>
+    </div>
     <div style="display:flex;gap:8px;margin-bottom:20px">
       <button class="primary" onclick="startPipeline()">Start Pipeline</button>
       <button onclick="startScan()">Scan Only</button>
@@ -452,9 +470,19 @@ async function renderPipeline() {
     <div id="task-output"></div>`;
 }
 
+function _getScanConfig() {
+  const rootsText = $("#cfg-roots")?.value || "";
+  const roots = rootsText.split("\n").map(s => s.trim()).filter(Boolean);
+  const workers = parseInt($("#cfg-workers")?.value || "1", 10);
+  const extract_exiftool = $("#cfg-exiftool")?.checked ?? true;
+  const body = { workers, extract_exiftool };
+  if (roots.length) body.roots = roots;
+  return body;
+}
+
 async function startPipeline() {
   try {
-    const data = await apiPost("/pipeline");
+    const data = await apiPost("/pipeline", _getScanConfig());
     showToast("Pipeline started", "info");
     pollTask(data.task_id);
   } catch (e) {
@@ -465,7 +493,7 @@ async function startPipeline() {
 
 async function startScan() {
   try {
-    const data = await apiPost("/scan");
+    const data = await apiPost("/scan", _getScanConfig());
     showToast("Scan started", "info");
     pollTask(data.task_id);
   } catch (e) {

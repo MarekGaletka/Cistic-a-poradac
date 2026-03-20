@@ -592,6 +592,33 @@ details[open] > .diff-toggle::before { content: "▼ "; }
 .empty-text { font-size: 14px; margin-bottom: 4px; }
 .empty-hint { font-size: 12px; color: var(--text-muted); opacity: 0.7; }
 
+/* ── Config form ───────────────────────────────────── */
+
+.config-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.form-group { margin-bottom: 12px; }
+.form-label { display: block; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px; }
+
+.config-form textarea, .config-form input[type="number"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 8px 10px;
+  width: 100%;
+  resize: vertical;
+}
+
+.form-row { display: flex; gap: 16px; align-items: flex-end; }
+
 /* ── Toast notifications ────────────────────────────── */
 
 #toast-container {
