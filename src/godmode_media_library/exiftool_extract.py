@@ -135,6 +135,75 @@ def extract_all_metadata(
     return result
 
 
+def write_tags(
+    path: Path,
+    tags: dict[str, Any],
+    *,
+    bin_path: str = "exiftool",
+    overwrite_original: bool = False,
+) -> tuple[bool, str]:
+    """Write metadata tags to a file using ExifTool.
+
+    Args:
+        path: File to write tags to.
+        tags: Dict of tag_name -> value to write.
+        bin_path: ExifTool binary path.
+        overwrite_original: If True, overwrite in place (no _original backup).
+
+    Returns:
+        (success, message) tuple.
+    """
+    binary = exiftool_available(bin_path)
+    if binary is None:
+        return False, "ExifTool not available"
+
+    cmd = [binary, "-q", "-q", "-api", "LargeFileSupport=1"]
+    if overwrite_original:
+        cmd.append("-overwrite_original")
+
+    for tag_name, value in tags.items():
+        if isinstance(value, list):
+            for v in value:
+                cmd.append(f"-{tag_name}={v}")
+        else:
+            cmd.append(f"-{tag_name}={value}")
+
+    cmd.append(str(path))
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)  # noqa: S603
+    except subprocess.TimeoutExpired:
+        return False, "ExifTool write timeout"
+    except FileNotFoundError:
+        return False, f"ExifTool not found: {binary}"
+
+    if proc.returncode not in (0, 1):
+        return False, f"ExifTool error: {proc.stderr[:200]}"
+
+    return True, f"Updated {len(tags)} tags"
+
+
+def batch_write_tags(
+    file_tags: dict[Path, dict[str, Any]],
+    *,
+    bin_path: str = "exiftool",
+    overwrite_original: bool = False,
+) -> dict[str, tuple[bool, str]]:
+    """Write tags to multiple files.
+
+    Returns dict mapping path -> (success, message).
+    """
+    results: dict[str, tuple[bool, str]] = {}
+    for path, tags in file_tags.items():
+        success, msg = write_tags(path, tags, bin_path=bin_path, overwrite_original=overwrite_original)
+        results[str(path)] = (success, msg)
+        if success:
+            logger.info("Wrote %d tags to %s", len(tags), path)
+        else:
+            logger.warning("Failed to write tags to %s: %s", path, msg)
+    return results
+
+
 def extract_single(
     path: Path,
     *,

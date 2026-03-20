@@ -408,3 +408,77 @@ def test_apply_plan_result_has_rollback_fields(tmp_path: Path):
     )
     assert result.rolled_back == 0
     assert result.error is None
+
+
+# ── Selective restore tests ─────────────────────────────────────────
+
+
+def test_selective_restore_last_n(tmp_path: Path):
+    """Selective restore with --last N restores only the last N moves."""
+    from godmode_media_library.actions import selective_restore
+    from godmode_media_library.utils import sha256_file
+
+    content = b"SELECTIVE_TEST" * 50
+
+    # Create 3 file pairs, apply plan, then selectively restore last 1
+    files = []
+    for i in range(3):
+        keep = tmp_path / f"keep_{i}" / "photo.jpg"
+        move = tmp_path / f"move_{i}" / "photo.jpg"
+        keep.parent.mkdir(parents=True)
+        move.parent.mkdir(parents=True)
+        keep.write_bytes(content)
+        move.write_bytes(content)
+        files.append((keep, move))
+
+    digest = sha256_file(files[0][0])
+    plan_path = tmp_path / "plan.tsv"
+    _create_plan_tsv(plan_path, [
+        (digest, str(len(content)), str(f[0]), str(f[1]), "test", "100.0", "50.0")
+        for f in files
+    ])
+
+    quarantine = tmp_path / "quarantine"
+    exec_log = tmp_path / "exec.tsv"
+    skip_log = tmp_path / "skip.tsv"
+
+    apply_plan(plan_path, quarantine, exec_log, skip_log)
+
+    # All moves gone
+    for _, move in files:
+        assert not move.exists()
+
+    # Restore only last 1
+    restored, skipped = selective_restore(exec_log, last_n=1)
+    assert restored == 1
+
+
+def test_selective_restore_by_file(tmp_path: Path):
+    """Selective restore with --file restores specific files."""
+    from godmode_media_library.actions import selective_restore
+    from godmode_media_library.utils import sha256_file
+
+    content = b"FILE_RESTORE" * 50
+    keep = tmp_path / "keep" / "a.jpg"
+    move = tmp_path / "move" / "a.jpg"
+    keep.parent.mkdir(parents=True)
+    move.parent.mkdir(parents=True)
+    keep.write_bytes(content)
+    move.write_bytes(content)
+
+    digest = sha256_file(keep)
+    plan_path = tmp_path / "plan.tsv"
+    _create_plan_tsv(plan_path, [
+        (digest, str(len(content)), str(keep), str(move), "test", "100.0", "50.0"),
+    ])
+
+    quarantine = tmp_path / "quarantine"
+    exec_log = tmp_path / "exec.tsv"
+    skip_log = tmp_path / "skip.tsv"
+
+    apply_plan(plan_path, quarantine, exec_log, skip_log)
+    assert not move.exists()
+
+    restored, skipped = selective_restore(exec_log, file_paths=[move])
+    assert restored == 1
+    assert move.exists()

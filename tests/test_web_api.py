@@ -307,3 +307,39 @@ def test_task_eviction():
         with _tasks_lock:
             _tasks.clear()
             _tasks.update(saved_tasks)
+
+
+# ── Verify endpoint tests ────────────────────────────
+
+
+def test_post_verify(client):
+    """POST /verify should start a verify task."""
+    resp = client.post("/api/verify")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "task_id" in data
+    assert data["status"] == "started"
+
+
+# ── WebSocket endpoint test ──────────────────────────
+
+
+def test_websocket_task_status(client):
+    """WebSocket endpoint should return task status."""
+    from godmode_media_library.web.api import _create_task, _finish_task
+
+    task = _create_task("ws-test")
+    _finish_task(task.id, result={"ok": True})
+
+    with client.websocket_connect(f"/api/ws/tasks/{task.id}") as ws:
+        data = ws.receive_json()
+        assert data["id"] == task.id
+        assert data["status"] == "completed"
+        assert data["result"]["ok"] is True
+
+
+def test_websocket_task_not_found(client):
+    """WebSocket should report task not found."""
+    with client.websocket_connect("/api/ws/tasks/nonexistent") as ws:
+        data = ws.receive_json()
+        assert "error" in data

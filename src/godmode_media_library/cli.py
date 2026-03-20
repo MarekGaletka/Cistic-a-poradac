@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 
-from .actions import apply_plan, promote_from_manifest, restore_from_log
+from .actions import apply_plan, promote_from_manifest, restore_from_log, selective_restore
 from .audit import collect_file_records, load_exact_duplicates, load_inventory, write_audit_run
 from .autolabel_people import auto_people_labels
 from .autolabel_place import auto_place_labels
@@ -23,6 +23,7 @@ from .prune_recommend import recommend_prune
 from .scanner import incremental_scan
 from .tree_ops import apply_tree_plan, create_tree_plan, write_tree_plan
 from .utils import ensure_dir, utc_stamp, write_tsv
+from .verify import verify_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,18 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
 def cmd_restore(args: argparse.Namespace) -> int:
     log_path = Path(args.log).expanduser().resolve()
-    restored, skipped = restore_from_log(log_path, dry_run=args.dry_run)
+
+    if getattr(args, "last", None) is not None or getattr(args, "file", None):
+        file_paths = [Path(p).expanduser().resolve() for p in args.file] if args.file else None
+        restored, skipped = selective_restore(
+            log_path,
+            last_n=args.last,
+            file_paths=file_paths,
+            dry_run=args.dry_run,
+        )
+    else:
+        restored, skipped = restore_from_log(log_path, dry_run=args.dry_run)
+
     print(f"restored={restored}")
     print(f"skipped={skipped}")
     return 0
@@ -428,6 +440,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print("GOD MODE Media Library — Web UI")
     print(f"http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    from .watcher import watch_roots
+
+    roots = _parse_roots(args.roots)
+    catalog = _get_catalog(args)
+    print(f"Watching {len(roots)} roots for changes...")
+    print("Press Ctrl+C to stop.")
+    watch_roots(roots, catalog.db_path)
     return 0
 
 
@@ -733,6 +756,41 @@ def cmd_metadata_merge(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_metadata_write(args: argparse.Namespace) -> int:
+    from .exiftool_extract import write_tags
+
+    paths = [Path(p).expanduser().resolve() for p in args.files]
+    tags = {}
+    for tag_spec in args.tags:
+        if "=" not in tag_spec:
+            print(f"Invalid tag format: {tag_spec} (expected TAG=VALUE)")
+            return 1
+        key, value = tag_spec.split("=", 1)
+        tags[key] = value
+
+    if not tags:
+        print("No tags specified. Use --tag TAG=VALUE")
+        return 1
+
+    total_ok = 0
+    total_fail = 0
+    for path in paths:
+        if not path.exists():
+            print(f"skip: {path} (not found)")
+            total_fail += 1
+            continue
+        ok, msg = write_tags(path, tags, bin_path=args.exiftool_bin, overwrite_original=args.overwrite_original)
+        if ok:
+            print(f"ok: {path}")
+            total_ok += 1
+        else:
+            print(f"fail: {path} ({msg})")
+            total_fail += 1
+
+    print(f"\nwritten={total_ok} failed={total_fail}")
+    return 0 if total_fail == 0 else 1
+
+
 def cmd_similar(args: argparse.Namespace) -> int:
     catalog = _get_catalog(args)
     out_path = Path(args.out).expanduser().resolve() if args.out else None
@@ -778,6 +836,36 @@ def cmd_delete_apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args)
+    with catalog:
+        result = verify_catalog(
+            catalog,
+            check_hashes=args.check_hashes,
+            limit=args.limit,
+        )
+    print(f"total_checked={result.total_checked}")
+    print(f"ok={result.ok}")
+    print(f"missing={len(result.missing_files)}")
+    print(f"size_mismatches={len(result.size_mismatches)}")
+    print(f"hash_mismatches={len(result.hash_mismatches)}")
+    if result.missing_files:
+        print("\n# Missing files:")
+        for p in result.missing_files[:20]:
+            print(f"  {p}")
+        if len(result.missing_files) > 20:
+            print(f"  ... and {len(result.missing_files) - 20} more")
+    if result.size_mismatches:
+        print("\n# Size mismatches:")
+        for p, cat_sz, act_sz in result.size_mismatches[:20]:
+            print(f"  {p}: catalog={cat_sz} actual={act_sz}")
+    if result.hash_mismatches:
+        print("\n# Hash mismatches:")
+        for p, cat_h, act_h in result.hash_mismatches[:20]:
+            print(f"  {p}: catalog={cat_h[:16]}... actual={act_h[:16]}...")
+    return 1 if result.has_issues else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     from .i18n import t
 
@@ -818,6 +906,11 @@ def build_parser() -> argparse.ArgumentParser:
     psrv.add_argument("--catalog", default=None, help=t("help.scan.catalog"))
     psrv.add_argument("--no-browser", action="store_true", help="Don't open browser automatically")
     psrv.set_defaults(func=cmd_serve)
+
+    pw = sub.add_parser("watch", help="Watch directories for changes and auto-scan")
+    pw.add_argument("--roots", nargs="+", required=True, help="Directories to watch")
+    pw.add_argument("--catalog", default=None, help="Catalog DB path")
+    pw.set_defaults(func=cmd_watch)
 
     # ── Catalog commands ─────────────────────────────────────────────
 
@@ -893,6 +986,19 @@ def build_parser() -> argparse.ArgumentParser:
     pmm.add_argument("--dry-run", action="store_true", help="Simulate merge execution")
     pmm.set_defaults(func=cmd_metadata_merge)
 
+    pmw = sub.add_parser("metadata-write", help="Write metadata tags to files via ExifTool")
+    pmw.add_argument("files", nargs="+", help="Files to write tags to")
+    pmw.add_argument("--tag", dest="tags", action="append", required=True, help="Tag to write (format: TAG=VALUE, repeatable)")
+    pmw.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
+    pmw.add_argument("--overwrite-original", action="store_true", help="Overwrite in place (no _original backup)")
+    pmw.set_defaults(func=cmd_metadata_write)
+
+    pv = sub.add_parser("verify", help="Verify catalog integrity against filesystem")
+    pv.add_argument("--catalog", default=None, help="Catalog DB path")
+    pv.add_argument("--check-hashes", action="store_true", help="Recompute SHA-256 hashes (slow)")
+    pv.add_argument("--limit", type=int, default=0, help="Max files to check (0 = all)")
+    pv.set_defaults(func=cmd_verify)
+
     # ── Legacy commands ──────────────────────────────────────────────
 
     pa = sub.add_parser("audit", help="Scan roots, detect duplicates, create safe plan")
@@ -923,6 +1029,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     pr = sub.add_parser("restore", help="Restore moved files from executed log")
     pr.add_argument("--log", required=True, help="Path to executed_moves.tsv")
+    pr.add_argument("--last", type=int, default=None, help="Restore only the last N moves")
+    pr.add_argument("--file", nargs="*", default=None, help="Restore specific files by original path")
     pr.add_argument("--dry-run", action="store_true", help="Do not move files, only simulate")
     pr.set_defaults(func=cmd_restore)
 

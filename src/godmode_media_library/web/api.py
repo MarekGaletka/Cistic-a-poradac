@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import threading
@@ -12,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -49,6 +50,9 @@ class TaskStatus:
 _tasks: dict[str, TaskStatus] = {}
 _tasks_lock = threading.Lock()
 
+_ws_connections: dict[str, list[WebSocket]] = {}
+_ws_lock = threading.Lock()
+
 
 def _evict_old_tasks() -> None:
     """Remove completed/failed tasks older than TTL. Must be called under _tasks_lock."""
@@ -80,10 +84,47 @@ def _create_task(command: str) -> TaskStatus:
     return task
 
 
+def _task_to_msg(task: TaskStatus) -> dict:
+    """Serialize a TaskStatus to a JSON-safe dict for WebSocket broadcast."""
+    return {
+        "id": task.id,
+        "command": task.command,
+        "status": task.status,
+        "progress": task.progress,
+        "result": task.result,
+        "error": task.error,
+        "started_at": task.started_at,
+        "finished_at": task.finished_at,
+    }
+
+
+def _notify_ws(task_id: str, msg: dict) -> None:
+    """Best-effort broadcast to all WebSocket connections for a task."""
+    with _ws_lock:
+        conns = _ws_connections.get(task_id, [])
+        if not conns:
+            return
+        stale: list[WebSocket] = []
+        for ws in conns:
+            try:
+                # send_json is a coroutine; schedule it on the running loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(ws.send_json(msg), loop)
+                else:
+                    loop.run_until_complete(ws.send_json(msg))
+            except Exception:
+                stale.append(ws)
+        for ws in stale:
+            conns.remove(ws)
+
+
 def _update_progress(task_id: str, progress: dict) -> None:
     with _tasks_lock:
         if task_id in _tasks:
             _tasks[task_id].progress = progress
+            msg = _task_to_msg(_tasks[task_id])
+    _notify_ws(task_id, msg)
 
 
 def _finish_task(task_id: str, result: dict | None = None, error: str | None = None) -> None:
@@ -93,6 +134,8 @@ def _finish_task(task_id: str, result: dict | None = None, error: str | None = N
             _tasks[task_id].result = result
             _tasks[task_id].error = error
             _tasks[task_id].finished_at = datetime.now(timezone.utc).isoformat()
+            msg = _task_to_msg(_tasks[task_id])
+    _notify_ws(task_id, msg)
 
 
 # ── Catalog helper ────────────────────────────────────────────────────
@@ -428,6 +471,42 @@ def start_pipeline(
     return {"task_id": task.id, "status": "started"}
 
 
+@router.post("/verify")
+def start_verify(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    check_hashes: bool = False,
+) -> dict:
+    """Trigger catalog verification as a background task."""
+    task = _create_task("verify")
+
+    def _run_verify():
+        try:
+            from ..catalog import Catalog
+            from ..verify import verify_catalog
+
+            cat = Catalog(request.app.state.catalog_path)
+            with cat:
+                result = verify_catalog(
+                    cat,
+                    check_hashes=check_hashes,
+                    progress_callback=lambda p: _update_progress(task.id, p),
+                )
+            _finish_task(task.id, result={
+                "total_checked": result.total_checked,
+                "ok": result.ok,
+                "missing": len(result.missing_files),
+                "size_mismatches": len(result.size_mismatches),
+                "hash_mismatches": len(result.hash_mismatches),
+                "has_issues": result.has_issues,
+            })
+        except Exception as e:
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(_run_verify)
+    return {"task_id": task.id, "status": "started"}
+
+
 @router.get("/tasks/{task_id}")
 def get_task(task_id: str) -> dict:
     """Check status of a background task."""
@@ -445,6 +524,32 @@ def get_task(task_id: str) -> dict:
         "started_at": task.started_at,
         "finished_at": task.finished_at,
     }
+
+
+@router.websocket("/ws/tasks/{task_id}")
+async def ws_task(websocket: WebSocket, task_id: str):
+    await websocket.accept()
+    with _ws_lock:
+        _ws_connections.setdefault(task_id, []).append(websocket)
+    try:
+        while True:
+            with _tasks_lock:
+                task = _tasks.get(task_id)
+            if task is None:
+                await websocket.send_json({"error": "Task not found"})
+                break
+            msg = _task_to_msg(task)
+            await websocket.send_json(msg)
+            if task.status in ("completed", "failed"):
+                break
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        with _ws_lock:
+            conns = _ws_connections.get(task_id, [])
+            if websocket in conns:
+                conns.remove(websocket)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

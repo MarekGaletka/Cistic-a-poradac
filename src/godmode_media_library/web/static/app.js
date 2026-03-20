@@ -431,6 +431,15 @@ async function showDiff(groupId) {
     }
     html += '</div>';
 
+    // Visual compare button (for 2-file groups with images)
+    if (files.length === 2) {
+      const pA = files[0].path;
+      const pB = files[1].path;
+      const sA = scores[pA] ?? null;
+      const sB = scores[pB] ?? null;
+      html += `<div style="text-align:center;margin-bottom:16px"><button onclick="showVisualDiff('${escapeHtml(pA).replace(/'/g, "\\'")}','${escapeHtml(pB).replace(/'/g, "\\'")}',${sA},${sB})" class="primary">Visual Compare</button></div>`;
+    }
+
     // Diff sections with collapsible details
     if (Object.keys(diffData.unanimous).length) {
       html += `<details class="diff-section"><summary class="diff-toggle unanimous">Unanimous (${Object.keys(diffData.unanimous).length} tags)</summary>`;
@@ -467,6 +476,98 @@ async function showDiff(groupId) {
 }
 window.showDiff = showDiff;
 
+// ── Visual Diff ─────────────────────────────────────
+
+function showVisualDiff(pathA, pathB, scoreA, scoreB) {
+  const overlay = document.createElement("div");
+  overlay.className = "visual-diff-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", "Visual comparison");
+
+  const nameA = fileName(pathA);
+  const nameB = fileName(pathB);
+  const thumbA = `/api/thumbnail${encodeURI(pathA)}?size=800`;
+  const thumbB = `/api/thumbnail${encodeURI(pathB)}?size=800`;
+  const winA = scoreA > scoreB;
+  const winB = scoreB > scoreA;
+
+  let mode = "side";
+
+  function render() {
+    let viewHtml = "";
+    if (mode === "side") {
+      viewHtml = `<div class="visual-diff-side">
+        <div class="vd-pane"><img src="${thumbA}" alt="${escapeHtml(nameA)}"><div class="vd-label">${escapeHtml(nameA)}</div></div>
+        <div class="vd-pane"><img src="${thumbB}" alt="${escapeHtml(nameB)}"><div class="vd-label">${escapeHtml(nameB)}</div></div>
+      </div>`;
+    } else if (mode === "slider") {
+      viewHtml = `<div class="visual-diff-slider" id="vd-slider">
+        <img src="${thumbB}" alt="${escapeHtml(nameB)}">
+        <div class="vd-clip" id="vd-clip"><img src="${thumbA}" alt="${escapeHtml(nameA)}"></div>
+        <div class="vd-divider" id="vd-divider"></div>
+      </div>`;
+    } else {
+      viewHtml = `<div class="visual-diff-overlay-mode">
+        <img src="${thumbB}" alt="${escapeHtml(nameB)}">
+        <img class="vd-top" src="${thumbA}" alt="${escapeHtml(nameA)}">
+      </div>`;
+    }
+
+    overlay.innerHTML = `
+      <button class="visual-diff-close" onclick="this.closest('.visual-diff-overlay').remove()" aria-label="Close">&times;</button>
+      <div class="visual-diff-controls">
+        <button class="${mode === 'side' ? 'active' : ''}" onclick="_setVdMode('side')">Side by Side</button>
+        <button class="${mode === 'slider' ? 'active' : ''}" onclick="_setVdMode('slider')">Slider</button>
+        <button class="${mode === 'overlay' ? 'active' : ''}" onclick="_setVdMode('overlay')">Overlay</button>
+      </div>
+      ${viewHtml}
+      <div class="visual-diff-info">
+        <div class="vd-file ${winA ? 'vd-winner' : ''}">${escapeHtml(nameA)} ${scoreA != null ? `(${Number(scoreA).toFixed(1)} pts${winA ? ' \u2605' : ''})` : ''}</div>
+        <div class="vd-file ${winB ? 'vd-winner' : ''}">${escapeHtml(nameB)} ${scoreB != null ? `(${Number(scoreB).toFixed(1)} pts${winB ? ' \u2605' : ''})` : ''}</div>
+      </div>
+    `;
+
+    if (mode === "slider") {
+      requestAnimationFrame(() => _initSlider());
+    }
+  }
+
+  window._setVdMode = (m) => { mode = m; render(); };
+
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  overlay.addEventListener("keydown", e => { if (e.key === "Escape") overlay.remove(); });
+  document.body.appendChild(overlay);
+  render();
+}
+
+function _initSlider() {
+  const slider = document.getElementById("vd-slider");
+  const clip = document.getElementById("vd-clip");
+  const divider = document.getElementById("vd-divider");
+  if (!slider || !clip || !divider) return;
+
+  let dragging = false;
+  const setPos = (x) => {
+    const rect = slider.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
+    clip.style.width = `${pct * 100}%`;
+    divider.style.left = `${pct * 100}%`;
+  };
+  requestAnimationFrame(() => {
+    const rect = slider.getBoundingClientRect();
+    setPos(rect.left + rect.width / 2);
+  });
+
+  slider.addEventListener("mousedown", (e) => { dragging = true; setPos(e.clientX); });
+  document.addEventListener("mousemove", (e) => { if (dragging) setPos(e.clientX); });
+  document.addEventListener("mouseup", () => { dragging = false; });
+  slider.addEventListener("touchstart", (e) => { dragging = true; setPos(e.touches[0].clientX); }, { passive: true });
+  document.addEventListener("touchmove", (e) => { if (dragging) setPos(e.touches[0].clientX); }, { passive: true });
+  document.addEventListener("touchend", () => { dragging = false; });
+}
+
+window.showVisualDiff = showVisualDiff;
+
 // ── Similar ──────────────────────────────────────────
 
 async function renderSimilar() {
@@ -490,6 +591,7 @@ async function renderSimilar() {
         <div style="margin-top:6px;font-size:12px;color:var(--text-muted)">
           ${escapeHtml(fileName(p.path_a))}<br>${escapeHtml(fileName(p.path_b))}
         </div>
+        <button style="margin-top:6px;width:100%" onclick="showVisualDiff('${escapeHtml(p.path_a).replace(/'/g, "\\'")}','${escapeHtml(p.path_b).replace(/'/g, "\\'")}',null,null)">Compare</button>
       </div>`;
     }
     html += "</div>";
@@ -697,9 +799,64 @@ function pollTask(taskId) {
   _pollErrorCount = 0;
   const el = $("#task-output");
   if (!el) return;
-  el.innerHTML = `<div class="task-status running">Task ${escapeHtml(taskId)}: running...</div>`;
+  el.innerHTML = `<div class="task-status running">Task ${escapeHtml(taskId)}: connecting...</div>`;
+
+  // Try WebSocket first
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${proto}//${location.host}/api/ws/tasks/${encodeURIComponent(taskId)}`;
+  let ws;
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (e) {
+    _fallbackPollTask(taskId);
+    return;
+  }
+  ws.onmessage = (event) => {
+    if (!document.getElementById("task-output")) { ws.close(); return; }
+    const data = JSON.parse(event.data);
+    if (data.error && !data.status) {
+      el.innerHTML = `<div class="task-status failed">Error: ${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    _renderTaskStatus(el, taskId, data);
+  };
+  ws.onerror = () => { ws.close(); };
+  ws.onclose = (event) => {
+    // If task is still running when WS closes, fall back to polling
+    const el2 = $("#task-output");
+    if (el2 && el2.querySelector(".task-status.running")) {
+      _fallbackPollTask(taskId);
+    }
+  };
+}
+
+function _renderTaskStatus(el, taskId, data) {
+  if (data.status === "running") {
+    let progressHtml = "";
+    if (data.progress) {
+      const p = data.progress;
+      const pct = p.total > 0 ? Math.round((p.processed / p.total) * 100) : 0;
+      progressHtml = `<div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${escapeHtml(data.progress.phase)}: ${data.progress.processed.toLocaleString()} / ${data.progress.total.toLocaleString()} (${pct}%)</div>`;
+    }
+    el.innerHTML = `<div class="task-status running">Task ${escapeHtml(taskId)}: running... (started ${escapeHtml(data.started_at)})${progressHtml}</div>`;
+  } else if (data.status === "completed") {
+    let resultHtml = "";
+    if (data.result) {
+      resultHtml = "<pre>" + escapeHtml(JSON.stringify(data.result, null, 2)) + "</pre>";
+    }
+    el.innerHTML = `<div class="task-status completed">Task ${escapeHtml(taskId)}: completed${resultHtml}</div>`;
+    showToast("Task completed successfully", "success");
+  } else if (data.status === "failed") {
+    el.innerHTML = `<div class="task-status failed">Task ${escapeHtml(taskId)}: failed \u2014 ${escapeHtml(data.error)}</div>`;
+    showToast("Task failed: " + (data.error || "unknown error"), "error");
+  }
+}
+
+function _fallbackPollTask(taskId) {
+  const el = $("#task-output");
+  if (!el) return;
   _pollInterval = setInterval(async () => {
-    // Stop polling if the element is gone (navigated away)
     if (!document.getElementById("task-output")) {
       clearInterval(_pollInterval);
       _pollInterval = null;
@@ -708,36 +865,17 @@ function pollTask(taskId) {
     try {
       const data = await api(`/tasks/${encodeURIComponent(taskId)}`);
       _pollErrorCount = 0;
-      if (data.status === "running") {
-        let progressHtml = "";
-        if (data.progress) {
-          const p = data.progress;
-          const pct = p.total > 0 ? Math.round((p.processed / p.total) * 100) : 0;
-          progressHtml = `<div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${escapeHtml(p.phase)}: ${p.processed.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)</div>`;
-        }
-        el.innerHTML = `<div class="task-status running">Task ${escapeHtml(taskId)}: running... (started ${escapeHtml(data.started_at)})${progressHtml}</div>`;
-      } else {
+      _renderTaskStatus(el, taskId, data);
+      if (data.status !== "running") {
         clearInterval(_pollInterval);
         _pollInterval = null;
-        if (data.status === "completed") {
-          let resultHtml = "";
-          if (data.result) {
-            resultHtml = "<pre>" + escapeHtml(JSON.stringify(data.result, null, 2)) + "</pre>";
-          }
-          el.innerHTML = `<div class="task-status completed">Task ${escapeHtml(taskId)}: completed${resultHtml}</div>`;
-          showToast("Task completed successfully", "success");
-        } else {
-          el.innerHTML = `<div class="task-status failed">Task ${escapeHtml(taskId)}: failed \u2014 ${escapeHtml(data.error)}</div>`;
-          showToast("Task failed: " + (data.error || "unknown error"), "error");
-        }
       }
     } catch (e) {
       _pollErrorCount++;
       if (_pollErrorCount >= 5) {
         clearInterval(_pollInterval);
         _pollInterval = null;
-        el.innerHTML = `<div class="task-status failed">Lost connection to server after ${_pollErrorCount} retries: ${escapeHtml(e.message)}</div>`;
+        el.innerHTML = `<div class="task-status failed">Lost connection after ${_pollErrorCount} retries: ${escapeHtml(e.message)}</div>`;
       }
     }
   }, 2000);

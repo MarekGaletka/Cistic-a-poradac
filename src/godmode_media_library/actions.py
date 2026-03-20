@@ -163,6 +163,61 @@ def restore_from_log(log_path: Path, dry_run: bool = False) -> tuple[int, int]:
     return restored, skipped
 
 
+def selective_restore(
+    log_path: Path,
+    *,
+    last_n: int | None = None,
+    file_paths: list[Path] | None = None,
+    dry_run: bool = False,
+) -> tuple[int, int]:
+    """Selectively restore files from an executed log.
+
+    Args:
+        log_path: Path to executed_moves.tsv.
+        last_n: Restore the last N moves (most recent first).
+        file_paths: Restore specific files by their original move_path.
+        dry_run: If True, don't move files.
+
+    Returns:
+        (restored, skipped) counts.
+    """
+    rows = read_tsv_dict(log_path)
+
+    # Filter by criteria
+    if file_paths:
+        target_set = {str(p) for p in file_paths}
+        rows = [r for r in rows if r.get("move_path", "") in target_set]
+    if last_n is not None:
+        rows = rows[-last_n:]
+
+    # Reverse order for undo (most recent first)
+    rows = list(reversed(rows))
+
+    restored = 0
+    skipped = 0
+
+    for row in rows:
+        move_path = Path(row.get("move_path", ""))
+        quarantine_path = Path(row.get("quarantine_path", ""))
+
+        if not quarantine_path.exists():
+            logger.info("Skip restore: quarantine file missing: %s", quarantine_path)
+            skipped += 1
+            continue
+        if move_path.exists():
+            logger.info("Skip restore: original path already occupied: %s", move_path)
+            skipped += 1
+            continue
+
+        if not dry_run:
+            ensure_dir(move_path.parent)
+            shutil.move(str(quarantine_path), str(move_path))
+            logger.info("Restored: %s ← %s", move_path, quarantine_path)
+        restored += 1
+
+    return restored, skipped
+
+
 def promote_from_manifest(
     manifest_path: Path,
     backup_root: Path,
