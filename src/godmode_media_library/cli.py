@@ -473,6 +473,29 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if missing else 0
 
 
+def cmd_cloud(args: argparse.Namespace) -> int:
+    from .cloud import check_rclone, format_cloud_guide, list_remotes, mount_command
+
+    if not check_rclone():
+        print("rclone is not installed.\n")
+        print(format_cloud_guide())
+        return 1
+
+    remotes = list_remotes()
+    if not remotes:
+        print("rclone is installed but no remotes configured.")
+        print("Run: rclone config")
+        return 1
+
+    print(f"rclone available — {len(remotes)} remote(s) configured:\n")
+    for r in remotes:
+        print(f"  {r.name} ({r.type})")
+        print(f"    Mount: {mount_command(r.name)}")
+    print()
+    print("After mounting, scan with: gml scan --roots ~/mnt/<remote>/Photos")
+    return 0
+
+
 def _get_catalog(args: argparse.Namespace) -> Catalog:
     db_path = Path(args.catalog) if hasattr(args, "catalog") and args.catalog else default_catalog_path()
     return Catalog(db_path)
@@ -782,6 +805,9 @@ def build_parser() -> argparse.ArgumentParser:
     pauto.add_argument("--no-interactive", action="store_true", help="Skip confirmation prompts")
     pauto.add_argument("--skip", nargs="*", default=[], help="Steps to skip: scan, extract, diff, merge")
     pauto.set_defaults(func=cmd_auto)
+
+    pcld = sub.add_parser("cloud", help="Show cloud storage status and setup guide")
+    pcld.set_defaults(func=cmd_cloud)
 
     psrv = sub.add_parser("serve", help="Start web UI server")
     psrv.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
