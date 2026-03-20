@@ -153,7 +153,7 @@ window.closeModal = closeModal;
 
 // ── Router ───────────────────────────────────────────
 
-const pages = { dashboard: renderDashboard, files: renderFiles, duplicates: renderDuplicates, similar: renderSimilar, pipeline: renderPipeline, doctor: renderDoctor };
+const pages = { dashboard: renderDashboard, files: renderFiles, duplicates: renderDuplicates, similar: renderSimilar, timeline: renderTimeline, pipeline: renderPipeline, doctor: renderDoctor };
 
 function navigate(page) {
   $$("nav a").forEach(a => a.classList.toggle("active", a.dataset.page === page));
@@ -440,6 +440,67 @@ async function renderSimilar() {
     content().innerHTML = html;
   } catch (e) {
     content().innerHTML = `<h2>Similar Images</h2><div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+// ── Timeline ─────────────────────────────────────────
+
+async function renderTimeline() {
+  try {
+    const data = await api("/files?limit=500");
+    const files = data.files.filter(f => f.date_original);
+
+    if (!files.length) {
+      content().innerHTML = '<h2>Timeline</h2><div class="empty"><div class="empty-icon">&#128197;</div><div class="empty-text">No files with dates found</div><div class="empty-hint">Files need date_original metadata (from EXIF or ExifTool extraction).</div></div>';
+      return;
+    }
+
+    // Group files by month
+    const groups = {};
+    for (const f of files) {
+      const date = f.date_original;
+      // Extract YYYY-MM from various date formats
+      const match = date.match(/^(\d{4})[:\-/](\d{2})/);
+      const key = match ? `${match[1]}-${match[2]}` : "Unknown";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(f);
+    }
+
+    // Sort months descending
+    const sortedMonths = Object.keys(groups).sort().reverse();
+
+    let html = `<h2>Timeline <span style="color:var(--text-muted);font-size:14px">(${files.length} dated files)</span></h2>`;
+    html += '<div class="timeline">';
+
+    for (const month of sortedMonths) {
+      const monthFiles = groups[month];
+      const [y, m] = month.split("-");
+      const monthName = m ? new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString("en", { year: "numeric", month: "long" }) : month;
+
+      html += `<div class="timeline-month">
+        <div class="timeline-header">${escapeHtml(monthName)} <span class="timeline-count">(${monthFiles.length})</span></div>
+        <div class="timeline-grid">`;
+
+      for (const f of monthFiles.slice(0, 20)) {
+        const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
+        const thumb = isImage
+          ? `<img src="/api/thumbnail${f.path}?size=150" onerror="this.style.display='none'" alt="">`
+          : `<div class="timeline-icon">${f.ext}</div>`;
+        html += `<div class="timeline-item" onclick="showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')" title="${escapeHtml(f.path)}">
+          ${thumb}
+          <div class="timeline-name">${escapeHtml(fileName(f.path))}</div>
+        </div>`;
+      }
+      if (monthFiles.length > 20) {
+        html += `<div class="timeline-more">+${monthFiles.length - 20} more</div>`;
+      }
+      html += '</div></div>';
+    }
+
+    html += '</div>';
+    content().innerHTML = html;
+  } catch (e) {
+    content().innerHTML = `<h2>Timeline</h2><div class="empty">Error: ${e.message}</div>`;
   }
 }
 
