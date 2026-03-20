@@ -31,6 +31,16 @@ class GMLConfig:
     min_samples: int = 2
     scan_workers: int = 4
 
+    # Deduplication rules
+    dedup_strategy: str = "richness"  # richness | newest | largest | manual
+    dedup_similarity_threshold: int = 10  # Hamming distance for perceptual hash similarity
+    dedup_auto_resolve: bool = False  # Auto-resolve duplicates without confirmation
+    dedup_merge_metadata: bool = True  # Merge metadata from all duplicates into survivor
+    dedup_quarantine_path: str = ""  # Custom quarantine path (empty = default ~/.config/gml/quarantine)
+    dedup_exclude_extensions: list[str] = field(default_factory=list)  # Extensions to skip
+    dedup_exclude_paths: list[str] = field(default_factory=list)  # Path patterns to skip
+    dedup_min_file_size_kb: int = 0  # Skip files smaller than this
+
 
 def _global_config_path() -> Path:
     return Path.home() / ".config" / "gml" / "config.toml"
@@ -109,6 +119,11 @@ def validate_config(config: GMLConfig) -> None:
 
     if not (1 <= config.min_samples <= 100):
         errors.append(f"min_samples must be 1-100, got {config.min_samples}")
+
+    if config.dedup_strategy not in ("richness", "newest", "largest", "manual"):
+        errors.append(f"dedup_strategy must be one of richness/newest/largest/manual, got {config.dedup_strategy}")
+    if not (1 <= config.dedup_similarity_threshold <= 64):
+        errors.append(f"dedup_similarity_threshold must be 1-64, got {config.dedup_similarity_threshold}")
 
     if errors:
         raise ConfigValidationError(

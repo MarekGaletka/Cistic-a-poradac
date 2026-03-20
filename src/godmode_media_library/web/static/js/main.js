@@ -99,6 +99,12 @@ async function renderSettingsContent() {
     <div id="settings-pipeline"></div>
   </div>`;
 
+  // Dedup rules section
+  html += `<div class="settings-section">
+    <h4 class="settings-section-title">${t("dedup.rules_title")}</h4>
+    <div id="settings-dedup-rules"></div>
+  </div>`;
+
   // Doctor section
   html += `<div class="settings-section">
     <h4 class="settings-section-title">${t("settings.doctor_section")}</h4>
@@ -113,11 +119,152 @@ async function renderSettingsContent() {
 
   container.innerHTML = html;
 
-  // Render pipeline and doctor into their containers
+  // Render pipeline, dedup rules, and doctor into their containers
   const pipelineContainer = $("#settings-pipeline");
+  const dedupContainer = $("#settings-dedup-rules");
   const doctorContainer = $("#settings-doctor");
   if (pipelineContainer) pipeline.render(pipelineContainer);
+  if (dedupContainer) renderDedupRules(dedupContainer);
   if (doctorContainer) doctor.render(doctorContainer);
+}
+
+async function renderDedupRules(container) {
+  const { api, apiPut } = await import("./api.js");
+
+  try {
+    const rules = await api("/config/dedup-rules");
+
+    const strategies = [
+      { value: "richness", label: t("dedup.strategy_richness"), hint: t("dedup.strategy_hint_richness") },
+      { value: "newest", label: t("dedup.strategy_newest"), hint: t("dedup.strategy_hint_newest") },
+      { value: "largest", label: t("dedup.strategy_largest"), hint: t("dedup.strategy_hint_largest") },
+      { value: "manual", label: t("dedup.strategy_manual"), hint: t("dedup.strategy_hint_manual") },
+    ];
+
+    let strategyOptions = "";
+    for (const s of strategies) {
+      const checked = rules.strategy === s.value ? "checked" : "";
+      strategyOptions += `
+        <label class="dedup-strategy-option ${checked ? "active" : ""}" data-value="${s.value}">
+          <input type="radio" name="dedup-strategy" value="${s.value}" ${checked}>
+          <div class="dedup-strategy-content">
+            <span class="dedup-strategy-label">${s.label}</span>
+            <span class="dedup-strategy-hint">${s.hint}</span>
+          </div>
+        </label>`;
+    }
+
+    container.innerHTML = `
+      <div class="dedup-rules-form">
+        <div class="dedup-field">
+          <label class="dedup-field-label">${t("dedup.strategy")}</label>
+          <div class="dedup-strategy-grid">${strategyOptions}</div>
+        </div>
+
+        <div class="dedup-field">
+          <label class="dedup-field-label">${t("dedup.similarity_threshold")}</label>
+          <div class="dedup-slider-row">
+            <input type="range" id="dedup-threshold" min="1" max="64" value="${rules.similarity_threshold}" class="dedup-slider">
+            <span class="dedup-slider-value" id="dedup-threshold-val">${rules.similarity_threshold}</span>
+          </div>
+          <span class="dedup-field-hint">${t("dedup.similarity_hint")}</span>
+        </div>
+
+        <div class="dedup-field dedup-toggle-row">
+          <label class="dedup-toggle-label">
+            <input type="checkbox" id="dedup-auto-resolve" ${rules.auto_resolve ? "checked" : ""}>
+            <span class="dedup-toggle-switch"></span>
+            <span>${t("dedup.auto_resolve")}</span>
+          </label>
+          <span class="dedup-field-hint">${t("dedup.auto_resolve_hint")}</span>
+        </div>
+
+        <div class="dedup-field dedup-toggle-row">
+          <label class="dedup-toggle-label">
+            <input type="checkbox" id="dedup-merge-metadata" ${rules.merge_metadata ? "checked" : ""}>
+            <span class="dedup-toggle-switch"></span>
+            <span>${t("dedup.merge_metadata")}</span>
+          </label>
+          <span class="dedup-field-hint">${t("dedup.merge_metadata_hint")}</span>
+        </div>
+
+        <div class="dedup-field">
+          <label class="dedup-field-label" for="dedup-quarantine">${t("dedup.quarantine_path")}</label>
+          <input type="text" id="dedup-quarantine" class="dedup-input" value="${rules.quarantine_path || ""}" placeholder="~/.config/gml/quarantine">
+          <span class="dedup-field-hint">${t("dedup.quarantine_hint")}</span>
+        </div>
+
+        <div class="dedup-field">
+          <label class="dedup-field-label" for="dedup-exclude-ext">${t("dedup.exclude_extensions")}</label>
+          <input type="text" id="dedup-exclude-ext" class="dedup-input" value="${(rules.exclude_extensions || []).join(", ")}" placeholder="tmp, log, ds_store">
+          <span class="dedup-field-hint">${t("dedup.exclude_extensions_hint")}</span>
+        </div>
+
+        <div class="dedup-field">
+          <label class="dedup-field-label" for="dedup-exclude-paths">${t("dedup.exclude_paths")}</label>
+          <input type="text" id="dedup-exclude-paths" class="dedup-input" value="${(rules.exclude_paths || []).join(", ")}" placeholder="node_modules, .git, __pycache__">
+          <span class="dedup-field-hint">${t("dedup.exclude_paths_hint")}</span>
+        </div>
+
+        <div class="dedup-field">
+          <label class="dedup-field-label" for="dedup-min-size">${t("dedup.min_file_size")}</label>
+          <input type="number" id="dedup-min-size" class="dedup-input dedup-input-small" value="${rules.min_file_size_kb}" min="0" step="1">
+          <span class="dedup-field-hint">${t("dedup.min_file_size_hint")}</span>
+        </div>
+
+        <button class="primary dedup-save-btn" id="btn-dedup-save">${t("general.save")}</button>
+      </div>`;
+
+    // Slider live update
+    const slider = container.querySelector("#dedup-threshold");
+    const sliderVal = container.querySelector("#dedup-threshold-val");
+    if (slider && sliderVal) {
+      slider.addEventListener("input", () => { sliderVal.textContent = slider.value; });
+    }
+
+    // Strategy radio highlight
+    container.querySelectorAll(".dedup-strategy-option").forEach(opt => {
+      opt.addEventListener("click", () => {
+        container.querySelectorAll(".dedup-strategy-option").forEach(o => o.classList.remove("active"));
+        opt.classList.add("active");
+        opt.querySelector("input").checked = true;
+      });
+    });
+
+    // Save button
+    container.querySelector("#btn-dedup-save").addEventListener("click", async () => {
+      const btn = container.querySelector("#btn-dedup-save");
+      btn.disabled = true;
+      btn.textContent = "...";
+
+      const strategy = container.querySelector('input[name="dedup-strategy"]:checked')?.value || "richness";
+      const excludeExtStr = container.querySelector("#dedup-exclude-ext").value;
+      const excludePathStr = container.querySelector("#dedup-exclude-paths").value;
+
+      const body = {
+        strategy,
+        similarity_threshold: parseInt(container.querySelector("#dedup-threshold").value, 10),
+        auto_resolve: container.querySelector("#dedup-auto-resolve").checked,
+        merge_metadata: container.querySelector("#dedup-merge-metadata").checked,
+        quarantine_path: container.querySelector("#dedup-quarantine").value.trim(),
+        exclude_extensions: excludeExtStr ? excludeExtStr.split(",").map(s => s.trim()).filter(Boolean) : [],
+        exclude_paths: excludePathStr ? excludePathStr.split(",").map(s => s.trim()).filter(Boolean) : [],
+        min_file_size_kb: parseInt(container.querySelector("#dedup-min-size").value, 10) || 0,
+      };
+
+      try {
+        await apiPut("/config/dedup-rules", body);
+        showToast(t("dedup.save_success"), "success");
+      } catch (e) {
+        showToast(t("dedup.save_error", { message: e.message }), "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = t("general.save");
+      }
+    });
+  } catch (e) {
+    container.innerHTML = `<div class="empty" style="padding:12px">${t("general.error", { message: e.message })}</div>`;
+  }
 }
 
 // ── Nav badges ──────────────────────────────────────

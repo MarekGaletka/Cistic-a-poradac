@@ -92,6 +92,17 @@ class CreateTagRequest(BaseModel):
     color: str = "#58a6ff"
 
 
+class DedupRulesRequest(BaseModel):
+    strategy: str = "richness"
+    similarity_threshold: int = 10
+    auto_resolve: bool = False
+    merge_metadata: bool = True
+    quarantine_path: str = ""
+    exclude_extensions: list[str] = []
+    exclude_paths: list[str] = []
+    min_file_size_kb: int = 0
+
+
 class TagFilesRequest(BaseModel):
     paths: list[str]
     tag_id: int
@@ -1580,6 +1591,66 @@ def _detect_language(ext: str) -> str:
         ".rb": "ruby", ".php": "php", ".swift": "swift",
     }
     return lang_map.get(ext, "text")
+
+
+@router.get("/config/dedup-rules")
+async def get_dedup_rules(request: Request):
+    """Get current deduplication rules."""
+    from ..config import load_config, _global_config_path
+    config = load_config()
+    return {
+        "strategy": config.dedup_strategy,
+        "similarity_threshold": config.dedup_similarity_threshold,
+        "auto_resolve": config.dedup_auto_resolve,
+        "merge_metadata": config.dedup_merge_metadata,
+        "quarantine_path": config.dedup_quarantine_path,
+        "exclude_extensions": config.dedup_exclude_extensions,
+        "exclude_paths": config.dedup_exclude_paths,
+        "min_file_size_kb": config.dedup_min_file_size_kb,
+    }
+
+
+@router.put("/config/dedup-rules")
+async def put_dedup_rules(request: Request, body: DedupRulesRequest):
+    """Update deduplication rules. Saves to global config.toml."""
+    from ..config import _global_config_path, load_config
+    import tomllib
+
+    config_path = _global_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing config
+    existing = {}
+    if config_path.is_file():
+        with config_path.open("rb") as f:
+            existing = tomllib.load(f)
+
+    # Update dedup fields
+    existing["dedup_strategy"] = body.strategy
+    existing["dedup_similarity_threshold"] = body.similarity_threshold
+    existing["dedup_auto_resolve"] = body.auto_resolve
+    existing["dedup_merge_metadata"] = body.merge_metadata
+    existing["dedup_quarantine_path"] = body.quarantine_path
+    existing["dedup_exclude_extensions"] = body.exclude_extensions
+    existing["dedup_exclude_paths"] = body.exclude_paths
+    existing["dedup_min_file_size_kb"] = body.min_file_size_kb
+
+    # Write back as TOML
+    lines = []
+    for key, value in existing.items():
+        if isinstance(value, bool):
+            lines.append(f"{key} = {'true' if value else 'false'}")
+        elif isinstance(value, str):
+            lines.append(f'{key} = "{value}"')
+        elif isinstance(value, list):
+            items = ", ".join(f'"{v}"' for v in value)
+            lines.append(f"{key} = [{items}]")
+        else:
+            lines.append(f"{key} = {value}")
+
+    config_path.write_text("\n".join(lines) + "\n")
+
+    return {"status": "ok"}
 
 
 @router.get("/preview/{file_path:path}")
