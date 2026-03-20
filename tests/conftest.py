@@ -1,10 +1,31 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
 from godmode_media_library.models import DuplicateRow, FileRecord
+
+# ── Auto-skip markers for external tools ──────────────────────────────
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "integration: integration tests with real files")
+    config.addinivalue_line("markers", "requires_exiftool: skip if exiftool not installed")
+    config.addinivalue_line("markers", "requires_ffprobe: skip if ffprobe not installed")
+    config.addinivalue_line("markers", "requires_ffmpeg: skip if ffmpeg not installed")
+
+
+def pytest_collection_modifyitems(config, items):
+    tool_markers = {
+        "requires_exiftool": "exiftool",
+        "requires_ffprobe": "ffprobe",
+        "requires_ffmpeg": "ffmpeg",
+    }
+    for item in items:
+        for marker_name, binary in tool_markers.items():
+            if marker_name in item.keywords and not shutil.which(binary):
+                item.add_marker(pytest.mark.skip(reason=f"{binary} not installed"))
 
 
 @pytest.fixture()
