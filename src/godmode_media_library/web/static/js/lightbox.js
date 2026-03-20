@@ -1,6 +1,6 @@
 /* GOD MODE Media Library — Fullscreen Lightbox (Google Photos / Apple Photos style) */
 
-import { api, apiPost, apiDelete } from "./api.js";
+import { api, apiPost, apiPut, apiDelete } from "./api.js";
 import { escapeHtml, fileName, formatBytes, IMAGE_EXTS, showToast } from "./utils.js";
 import { t } from "./i18n.js";
 import { renderFileTagsWithRemove, openTagPicker } from "./tags.js";
@@ -338,6 +338,27 @@ function renderFileInfo(bodyEl, data) {
     <div style="margin-top:6px">${isFav ? '\u2605 ' + t("files.favorites") : ""}</div>
   </div>`;
 
+  // Rating
+  const currentRating = data.rating || 0;
+  html += `<div class="lightbox-info-section">
+    <div class="lightbox-info-section-title">${t("rating.title")}</div>
+    <div class="lightbox-star-rating" id="lightbox-star-rating" data-path="${escapeHtml(f.path)}">`;
+  for (let i = 1; i <= 5; i++) {
+    const filled = i <= currentRating;
+    html += `<span class="lightbox-star ${filled ? "filled" : ""}" data-star="${i}" title="${i}">${filled ? "\u2605" : "\u2606"}</span>`;
+  }
+  if (currentRating > 0) {
+    html += ` <button class="lightbox-rating-clear" id="lightbox-rating-clear" title="${t("rating.clear")}">&times;</button>`;
+  }
+  html += `</div></div>`;
+
+  // Notes
+  const currentNote = data.note || "";
+  html += `<div class="lightbox-info-section">
+    <div class="lightbox-info-section-title">${t("notes.title")}</div>
+    <textarea class="lightbox-note-textarea" id="lightbox-note-textarea" data-path="${escapeHtml(f.path)}" placeholder="${t("notes.placeholder")}" rows="3">${escapeHtml(currentNote)}</textarea>
+  </div>`;
+
   // Tags
   const fileTags = data.tags || [];
   html += `<div class="lightbox-info-section">
@@ -445,6 +466,82 @@ function renderFileInfo(bodyEl, data) {
       });
     });
   }
+
+  // Bind star rating clicks
+  const starContainer = bodyEl.querySelector("#lightbox-star-rating");
+  if (starContainer) {
+    starContainer.querySelectorAll(".lightbox-star").forEach(star => {
+      star.addEventListener("click", async () => {
+        const starVal = parseInt(star.dataset.star, 10);
+        const filePath = starContainer.dataset.path;
+        const currentR = data.rating || 0;
+        if (starVal === currentR) {
+          // Click same star = clear
+          try {
+            await apiDelete(`/files${filePath}/rating`);
+            showToast(t("rating.clear"), "info");
+            delete _fileDetailsCache[filePath];
+            loadFileInfo(filePath);
+          } catch (err) {
+            showToast(t("general.error", { message: err.message }), "error");
+          }
+        } else {
+          try {
+            await apiPut(`/files${filePath}/rating`, { rating: starVal });
+            showToast(t("rating.set"), "success");
+            delete _fileDetailsCache[filePath];
+            loadFileInfo(filePath);
+          } catch (err) {
+            showToast(t("general.error", { message: err.message }), "error");
+          }
+        }
+      });
+    });
+    const clearBtn = starContainer.querySelector("#lightbox-rating-clear");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", async () => {
+        const filePath = starContainer.dataset.path;
+        try {
+          await apiDelete(`/files${filePath}/rating`);
+          showToast(t("rating.clear"), "info");
+          delete _fileDetailsCache[filePath];
+          loadFileInfo(filePath);
+        } catch (err) {
+          showToast(t("general.error", { message: err.message }), "error");
+        }
+      });
+    }
+  }
+
+  // Bind notes textarea (auto-save on blur with debounce)
+  const noteArea = bodyEl.querySelector("#lightbox-note-textarea");
+  if (noteArea) {
+    let _noteTimer = null;
+    const saveNote = async () => {
+      const filePath = noteArea.dataset.path;
+      const noteText = noteArea.value.trim();
+      try {
+        if (noteText) {
+          await apiPut(`/files${filePath}/note`, { note: noteText });
+          showToast(t("notes.saved"), "success");
+        } else {
+          await apiDelete(`/files${filePath}/note`);
+          showToast(t("notes.deleted"), "info");
+        }
+        delete _fileDetailsCache[filePath];
+      } catch (err) {
+        showToast(t("general.error", { message: err.message }), "error");
+      }
+    };
+    noteArea.addEventListener("blur", () => {
+      if (_noteTimer) clearTimeout(_noteTimer);
+      _noteTimer = setTimeout(saveNote, 500);
+    });
+    noteArea.addEventListener("keydown", (e) => {
+      // Prevent lightbox keyboard shortcuts while typing in textarea
+      e.stopPropagation();
+    });
+  }
 }
 
 function infoRow(label, value) {
@@ -482,6 +579,28 @@ function preloadAdjacent() {
   }
 }
 
+// ── Rating keyboard shortcut ─────────────────────────
+
+async function _setRatingFromKey(rating) {
+  const path = _paths[_index];
+  if (!path) return;
+  try {
+    const cached = _fileDetailsCache[path];
+    const currentR = cached?.rating || 0;
+    if (rating === currentR) {
+      await apiDelete(`/files${path}/rating`);
+      showToast(t("rating.clear"), "info");
+    } else {
+      await apiPut(`/files${path}/rating`, { rating });
+      showToast(t("rating.set"), "success");
+    }
+    delete _fileDetailsCache[path];
+    if (_infoOpen) loadFileInfo(path);
+  } catch (err) {
+    showToast(t("general.error", { message: err.message }), "error");
+  }
+}
+
 // ── Event binding ────────────────────────────────────
 
 function bindEvents() {
@@ -516,6 +635,12 @@ function bindEvents() {
           e.preventDefault();
           const fb = document.getElementById("lightbox-fav-btn");
           if (fb) fb.click();
+        }
+        break;
+      case "1": case "2": case "3": case "4": case "5":
+        if (!e.target.matches("input, textarea, select")) {
+          e.preventDefault();
+          _setRatingFromKey(parseInt(e.key, 10));
         }
         break;
     }

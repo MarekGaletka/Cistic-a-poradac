@@ -3677,3 +3677,171 @@ button:focus-visible, a:focus-visible {
 .file-row.file-focused {
   background: var(--surface-hover);
 }
+
+/* ── Category tabs ──────────────────────────────────── */
+
+.category-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.category-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.category-tab:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.category-tab.active {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.category-tab-count {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* ── Star ratings (lightbox) ────────────────────────── */
+
+.lightbox-star-rating {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.lightbox-star {
+  font-size: 22px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color 0.1s, transform 0.1s;
+  user-select: none;
+}
+
+.lightbox-star:hover {
+  color: var(--yellow);
+  transform: scale(1.2);
+}
+
+.lightbox-star.filled {
+  color: var(--yellow);
+}
+
+.lightbox-rating-clear {
+  font-size: 14px;
+  padding: 2px 6px;
+  margin-left: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.lightbox-rating-clear:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+/* ── Notes textarea (lightbox) ──────────────────────── */
+
+.lightbox-note-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font);
+  resize: vertical;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+
+.lightbox-note-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+.lightbox-note-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* ── Smart view cards (dashboard) ───────────────────── */
+
+.smart-views-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.smart-view-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.smart-view-card:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+.smart-view-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.smart-view-label {
+  white-space: nowrap;
+}
+
+/* ── Thumbnail badges (notes & rating) ──────────────── */
+
+.thumb-badge-note {
+  bottom: 24px;
+  left: 6px;
+  background: rgba(88, 166, 255, 0.85);
+  font-size: 10px;
+}
+
+.thumb-badge-rating {
+  top: 24px;
+  right: 6px;
+  background: rgba(210, 153, 34, 0.9);
+  font-size: 10px;
+  font-weight: 700;
+}

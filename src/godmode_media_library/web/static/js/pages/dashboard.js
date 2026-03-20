@@ -7,6 +7,7 @@ import { showGlobalProgress } from "../tasks.js";
 import { openFolderPicker } from "../folder-picker.js";
 import { openLightbox } from "../lightbox.js";
 import { loadTags } from "../tags.js";
+import { applySmartFilter } from "./files.js";
 
 let _selectedRoots = [];
 
@@ -297,6 +298,30 @@ async function renderDashboard(container, stats) {
       </div>
     </div>`;
 
+  // Smart views
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const dateFrom30 = thirtyDaysAgo.toISOString().split("T")[0];
+
+  const smartCards = [
+    { icon: "\uD83D\uDCF8", label: t("smart.recent_photos"), filter: { ext: "jpg,jpeg,png,gif,bmp,tiff,tif,webp,heic,heif,raw,cr2,nef,arw,dng", date_from: dateFrom30 } },
+    { icon: "\uD83C\uDFAC", label: t("smart.all_videos"), filter: { ext: "mp4,mov,avi,mkv,wmv,flv,webm,m4v,3gp" } },
+    { icon: "\uD83D\uDCCD", label: t("smart.with_location"), filter: { has_gps: true } },
+    { icon: "\u2B50", label: t("smart.top_rated"), filter: { min_rating: 4 } },
+    { icon: "\uD83D\uDCE6", label: t("smart.large_files"), filter: { min_size: 104857600 } },
+  ];
+  html += `<div class="dashboard-section">
+    <h3>${t("smart.title")}</h3>
+    <div class="smart-views-grid">`;
+  for (let i = 0; i < smartCards.length; i++) {
+    const sc = smartCards[i];
+    html += `<button class="smart-view-card" data-smart-idx="${i}">
+      <span class="smart-view-icon">${sc.icon}</span>
+      <span class="smart-view-label">${escapeHtml(sc.label)}</span>
+    </button>`;
+  }
+  html += `</div></div>`;
+
   // Top tags section
   if (tagsData.length > 0) {
     const topTags = tagsData.filter(t => t.file_count > 0).slice(0, 5);
@@ -408,6 +433,16 @@ async function renderDashboard(container, stats) {
       if (settingsBtn) settingsBtn.click();
     });
   }
+
+  // Bind smart view cards
+  container.querySelectorAll(".smart-view-card").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.smartIdx, 10);
+      const filter = smartCards[idx].filter;
+      applySmartFilter(filter);
+      window.location.hash = "#files";
+    });
+  });
 
   // Bind memories thumbnail clicks to open lightbox
   const memThumbs = container.querySelectorAll("[data-memory-path]");
