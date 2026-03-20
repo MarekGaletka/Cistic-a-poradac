@@ -28,8 +28,13 @@ export async function apiPut(path, body = null) {
   return res.json();
 }
 
-export async function apiDelete(path) {
-  const res = await fetch(`/api${path}`, { method: "DELETE" });
+export async function apiDelete(path, body = null) {
+  const opts = { method: "DELETE" };
+  if (body) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(`/api${path}`, opts);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

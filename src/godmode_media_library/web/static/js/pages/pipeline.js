@@ -1,31 +1,77 @@
 /* GOD MODE Media Library — Pipeline (settings panel content) */
 
-import { apiPost } from "../api.js";
+import { api, apiPost, apiDelete } from "../api.js";
 import { $, escapeHtml, showToast } from "../utils.js";
 import { t } from "../i18n.js";
 import { pollTask } from "../tasks.js";
+import { openFolderPicker } from "../folder-picker.js";
+
+let _roots = [];
 
 export async function render(container) {
+  // Load saved roots
+  try {
+    const data = await api("/roots");
+    _roots = data.roots || [];
+  } catch {
+    _roots = [];
+  }
+
+  _renderContent(container);
+}
+
+function _renderContent(container) {
+  let chipsHtml = "";
+  if (_roots.length > 0) {
+    chipsHtml = `<div class="folder-chips">`;
+    for (const root of _roots) {
+      const name = root.split("/").pop() || root;
+      chipsHtml += `<span class="folder-chip"><span class="folder-chip-icon">\u{1F4C1}</span> ${escapeHtml(name)}<span class="folder-chip-path">${escapeHtml(root)}</span><button class="folder-chip-remove" data-path="${escapeHtml(root)}" aria-label="${t("folder.remove")}">&times;</button></span>`;
+    }
+    chipsHtml += "</div>";
+  } else {
+    chipsHtml = `<p class="pipeline-no-roots">${t("pipeline.no_roots")}</p>`;
+  }
+
   container.innerHTML = `
     <p style="color:var(--text-muted);margin-bottom:12px;font-size:13px">${t("pipeline.description")}</p>
-    <div class="config-form config-form-compact">
-      <div class="form-group">
-        <label class="form-label" for="cfg-roots">${t("pipeline.roots")}</label>
-        <textarea id="cfg-roots" rows="2" placeholder="${t("pipeline.roots_placeholder")}" aria-label="${t("pipeline.roots")}"></textarea>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="cfg-workers">${t("pipeline.workers")}</label>
-          <input type="number" id="cfg-workers" value="1" min="1" max="16" style="width:70px">
-        </div>
-        <label class="filter-checkbox"><input type="checkbox" id="cfg-exiftool" checked> ${t("pipeline.exiftool")}</label>
-      </div>
+    <div class="pipeline-roots-section">
+      <label class="form-label">${t("pipeline.configured_roots")}</label>
+      ${chipsHtml}
+      <button class="pipeline-add-folder-btn" id="btn-pipeline-add-folder">
+        \u{1F4C1} ${t("folder.add_folder")}
+      </button>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px">
-      <button class="primary" id="btn-start-pipeline" aria-label="${t("pipeline.start_pipeline")}">${t("pipeline.start_pipeline")}</button>
-      <button id="btn-start-scan" aria-label="${t("pipeline.scan_only")}">${t("pipeline.scan_only")}</button>
+      <button class="primary" id="btn-start-pipeline" aria-label="${t("pipeline.start_pipeline")}" ${_roots.length === 0 ? "disabled" : ""}>${t("pipeline.start_pipeline")}</button>
+      <button id="btn-start-scan" aria-label="${t("pipeline.scan_only")}" ${_roots.length === 0 ? "disabled" : ""}>${t("pipeline.scan_only")}</button>
     </div>
     <div id="task-output" aria-live="polite" style="margin-top:12px"></div>`;
+
+  // Bind add folder button
+  container.querySelector("#btn-pipeline-add-folder").addEventListener("click", () => {
+    openFolderPicker(async (paths) => {
+      const merged = [...new Set([..._roots, ...paths])];
+      _roots = merged;
+      try {
+        await apiPost("/roots", { roots: _roots });
+      } catch { /* silent */ }
+      _renderContent(container);
+    }, _roots);
+  });
+
+  // Bind chip remove buttons
+  container.querySelectorAll(".folder-chip-remove").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const path = btn.dataset.path;
+      _roots = _roots.filter(r => r !== path);
+      try {
+        await apiDelete("/roots", { path });
+      } catch { /* silent */ }
+      _renderContent(container);
+    });
+  });
 
   // Bind buttons
   container.querySelector("#btn-start-pipeline").addEventListener("click", startPipeline);
@@ -33,13 +79,7 @@ export async function render(container) {
 }
 
 function getScanConfig() {
-  const rootsText = $("#cfg-roots")?.value || "";
-  const roots = rootsText.split("\n").map(s => s.trim()).filter(Boolean);
-  const workers = parseInt($("#cfg-workers")?.value || "1", 10);
-  const extract_exiftool = $("#cfg-exiftool")?.checked ?? true;
-  const body = { workers, extract_exiftool };
-  if (roots.length) body.roots = roots;
-  return body;
+  return { roots: _roots, workers: 1, extract_exiftool: true };
 }
 
 async function startPipeline() {

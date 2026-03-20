@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
+import json
 import logging
 import shutil
 import threading
@@ -65,7 +67,18 @@ class RestoreRequest(BaseModel):
     quarantine_root: str | None = None
 
 
+class RootsRequest(BaseModel):
+    roots: list[str]
+
+
+class RemoveRootRequest(BaseModel):
+    path: str
+
+
 _DEFAULT_QUARANTINE_ROOT = Path.home() / ".config" / "gml" / "quarantine"
+
+# Directories that should not be browsable for security
+_BLOCKED_PREFIXES = ("/etc", "/var", "/private", "/sbin", "/usr", "/bin", "/tmp", "/dev", "/proc", "/sys")
 
 
 # ── Background task tracking ──────────────────────────────────────────
@@ -918,6 +931,158 @@ def restore_files(request: Request, body: RestoreRequest) -> dict:
     finally:
         cat.close()
     return {"restored": restored, "errors": errors}
+
+
+# ── Filesystem browsing & roots ───────────────────────────────────────
+
+
+def _is_path_allowed(p: Path) -> bool:
+    """Check if a path is allowed to browse (security guard)."""
+    resolved = str(p.resolve())
+    return all(
+        resolved != prefix and not resolved.startswith(prefix + "/")
+        for prefix in _BLOCKED_PREFIXES
+    )
+
+
+def _get_bookmarks() -> list[dict]:
+    """Return quick-access bookmark locations."""
+    home = Path.home()
+    bookmarks = [
+        {"name": "Plocha", "path": str(home / "Desktop"), "icon": "\U0001f5a5"},
+        {"name": "Obr\u00e1zky", "path": str(home / "Pictures"), "icon": "\U0001f5bc"},
+        {"name": "Dokumenty", "path": str(home / "Documents"), "icon": "\U0001f4c1"},
+        {"name": "Sta\u017een\u00e9", "path": str(home / "Downloads"), "icon": "\U0001f4e5"},
+        {"name": "Domovsk\u00e1 slo\u017eka", "path": str(home), "icon": "\U0001f3e0"},
+    ]
+    # Detect mounted volumes
+    volumes_path = Path("/Volumes")
+    if volumes_path.exists():
+        try:
+            for entry in sorted(volumes_path.iterdir()):
+                if entry.is_dir() and entry.name != "Macintosh HD":
+                    bookmarks.append({
+                        "name": entry.name,
+                        "path": str(entry),
+                        "icon": "\U0001f4be",
+                    })
+        except PermissionError:
+            pass
+    return bookmarks
+
+
+@router.get("/browse")
+def browse_filesystem(
+    path: str | None = Query(default=None),
+) -> dict:
+    """Browse filesystem directories for folder picker."""
+    browse_path = Path(path).resolve() if path else Path.home()
+
+    if not _is_path_allowed(browse_path):
+        raise HTTPException(status_code=403, detail="Access to this path is not allowed")
+
+    if not browse_path.exists():
+        raise HTTPException(status_code=404, detail="Path does not exist")
+
+    if not browse_path.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory")
+
+    entries: list[dict] = []
+    try:
+        for entry in sorted(browse_path.iterdir(), key=lambda e: e.name.lower()):
+            if entry.name.startswith("."):
+                continue
+            if not entry.is_dir():
+                continue
+            if not _is_path_allowed(entry):
+                continue
+            item_count = 0
+            with contextlib.suppress(PermissionError):
+                item_count = sum(1 for _ in entry.iterdir())
+            entries.append({
+                "name": entry.name,
+                "path": str(entry),
+                "is_dir": True,
+                "item_count": item_count,
+            })
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied") from None
+
+    parent = str(browse_path.parent) if browse_path != browse_path.parent else None
+
+    return {
+        "current": str(browse_path),
+        "parent": parent,
+        "entries": entries,
+        "bookmarks": _get_bookmarks(),
+    }
+
+
+def _get_configured_roots(request: Request) -> list[str]:
+    """Read configured_roots from catalog meta table."""
+    cat = _open_catalog(request)
+    try:
+        cur = cat.conn.execute("SELECT value FROM meta WHERE key = 'configured_roots'")
+        row = cur.fetchone()
+        if row is None:
+            return []
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return []
+    finally:
+        cat.close()
+
+
+def _set_configured_roots(request: Request, roots: list[str]) -> None:
+    """Write configured_roots to catalog meta table."""
+    cat = _open_catalog(request)
+    try:
+        cat.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('configured_roots', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(roots),),
+        )
+        cat.conn.commit()
+    finally:
+        cat.close()
+
+
+@router.get("/roots")
+def get_roots(request: Request) -> dict:
+    """Get saved media root folders."""
+    roots = _get_configured_roots(request)
+    return {"roots": roots}
+
+
+@router.post("/roots")
+def save_roots(request: Request, body: RootsRequest) -> dict:
+    """Save media root folders."""
+    # Validate paths exist
+    valid_roots = []
+    for root in body.roots:
+        p = Path(root)
+        if p.exists() and p.is_dir():
+            valid_roots.append(str(p.resolve()))
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique_roots: list[str] = []
+    for r in valid_roots:
+        if r not in seen:
+            seen.add(r)
+            unique_roots.append(r)
+    _set_configured_roots(request, unique_roots)
+    return {"saved": True, "roots": unique_roots}
+
+
+@router.delete("/roots")
+def remove_root(request: Request, body: RemoveRootRequest) -> dict:
+    """Remove a specific root folder."""
+    roots = _get_configured_roots(request)
+    path_to_remove = str(Path(body.path).resolve())
+    roots = [r for r in roots if r != path_to_remove]
+    _set_configured_roots(request, roots)
+    return {"removed": True, "roots": roots}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
