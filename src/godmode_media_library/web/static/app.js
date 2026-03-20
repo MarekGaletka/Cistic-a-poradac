@@ -153,7 +153,7 @@ window.closeModal = closeModal;
 
 // ── Router ───────────────────────────────────────────
 
-const pages = { dashboard: renderDashboard, files: renderFiles, duplicates: renderDuplicates, similar: renderSimilar, timeline: renderTimeline, pipeline: renderPipeline, doctor: renderDoctor };
+const pages = { dashboard: renderDashboard, files: renderFiles, duplicates: renderDuplicates, similar: renderSimilar, timeline: renderTimeline, map: renderMap, pipeline: renderPipeline, doctor: renderDoctor };
 
 function navigate(page) {
   $$("nav a").forEach(a => a.classList.toggle("active", a.dataset.page === page));
@@ -503,6 +503,75 @@ async function renderTimeline() {
     content().innerHTML = `<h2>Timeline</h2><div class="empty">Error: ${e.message}</div>`;
   }
 }
+
+// ── Map ──────────────────────────────────────────────
+
+let _leafletMap = null;
+
+async function renderMap() {
+  content().innerHTML = '<h2>Map</h2><div id="map-container"></div>';
+
+  try {
+    const data = await api("/files?has_gps=true&limit=5000");
+    const files = data.files.filter(f => f.gps_latitude && f.gps_longitude);
+
+    if (!files.length) {
+      content().innerHTML = '<h2>Map</h2><div class="empty"><div class="empty-icon">&#127758;</div><div class="empty-text">No geotagged files found</div><div class="empty-hint">Files need GPS metadata from EXIF. Run ExifTool extraction to populate GPS data.</div></div>';
+      return;
+    }
+
+    // Initialize Leaflet map
+    if (_leafletMap) { _leafletMap.remove(); _leafletMap = null; }
+
+    if (typeof L === "undefined") {
+      content().innerHTML = '<h2>Map</h2><div class="empty">Leaflet.js not loaded. Check your internet connection.</div>';
+      return;
+    }
+
+    _leafletMap = L.map("map-container").setView([0, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19,
+    }).addTo(_leafletMap);
+
+    // Add markers
+    const bounds = [];
+    for (const f of files) {
+      const lat = f.gps_latitude;
+      const lng = f.gps_longitude;
+      bounds.push([lat, lng]);
+
+      const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
+      const thumbUrl = isImage ? `/api/thumbnail${f.path}?size=150` : "";
+      const thumbHtml = isImage ? `<img src="${thumbUrl}" style="width:120px;height:80px;object-fit:cover;border-radius:4px;margin-bottom:4px;display:block" onerror="this.style.display='none'">` : "";
+
+      const popup = `<div style="font-size:12px;max-width:160px">
+        ${thumbHtml}
+        <strong>${escapeHtml(fileName(f.path))}</strong><br>
+        <span style="color:#666">${escapeHtml(f.date_original || "")}</span><br>
+        <a href="#" onclick="event.preventDefault();closeAllPopups();showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')">Details</a>
+      </div>`;
+
+      L.marker([lat, lng]).addTo(_leafletMap).bindPopup(popup);
+    }
+
+    // Fit map to markers
+    if (bounds.length) {
+      _leafletMap.fitBounds(bounds, { padding: [20, 20] });
+    }
+
+    // Fix Leaflet tile rendering issue with dynamic containers
+    setTimeout(() => _leafletMap.invalidateSize(), 100);
+
+  } catch (e) {
+    content().innerHTML = `<h2>Map</h2><div class="empty">Error: ${e.message}</div>`;
+  }
+}
+
+function closeAllPopups() {
+  if (_leafletMap) _leafletMap.closePopup();
+}
+window.closeAllPopups = closeAllPopups;
 
 // ── Pipeline ─────────────────────────────────────────
 

@@ -607,6 +607,16 @@ details[open] > .diff-toggle::before { content: "▼ "; }
 .empty-text { font-size: 14px; margin-bottom: 4px; }
 .empty-hint { font-size: 12px; color: var(--text-muted); opacity: 0.7; }
 
+/* ── Map ───────────────────────────────────────────── */
+
+#map-container {
+  height: calc(100vh - 120px);
+  min-height: 400px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
 /* ── Timeline ──────────────────────────────────────── */
 
 .timeline { }
