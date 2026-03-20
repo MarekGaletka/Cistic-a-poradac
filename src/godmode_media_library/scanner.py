@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -28,6 +29,7 @@ def incremental_scan(
     extract_exiftool: bool = False,
     exiftool_bin: str = "exiftool",
     workers: int = 1,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> ScanStats:
     """Scan filesystem roots and update catalog incrementally.
 
@@ -51,6 +53,8 @@ def incremental_scan(
     # Collect all current disk paths
     all_paths = list(iter_files(roots))
     logger.info("Discovered %d files across %d roots", len(all_paths), len(roots))
+    if progress_callback:
+        progress_callback({"phase": "discovery", "total": len(all_paths), "processed": 0})
 
     # Build asset membership
     path_to_key, path_is_component, _ = build_asset_membership(all_paths)
@@ -145,6 +149,8 @@ def incremental_scan(
             paths_for_phash.append((len(file_infos) - 1, path, ext))
 
     # ── Phase 2: Parallel SHA-256 hashing ─────────────────────────────
+    if progress_callback:
+        progress_callback({"phase": "hashing", "total": len(all_paths), "processed": stats.files_scanned, "to_hash": len(paths_to_hash)})
     if paths_to_hash:
         logger.info("Hashing %d files (workers=%d)", len(paths_to_hash), effective_workers)
         if effective_workers > 1:
@@ -208,7 +214,9 @@ def incremental_scan(
                 file_infos[fi_idx]["phash"] = _compute_phash(p, ext)
 
     # ── Phase 5: Sequential catalog upsert ────────────────────────────
-    for info in file_infos:
+    if progress_callback:
+        progress_callback({"phase": "saving", "total": len(file_infos), "processed": 0})
+    for upsert_idx, info in enumerate(file_infos):
         row = CatalogFileRow(
             id=None,
             path=info["path_str"],
@@ -260,6 +268,9 @@ def incremental_scan(
             row.phash = phash_val
 
         catalog.upsert_file(row)
+
+        if progress_callback and (upsert_idx + 1) % 100 == 0:
+            progress_callback({"phase": "saving", "total": len(file_infos), "processed": upsert_idx + 1})
 
     if stats.files_scanned % 1000 == 0 and stats.files_scanned > 0:
         catalog.commit()

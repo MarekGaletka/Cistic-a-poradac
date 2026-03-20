@@ -510,7 +510,14 @@ function pollTask(taskId) {
     try {
       const data = await api(`/tasks/${taskId}`);
       if (data.status === "running") {
-        el.innerHTML = `<div class="task-status running">Task ${taskId}: running... (started ${data.started_at})</div>`;
+        let progressHtml = "";
+        if (data.progress) {
+          const p = data.progress;
+          const pct = p.total > 0 ? Math.round((p.processed / p.total) * 100) : 0;
+          progressHtml = `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${p.phase}: ${p.processed.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)</div>`;
+        }
+        el.innerHTML = `<div class="task-status running">Task ${taskId}: running... (started ${data.started_at})${progressHtml}</div>`;
       } else {
         clearInterval(_pollInterval);
         _pollInterval = null;

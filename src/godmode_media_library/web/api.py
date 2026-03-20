@@ -52,6 +52,12 @@ def _create_task(command: str) -> TaskStatus:
     return task
 
 
+def _update_progress(task_id: str, progress: dict) -> None:
+    with _tasks_lock:
+        if task_id in _tasks:
+            _tasks[task_id].progress = progress
+
+
 def _finish_task(task_id: str, result: dict | None = None, error: str | None = None) -> None:
     with _tasks_lock:
         if task_id in _tasks:
@@ -316,6 +322,7 @@ def start_scan(
                     cat, scan_roots,
                     extract_exiftool=cfg.extract_exiftool,
                     workers=cfg.workers,
+                    progress_callback=lambda p: _update_progress(task.id, p),
                 )
             _finish_task(task.id, result={
                 "files_scanned": stats.files_scanned,
@@ -390,6 +397,7 @@ def get_task(task_id: str) -> dict:
         "status": task.status,
         "result": task.result,
         "error": task.error,
+        "progress": task.progress,
         "started_at": task.started_at,
         "finished_at": task.finished_at,
     }

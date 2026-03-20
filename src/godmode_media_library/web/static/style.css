@@ -411,6 +411,21 @@ details[open] > .diff-toggle::before { content: "▼ "; }
 }
 
 .task-status.running { background: rgba(88,166,255,0.1); border: 1px solid var(--accent); }
+
+.progress-bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
 .task-status.completed { background: rgba(63,185,80,0.1); border: 1px solid var(--green); }
 .task-status.failed { background: rgba(248,81,73,0.1); border: 1px solid var(--red); }
 

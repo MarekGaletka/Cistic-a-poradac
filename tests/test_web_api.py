@@ -151,6 +151,20 @@ def test_get_files_with_phash_filter(client):
     assert isinstance(data["files"], list)
 
 
+def test_task_progress_field(client):
+    """Verify task response includes progress field."""
+    # Create a mock task manually
+    from godmode_media_library.web.api import _create_task, _update_progress
+    task = _create_task("test")
+    _update_progress(task.id, {"phase": "hashing", "total": 100, "processed": 42})
+    resp = client.get(f"/api/tasks/{task.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["progress"] is not None
+    assert data["progress"]["phase"] == "hashing"
+    assert data["progress"]["processed"] == 42
+
+
 def test_get_files_with_pagination(client):
     # Get first page
     resp1 = client.get("/api/files?limit=2&offset=0")
