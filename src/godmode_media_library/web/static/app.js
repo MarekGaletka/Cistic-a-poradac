@@ -196,13 +196,17 @@ async function renderDashboard() {
 
 // ── Files ────────────────────────────────────────────
 
+const FILES_PER_PAGE = 50;
+let _filesOffset = 0;
+
 async function renderFiles() {
+  _filesOffset = 0;
   let html = `<h2>Files</h2>
     <div class="filters">
       <input type="text" id="f-ext" placeholder="Extension (jpg)" size="10">
       <input type="text" id="f-camera" placeholder="Camera" size="15">
       <input type="text" id="f-path" placeholder="Path contains..." size="20">
-      <button onclick="loadFiles()">Search</button>
+      <button onclick="_filesOffset=0;loadFiles()">Search</button>
     </div>
     <div class="filters filters-advanced">
       <div class="filter-group"><label>From</label><input type="date" id="f-date-from"></div>
@@ -227,7 +231,7 @@ async function loadFiles() {
   const maxSize = $("#f-max-size")?.value || "";
   const hasGps = $("#f-has-gps")?.checked;
   const hasPhash = $("#f-has-phash")?.checked;
-  let q = "/files?limit=200";
+  let q = `/files?limit=${FILES_PER_PAGE}`;
   if (ext) q += `&ext=${encodeURIComponent(ext)}`;
   if (camera) q += `&camera=${encodeURIComponent(camera)}`;
   if (pathC) q += `&path_contains=${encodeURIComponent(pathC)}`;
@@ -237,6 +241,7 @@ async function loadFiles() {
   if (maxSize) q += `&max_size=${encodeURIComponent(maxSize)}`;
   if (hasGps) q += "&has_gps=true";
   if (hasPhash) q += "&has_phash=true";
+  q += `&offset=${_filesOffset}`;
   try {
     const data = await api(q);
     if (!data.files.length) {
@@ -259,14 +264,26 @@ async function loadFiles() {
       </tr>`;
     }
     t += "</table>";
-    if (data.has_more) t += `<p style="color:var(--text-muted);margin-top:8px">Showing first 200 results...</p>`;
+    // Pagination controls
+    const pageNum = Math.floor(_filesOffset / FILES_PER_PAGE) + 1;
+    const from = _filesOffset + 1;
+    const to = _filesOffset + data.count;
+    t += `<div class="pagination">
+      <button ${_filesOffset === 0 ? "disabled" : ""} onclick="filesPagePrev()">&#8592; Previous</button>
+      <span class="page-info">Showing ${from}–${to} (page ${pageNum})</span>
+      <button ${!data.has_more ? "disabled" : ""} onclick="filesPageNext()">Next &#8594;</button>
+    </div>`;
     $("#files-table").innerHTML = t;
   } catch (e) {
     $("#files-table").innerHTML = `<div class="empty">Error: ${e.message}</div>`;
   }
 }
+function filesPageNext() { _filesOffset += FILES_PER_PAGE; loadFiles(); }
+function filesPagePrev() { _filesOffset = Math.max(0, _filesOffset - FILES_PER_PAGE); loadFiles(); }
 // expose to onclick
 window.loadFiles = loadFiles;
+window.filesPageNext = filesPageNext;
+window.filesPagePrev = filesPagePrev;
 
 // ── Duplicates ───────────────────────────────────────
 

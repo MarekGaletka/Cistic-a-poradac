@@ -88,6 +88,7 @@ def get_files(
     has_gps: bool | None = None,
     has_phash: bool | None = None,
     limit: int = Query(default=500, le=10000),
+    offset: int = Query(default=0, ge=0),
 ) -> dict:
     """Query files with filters."""
     cat = _open_catalog(request)
@@ -103,6 +104,7 @@ def get_files(
             has_gps=has_gps,
             has_phash=has_phash,
             limit=limit + 1,
+            offset=offset,
         )
         has_more = len(rows) > limit
         items = rows[:limit]

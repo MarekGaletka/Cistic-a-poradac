@@ -448,6 +448,7 @@ class Catalog:
         has_gps: bool | None = None,
         has_phash: bool | None = None,
         limit: int = 10000,
+        offset: int = 0,
     ) -> list[CatalogFileRow]:
         conditions: list[str] = []
         params: list[object] = []
@@ -496,8 +497,9 @@ class Catalog:
             conditions.append("phash IS NULL")
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        sql = f"SELECT * FROM files WHERE {where} ORDER BY path LIMIT ?"  # noqa: S608
+        sql = f"SELECT * FROM files WHERE {where} ORDER BY path LIMIT ? OFFSET ?"  # noqa: S608
         params.append(limit)
+        params.append(offset)
 
         cur = self.conn.execute(sql, params)
         return [self._row_to_catalog_file(row) for row in cur.fetchall()]

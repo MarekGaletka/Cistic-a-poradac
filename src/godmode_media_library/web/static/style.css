@@ -202,6 +202,22 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .filter-checkbox:hover { color: var(--text); }
 .filter-checkbox input[type="checkbox"] { accent-color: var(--accent); }
 
+/* ── Pagination ────────────────────────────────────── */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding: 8px 0;
+}
+
+.page-info {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 /* ── Diff view ──────────────────────────────────────── */
 
 .diff-section {

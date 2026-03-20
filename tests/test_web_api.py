@@ -149,3 +149,24 @@ def test_get_files_with_phash_filter(client):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["files"], list)
+
+
+def test_get_files_with_pagination(client):
+    # Get first page
+    resp1 = client.get("/api/files?limit=2&offset=0")
+    assert resp1.status_code == 200
+    d1 = resp1.json()
+    assert d1["count"] == 2
+    assert d1["has_more"] is True
+
+    # Get second page
+    resp2 = client.get("/api/files?limit=2&offset=2")
+    assert resp2.status_code == 200
+    d2 = resp2.json()
+    assert d2["count"] == 2
+    assert d2["has_more"] is False
+
+    # Pages should have different files
+    paths1 = {f["path"] for f in d1["files"]}
+    paths2 = {f["path"] for f in d2["files"]}
+    assert paths1.isdisjoint(paths2)
