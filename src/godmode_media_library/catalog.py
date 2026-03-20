@@ -352,6 +352,11 @@ class Catalog:
     def commit(self) -> None:
         self.conn.commit()
 
+    def vacuum(self) -> None:
+        """Run VACUUM to reclaim space and defragment the database."""
+        logger.info("Running VACUUM on catalog %s", self._db_path)
+        self.conn.execute("VACUUM")
+
     # ── File metadata (deep ExifTool) ─────────────────────────────────
 
     def upsert_file_metadata(self, path: str, raw_json: str) -> None:

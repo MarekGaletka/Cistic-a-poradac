@@ -592,6 +592,15 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_vacuum(args: argparse.Namespace) -> int:
+    catalog = _get_catalog(args, exclusive=True)
+    with catalog:
+        catalog.vacuum()
+    print(f"catalog={catalog.db_path}")
+    print("VACUUM completed.")
+    return 0
+
+
 def cmd_catalog_import(args: argparse.Namespace) -> int:
     inventory_path = Path(args.inventory).expanduser().resolve()
     catalog = _get_catalog(args, exclusive=True)
@@ -946,6 +955,10 @@ def build_parser() -> argparse.ArgumentParser:
     pst = sub.add_parser("stats", help=t("help.stats"))
     pst.add_argument("--catalog", default=None, help="Catalog DB path")
     pst.set_defaults(func=cmd_stats)
+
+    pvac = sub.add_parser("vacuum", help="Compact and defragment catalog database")
+    pvac.add_argument("--catalog", default=None, help="Catalog DB path")
+    pvac.set_defaults(func=cmd_vacuum)
 
     pci = sub.add_parser("catalog-import", help="Import audit inventory TSV into catalog")
     pci.add_argument("--inventory", required=True, help="Path to file_inventory.tsv")

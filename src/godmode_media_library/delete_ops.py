@@ -323,6 +323,24 @@ def apply_delete_plan(
             continue
 
         if action == "unlink_alias":
+            # Hardlink safety: verify the inode still has the expected nlink
+            # before unlinking, to prevent accidental data loss
+            try:
+                st = path.stat()
+                current_nlink = int(st.st_nlink)
+                expected = int(row.get("nlink_expected", "0"))
+                if expected > 0 and current_nlink != expected:
+                    skipped += 1
+                    log_rows.append((
+                        inode_id, str(path), action, "skipped", "",
+                        f"nlink_changed:expected={expected},actual={current_nlink}",
+                    ))
+                    continue
+            except OSError:
+                skipped += 1
+                log_rows.append((inode_id, str(path), action, "skipped", "", "stat_failed"))
+                continue
+
             if not dry_run:
                 path.unlink()
             unlinked_aliases += 1

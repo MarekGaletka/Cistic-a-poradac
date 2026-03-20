@@ -343,3 +343,79 @@ def test_websocket_task_not_found(client):
     with client.websocket_connect("/api/ws/tasks/nonexistent") as ws:
         data = ws.receive_json()
         assert "error" in data
+
+
+# ── Auth tests ───────────────────────────────────────
+
+
+def test_api_auth_no_token_required(catalog_with_files):
+    """Without GML_API_TOKEN env var, API is open."""
+    from godmode_media_library.web.app import create_app
+
+    app = create_app(catalog_path=catalog_with_files)
+    test_client = TestClient(app)
+    resp = test_client.get("/api/stats")
+    assert resp.status_code == 200
+
+
+def test_api_auth_with_token(catalog_with_files, monkeypatch):
+    """With GML_API_TOKEN set, requests need valid token."""
+    monkeypatch.setenv("GML_API_TOKEN", "secret123")
+    from godmode_media_library.web.app import create_app
+
+    app = create_app(catalog_path=catalog_with_files)
+    test_client = TestClient(app)
+
+    # No token → 401
+    resp = test_client.get("/api/stats")
+    assert resp.status_code == 401
+
+    # Wrong token → 401
+    resp = test_client.get("/api/stats", headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 401
+
+    # Correct token → 200
+    resp = test_client.get("/api/stats", headers={"Authorization": "Bearer secret123"})
+    assert resp.status_code == 200
+
+    # Token via query param → 200
+    resp = test_client.get("/api/stats?token=secret123")
+    assert resp.status_code == 200
+
+    # Token via X-API-Token header → 200
+    resp = test_client.get("/api/stats", headers={"X-API-Token": "secret123"})
+    assert resp.status_code == 200
+
+
+# ── Rate limiting test ───────────────────────────────
+
+
+def test_rate_limit_not_triggered_normally(client):
+    """Normal usage should not trigger rate limiting."""
+    for _ in range(5):
+        resp = client.get("/api/stats")
+        assert resp.status_code == 200
+
+
+# ── OpenAPI docs test ────────────────────────────────
+
+
+def test_openapi_docs_available(client):
+    """OpenAPI schema should be accessible."""
+    resp = client.get("/openapi.json")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "paths" in data
+    assert "/api/stats" in data["paths"]
+
+
+# ── Vacuum test ──────────────────────────────────────
+
+
+def test_catalog_vacuum(tmp_path):
+    """Catalog.vacuum() should run without error."""
+    from godmode_media_library.catalog import Catalog
+
+    db_path = tmp_path / "test.db"
+    with Catalog(db_path) as cat:
+        cat.vacuum()
