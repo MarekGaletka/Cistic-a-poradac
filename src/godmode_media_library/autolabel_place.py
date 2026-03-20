@@ -312,6 +312,12 @@ def reverse_geocode_coords(
     return results, api_calls
 
 
+_GDPR_WARNING = (
+    "WARNING: Reverse geocoding sends GPS coordinates to an external API (Nominatim).\n"
+    "This may have GDPR implications if the coordinates relate to personal locations."
+)
+
+
 def auto_place_labels(
     *,
     roots: list[Path],
@@ -320,6 +326,7 @@ def auto_place_labels(
     report_dir: Path,
     exiftool_bin: str = "exiftool",
     reverse_geocode: bool = False,
+    gdpr_acknowledged: bool = False,
     geocode_cache_path: Path | None = None,
     geocode_min_delay_seconds: float = 1.1,
     overwrite_place: bool = False,
@@ -348,6 +355,15 @@ def auto_place_labels(
 
     geocoded: dict[tuple[float, float], str] = {}
     reverse_calls = 0
+    if reverse_geocode and not gdpr_acknowledged:
+        import sys
+
+        print(_GDPR_WARNING, file=sys.stderr)
+        print(
+            "Skipping reverse geocoding. Use --gdpr-consent to acknowledge.",
+            file=sys.stderr,
+        )
+        reverse_geocode = False
     if reverse_geocode and place_by_unit:
         cache_path = geocode_cache_path or (report_dir / "geocode_cache.json")
         geocoded, reverse_calls = reverse_geocode_coords(

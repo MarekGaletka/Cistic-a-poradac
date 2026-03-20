@@ -281,6 +281,7 @@ def cmd_auto_place(args: argparse.Namespace) -> int:
             report_dir=report_dir,
             exiftool_bin=args.exiftool_bin,
             reverse_geocode=args.reverse_geocode,
+            gdpr_acknowledged=args.gdpr_consent,
             geocode_cache_path=geocode_cache,
             geocode_min_delay_seconds=args.geocode_min_delay_seconds,
             overwrite_place=args.overwrite_place,
@@ -875,6 +876,88 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 1 if result.has_issues else 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    import csv
+
+    catalog = _get_catalog(args)
+    out_path = Path(args.out).expanduser().resolve()
+    fmt = args.format
+
+    with catalog:
+        if args.what == "files":
+            rows = catalog.query_files(limit=args.limit)
+            headers = ["path", "size", "ext", "sha256", "date_original", "camera_make", "camera_model",
+                       "width", "height", "gps_latitude", "gps_longitude"]
+            data = []
+            for r in rows:
+                data.append([r.path, r.size, r.ext, r.sha256 or "", r.date_original or "",
+                             r.camera_make or "", r.camera_model or "",
+                             r.width or "", r.height or "",
+                             r.gps_latitude or "", r.gps_longitude or ""])
+        elif args.what == "duplicates":
+            groups = catalog.query_duplicates()
+            headers = ["group_id", "path", "size", "is_primary"]
+            data = []
+            for gid, files in groups:
+                for i, f in enumerate(files):
+                    data.append([gid, f.path, f.size, 1 if i == 0 else 0])
+        else:
+            print(f"Unknown export type: {args.what}")
+            return 1
+
+    ensure_dir(out_path.parent)
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f) if fmt == "csv" else csv.writer(f, delimiter="\t")
+        writer.writerow(headers)
+        writer.writerows(data)
+
+    print(f"exported={len(data)} rows")
+    print(f"format={fmt}")
+    print(f"path={out_path}")
+    return 0
+
+
+def cmd_batch_rename(args: argparse.Namespace) -> int:
+    from .batch_rename import apply_renames, plan_renames
+
+    root = Path(args.root).expanduser().resolve()
+    if not root.is_dir():
+        print(f"Not a directory: {root}")
+        return 1
+
+    # Collect files
+    files = sorted(root.glob(f"*.{args.ext}")) if args.ext else sorted(f for f in root.iterdir() if f.is_file())
+
+    if not files:
+        print("No files found.")
+        return 0
+
+    actions = plan_renames(files, args.pattern, start_number=args.start)
+
+    if not actions:
+        print("No renames needed.")
+        return 0
+
+    # Show preview
+    for a in actions[:20]:
+        print(f"  {a.original.name} → {a.new_name}")
+    if len(actions) > 20:
+        print(f"  ... and {len(actions) - 20} more")
+    print(f"\nTotal: {len(actions)} renames")
+
+    if args.dry_run:
+        print("[DRY RUN] No files were renamed.")
+        return 0
+
+    result = apply_renames(actions)
+    print(f"renamed={result.renamed}")
+    print(f"skipped={result.skipped}")
+    if result.errors:
+        for err in result.errors[:5]:
+            print(f"error: {err}")
+    return 0 if result.skipped == 0 else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     from .i18n import t
 
@@ -1086,6 +1169,10 @@ def build_parser() -> argparse.ArgumentParser:
     papl.add_argument("--report-dir", default=None, help="Directory for auto-place reports")
     papl.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
     papl.add_argument("--reverse-geocode", action="store_true", help="Resolve GPS to city/country labels via Nominatim")
+    papl.add_argument(
+        "--gdpr-consent", action="store_true",
+        help="Acknowledge GDPR implications of sending GPS to external API",
+    )
     papl.add_argument("--geocode-cache", default=None, help="Optional JSON cache path for reverse geocoding")
     papl.add_argument("--geocode-min-delay-seconds", type=float, default=1.1, help="Rate-limit delay for reverse geocode API calls")
     papl.add_argument("--overwrite-place", action="store_true", help="Overwrite existing place labels")
@@ -1133,6 +1220,22 @@ def build_parser() -> argparse.ArgumentParser:
     pda.add_argument("--log", default=None, help="Optional execution log path")
     pda.add_argument("--dry-run", action="store_true", help="Simulate only")
     pda.set_defaults(func=cmd_delete_apply)
+
+    pexp = sub.add_parser("export", help="Export catalog data to CSV/TSV")
+    pexp.add_argument("what", choices=["files", "duplicates"], help="What to export")
+    pexp.add_argument("--out", required=True, help="Output file path")
+    pexp.add_argument("--format", choices=["csv", "tsv"], default="csv", help="Output format (default: csv)")
+    pexp.add_argument("--catalog", default=None, help="Catalog DB path")
+    pexp.add_argument("--limit", type=int, default=100000, help="Max rows")
+    pexp.set_defaults(func=cmd_export)
+
+    pbr = sub.add_parser("batch-rename", help="Bulk rename files by pattern")
+    pbr.add_argument("root", help="Directory containing files to rename")
+    pbr.add_argument("--pattern", required=True, help="Rename pattern (e.g. '{date}_{n:03d}')")
+    pbr.add_argument("--ext", default=None, help="Filter by extension (e.g. jpg)")
+    pbr.add_argument("--start", type=int, default=1, help="Starting number for {n}")
+    pbr.add_argument("--dry-run", action="store_true", help="Preview without renaming")
+    pbr.set_defaults(func=cmd_batch_rename)
 
     return parser
 

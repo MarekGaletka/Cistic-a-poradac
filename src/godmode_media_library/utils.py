@@ -7,6 +7,19 @@ import os
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
+
+def ensure_path(value: str | Path) -> Path:
+    """Ensure value is a Path object. Use at API boundaries.
+
+    Converts string paths to Path objects; passes through existing Path instances
+    unchanged. Useful for normalising inputs at function boundaries so internal
+    code can always rely on Path objects.
+    """
+    if isinstance(value, Path):
+        return value
+    return Path(value)
+
+
 NOISE_XATTR_NAMES = {
     "com.apple.quarantine",
     "com.apple.provenance",

@@ -85,7 +85,35 @@ def load_config(
                 value = float(value)
             object.__setattr__(config, f.name, value)
 
+    validate_config(config)
     return config
+
+
+class ConfigValidationError(ValueError):
+    """Raised when a configuration value is out of its allowed range."""
+
+
+def validate_config(config: GMLConfig) -> None:
+    """Validate configuration values are within acceptable ranges.
+
+    Raises:
+        ConfigValidationError: If any value is out of range.
+    """
+    errors: list[str] = []
+
+    if not (1 <= config.scan_workers <= 32):
+        errors.append(f"scan_workers must be 1-32, got {config.scan_workers}")
+
+    if not (0.01 <= config.eps <= 2.0):
+        errors.append(f"eps must be 0.01-2.0, got {config.eps}")
+
+    if not (1 <= config.min_samples <= 100):
+        errors.append(f"min_samples must be 1-100, got {config.min_samples}")
+
+    if errors:
+        raise ConfigValidationError(
+            "Invalid configuration:\n" + "\n".join(f"  - {e}" for e in errors)
+        )
 
 
 def format_config(config: GMLConfig) -> str:
