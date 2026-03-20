@@ -68,10 +68,18 @@ export async function render(container) {
       container.innerHTML = `
         <div class="page-header"><h2>${t("map.title")}</h2></div>
         <div class="empty-state-hero" style="padding:40px 0">
-          <div class="empty-state-icon" style="font-size:48px">&#127758;</div>
+          <div class="empty-state-icon">&#127758;</div>
           <h3 class="empty-state-title">${t("map.empty_title")}</h3>
           <p class="empty-state-subtitle">${t("map.empty_hint")}</p>
+          <button class="empty-state-action-btn" id="btn-map-empty-pipeline">${t("map.empty_action")}</button>
         </div>`;
+      const pipelineBtn = container.querySelector("#btn-map-empty-pipeline");
+      if (pipelineBtn) {
+        pipelineBtn.addEventListener("click", () => {
+          const settingsBtn = document.querySelector("#btn-settings");
+          if (settingsBtn) settingsBtn.click();
+        });
+      }
       return;
     }
 

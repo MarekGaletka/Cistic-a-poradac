@@ -45,12 +45,20 @@ function _renderContent(container, data) {
   if (!data.pairs.length) {
     html += `
       <div class="empty-state-hero" style="padding:40px 0">
-        <div class="empty-state-icon" style="font-size:48px">&#127912;</div>
+        <div class="empty-state-icon">&#127912;</div>
         <h3 class="empty-state-title">${t("similar.empty_title")}</h3>
         <p class="empty-state-subtitle">${t("similar.empty_hint")}</p>
+        <button class="empty-state-action-btn" id="btn-similar-empty-pipeline">${t("similar.empty_action")}</button>
       </div>`;
     container.innerHTML = html;
     _bindSlider(container);
+    const pipelineBtn = container.querySelector("#btn-similar-empty-pipeline");
+    if (pipelineBtn) {
+      pipelineBtn.addEventListener("click", () => {
+        const settingsBtn = document.querySelector("#btn-settings");
+        if (settingsBtn) settingsBtn.click();
+      });
+    }
     return;
   }
 

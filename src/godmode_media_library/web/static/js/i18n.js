@@ -52,6 +52,11 @@ const translations = {
     "dashboard.last_scan_info": "Poslední sken: {date}",
     "dashboard.no_folders": "Žádné složky nenastaveny",
     "dashboard.open_settings": "Otevřít nastavení",
+    "dashboard.memories": "Vzpomínky",
+    "dashboard.years_ago": "Před {count} lety",
+    "dashboard.one_year_ago": "Před rokem",
+    "dashboard.on_this_day": "Dnes před {count} lety",
+    "dashboard.memory_date": "{day}. {month} {year}",
 
     // Files
     "files.title": "Soubory",
@@ -135,7 +140,8 @@ const translations = {
     "similar.distance": "Vzdálenost: {value}",
     "similar.compare": "Porovnat",
     "similar.empty_title": "Žádné podobné páry nenalezeny",
-    "similar.empty_hint": "Zkuste zvýšit práh pro volnější porovnávání.",
+    "similar.empty_hint": "Zkuste zvýšit práh pro volnější porovnávání, nebo spusťte pipeline pro extrakci perceptuálních hashů.",
+    "similar.empty_action": "Spustit pipeline",
     "similar.threshold": "Práh podobnosti",
     "similar.threshold_hint": "Nižší = přísnější shoda",
     "similar.almost_identical": "Téměř identické",
@@ -150,7 +156,8 @@ const translations = {
     "timeline.dated_files": "{count} souborů s datem",
     "timeline.more": "+{count} dalších",
     "timeline.empty_title": "Žádné soubory s datem nenalezeny",
-    "timeline.empty_hint": "Soubory potřebují metadata date_original (z EXIF nebo ExifTool extrakce).",
+    "timeline.empty_hint": "Soubory potřebují metadata date_original (z EXIF nebo ExifTool extrakce). Spusťte pipeline pro extrakci.",
+    "timeline.empty_action": "Spustit pipeline",
     "timeline.show_all": "Zobrazit vše ({count})",
     "timeline.collapse": "Sbalit",
     "timeline.year": "Rok {year}",
@@ -161,6 +168,7 @@ const translations = {
     "map.details": "Detaily",
     "map.empty_title": "Žádné geotagované soubory nenalezeny",
     "map.empty_hint": "Soubory potřebují GPS metadata z EXIF. Spusťte ExifTool extrakci pro vyplnění GPS dat.",
+    "map.empty_action": "Spustit pipeline",
     "map.leaflet_error": "Leaflet.js není načtený. Zkontrolujte připojení k internetu.",
     "map.files_on_map": "{count} souborů na mapě",
     "map.cluster_files": "{count} souborů",
@@ -274,6 +282,27 @@ const translations = {
     "dashboard.or_quick_add": "Nebo rychle přidejte:",
     "pipeline.configured_roots": "Nastavené složky",
     "pipeline.no_roots": "Žádné složky nejsou nastaveny",
+
+    // Infinite scroll
+    "files.total_count": "{count} souborů",
+    "files.loading_more": "Načítání dalších...",
+    "files.all_loaded": "Vše načteno",
+
+    // Grid density
+    "files.grid_size": "Velikost náhledů",
+    "files.grid_small": "Malé",
+    "files.grid_large": "Velké",
+
+    // Timeline scrubber
+    "timeline.scrubber_label": "Přejít na rok {year}",
+
+    // Favorites
+    "files.favorites": "Oblíbené",
+    "files.favorite": "Přidat do oblíbených",
+    "files.unfavorite": "Odebrat z oblíbených",
+    "files.favorited": "Přidáno do oblíbených",
+    "files.unfavorited": "Odebráno z oblíbených",
+    "dashboard.favorites": "Oblíbené",
 
     // File sorting
     "files.sort_by": "Řadit podle",

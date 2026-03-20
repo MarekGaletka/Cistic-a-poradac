@@ -437,6 +437,17 @@ class Catalog:
         cur = self.conn.execute("SELECT DISTINCT group_id FROM duplicates ORDER BY group_id")
         return [row[0] for row in cur.fetchall()]
 
+    def get_duplicate_group_ids_for_paths(self, paths: list[str]) -> dict[str, str]:
+        """Return a mapping of path -> group_id for paths that are in duplicate groups."""
+        if not paths:
+            return {}
+        placeholders = ",".join("?" for _ in paths)
+        cur = self.conn.execute(
+            f"SELECT f.path, d.group_id FROM duplicates d JOIN files f ON d.file_id = f.id WHERE f.path IN ({placeholders})",  # noqa: S608
+            paths,
+        )
+        return {row[0]: row[1] for row in cur.fetchall()}
+
     def paths_without_metadata(self) -> list[str]:
         """Return paths of files that don't have ExifTool metadata extracted yet."""
         cur = self.conn.execute(

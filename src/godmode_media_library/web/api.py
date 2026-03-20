@@ -75,6 +75,10 @@ class RemoveRootRequest(BaseModel):
     path: str
 
 
+class FavoriteRequest(BaseModel):
+    path: str
+
+
 _DEFAULT_QUARANTINE_ROOT = Path.home() / ".config" / "gml" / "quarantine"
 
 # Directories that should not be browsable for security
@@ -220,34 +224,93 @@ def get_files(
     camera: str | None = None,
     has_gps: bool | None = None,
     has_phash: bool | None = None,
+    favorites_only: bool | None = None,
     limit: int = Query(default=500, le=10000),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
     """Query files with filters."""
     cat = _open_catalog(request)
     try:
-        rows = cat.query_files(
-            ext=ext,
-            date_from=date_from,
-            date_to=date_to,
-            min_size=min_size * 1024 if min_size else None,
-            max_size=max_size * 1024 if max_size else None,
-            path_contains=path_contains,
-            camera=camera,
-            has_gps=has_gps,
-            has_phash=has_phash,
-            limit=limit + 1,
-            offset=offset,
-        )
-        has_more = len(rows) > limit
-        items = rows[:limit]
+        favs = _get_favorites_set(request)
+
+        # If favorites_only, restrict query to favorite paths
+        if favorites_only:
+            fav_list = list(favs)
+            if not fav_list:
+                return {"files": [], "count": 0, "has_more": False}
+            # Filter favorites by other criteria using query_files then intersect
+            rows = cat.query_files(
+                ext=ext,
+                date_from=date_from,
+                date_to=date_to,
+                min_size=min_size * 1024 if min_size else None,
+                max_size=max_size * 1024 if max_size else None,
+                path_contains=path_contains,
+                camera=camera,
+                has_gps=has_gps,
+                has_phash=has_phash,
+                limit=100000,  # get all, then filter
+                offset=0,
+            )
+            rows = [r for r in rows if r.path in favs]
+            total = len(rows)
+            items = rows[offset : offset + limit]
+            has_more = (offset + limit) < total
+        else:
+            rows = cat.query_files(
+                ext=ext,
+                date_from=date_from,
+                date_to=date_to,
+                min_size=min_size * 1024 if min_size else None,
+                max_size=max_size * 1024 if max_size else None,
+                path_contains=path_contains,
+                camera=camera,
+                has_gps=has_gps,
+                has_phash=has_phash,
+                limit=limit + 1,
+                offset=offset,
+            )
+            has_more = len(rows) > limit
+            items = rows[:limit]
+
+        # Look up duplicate group IDs and favorites for these files
+        item_paths = [r.path for r in items]
+        dup_map = cat.get_duplicate_group_ids_for_paths(item_paths)
+        file_dicts = []
+        for r in items:
+            d = _row_to_dict(r)
+            d["duplicate_group_id"] = dup_map.get(r.path)
+            d["is_favorite"] = r.path in favs
+            file_dicts.append(d)
         return {
-            "files": [_row_to_dict(r) for r in items],
+            "files": file_dicts,
             "count": len(items),
             "has_more": has_more,
         }
     finally:
         cat.close()
+
+
+@router.post("/files/favorite")
+def toggle_favorite(request: Request, body: FavoriteRequest) -> dict:
+    """Toggle favorite status for a file."""
+    favorites = _get_favorites_list(request)
+    path = body.path
+    if path in favorites:
+        favorites.remove(path)
+        is_favorite = False
+    else:
+        favorites.append(path)
+        is_favorite = True
+    _set_favorites(request, favorites)
+    return {"path": path, "is_favorite": is_favorite}
+
+
+@router.get("/files/favorites")
+def list_favorites(request: Request) -> dict:
+    """List all favorited file paths."""
+    favorites = _get_favorites_list(request)
+    return {"favorites": favorites, "count": len(favorites)}
 
 
 @router.get("/files/{file_path:path}")
@@ -356,6 +419,44 @@ def get_similar(
             ],
             "total_pairs": len(pairs),
         }
+    finally:
+        cat.close()
+
+
+@router.get("/memories")
+def get_memories(request: Request) -> dict:
+    """Get photos from this day in previous years (On This Day)."""
+    from datetime import date
+
+    today = date.today()
+    cat = _open_catalog(request)
+    try:
+        memories: list[dict] = []
+        cur = cat.conn.execute(
+            "SELECT path, date_original, camera_model, size "
+            "FROM files WHERE date_original IS NOT NULL "
+            "AND strftime('%%m-%%d', date_original) = ? "
+            "ORDER BY date_original DESC",
+            (today.strftime("%m-%d"),),
+        )
+        by_year: dict[str, list[dict]] = {}
+        for row in cur.fetchall():
+            year = row[1][:4] if row[1] else None
+            if year and year != str(today.year):
+                by_year.setdefault(year, []).append({
+                    "path": row[0],
+                    "date": row[1],
+                    "camera": row[2],
+                    "size": row[3],
+                })
+        for year in sorted(by_year.keys(), reverse=True):
+            years_ago = today.year - int(year)
+            memories.append({
+                "year": year,
+                "years_ago": years_ago,
+                "files": by_year[year][:10],
+            })
+        return {"date": today.isoformat(), "memories": memories}
     finally:
         cat.close()
 
@@ -1110,6 +1211,78 @@ def remove_root(request: Request, body: RemoveRootRequest) -> dict:
     roots = [r for r in roots if r != path_to_remove]
     _set_configured_roots(request, roots)
     return {"removed": True, "roots": roots}
+
+
+# ── Video streaming ───────────────────────────────────────────────────
+
+
+@router.get("/stream/{file_path:path}")
+def stream_file(request: Request, file_path: str) -> StreamingResponse:
+    """Stream a media file for preview."""
+    full_path = Path(f"/{file_path}").resolve()
+    cat = _open_catalog(request)
+    try:
+        row = cat.get_file_by_path(str(full_path))
+        if row is None:
+            raise HTTPException(status_code=404, detail="Not in catalog")
+    finally:
+        cat.close()
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_types = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
+    }
+    ext = full_path.suffix.lower()
+    media_type = media_types.get(ext, "application/octet-stream")
+
+    return StreamingResponse(
+        open(full_path, "rb"),  # noqa: SIM115
+        media_type=media_type,
+        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"},
+    )
+
+
+# ── Favorites ─────────────────────────────────────────────────────────
+
+
+def _get_favorites_list(request: Request) -> list[str]:
+    """Read favorites from catalog meta table."""
+    cat = _open_catalog(request)
+    try:
+        cur = cat.conn.execute("SELECT value FROM meta WHERE key = 'favorites'")
+        row = cur.fetchone()
+        if row is None:
+            return []
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return []
+    finally:
+        cat.close()
+
+
+def _get_favorites_set(request: Request) -> set[str]:
+    """Read favorites as a set for fast lookup."""
+    return set(_get_favorites_list(request))
+
+
+def _set_favorites(request: Request, favorites: list[str]) -> None:
+    """Write favorites to catalog meta table."""
+    cat = _open_catalog(request)
+    try:
+        cat.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('favorites', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(favorites),),
+        )
+        cat.conn.commit()
+    finally:
+        cat.close()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

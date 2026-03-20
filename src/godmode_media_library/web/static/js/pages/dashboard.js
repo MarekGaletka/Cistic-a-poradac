@@ -5,6 +5,7 @@ import { $, content, formatBytes, escapeHtml, showToast } from "../utils.js";
 import { t } from "../i18n.js";
 import { showGlobalProgress } from "../tasks.js";
 import { openFolderPicker } from "../folder-picker.js";
+import { openLightbox } from "../lightbox.js";
 
 let _selectedRoots = [];
 
@@ -162,16 +163,22 @@ function _renderEmptyContent(container, bookmarks) {
 }
 
 async function renderDashboard(container, stats) {
-  // Load roots and system info in parallel
+  // Load roots, system info, memories, and favorites in parallel
   let roots = [];
   let sysInfo = null;
+  let memoriesData = null;
+  let favoritesCount = 0;
   try {
-    const [rootsData, sysData] = await Promise.all([
+    const [rootsData, sysData, memData, favsData] = await Promise.all([
       api("/roots").catch(() => ({ roots: [] })),
       api("/system-info").catch(() => null),
+      api("/memories").catch(() => null),
+      api("/files/favorites").catch(() => ({ count: 0 })),
     ]);
     roots = rootsData.roots || [];
     sysInfo = sysData;
+    memoriesData = memData;
+    favoritesCount = favsData?.count ?? 0;
   } catch {
     // silent
   }
@@ -184,6 +191,9 @@ async function renderDashboard(container, stats) {
     { icon: "&#128274;", label: t("dashboard.hashed"), value: stats.hashed_files?.toLocaleString() ?? "0", color: "green" },
     { icon: "&#127910;", label: t("dashboard.media_probed"), value: String(stats.media_probed ?? 0), color: "accent" },
   ];
+  if (favoritesCount > 0) {
+    statCards.push({ icon: "&#11088;", label: t("dashboard.favorites"), value: String(favoritesCount), color: "yellow" });
+  }
 
   let html = `
     <div class="dashboard-header">
@@ -216,6 +226,36 @@ async function renderDashboard(container, stats) {
   }
 
   html += `</div>`;
+
+  // Memories (On This Day) section
+  if (memoriesData && memoriesData.memories && memoriesData.memories.length > 0) {
+    const monthNames = ["ledna", "února", "března", "dubna", "května", "června",
+      "července", "srpna", "září", "října", "listopadu", "prosince"];
+    html += `<div class="memories-section">
+      <div class="memories-section-header">
+        <span class="memories-icon">&#128248;</span>
+        <h3>${t("dashboard.memories")}</h3>
+      </div>`;
+    for (const mem of memoriesData.memories) {
+      const yearsAgoLabel = mem.years_ago === 1
+        ? t("dashboard.one_year_ago")
+        : t("dashboard.years_ago", { count: mem.years_ago });
+      const memDate = new Date(memoriesData.date);
+      const dateLabel = `${memDate.getDate()}. ${monthNames[memDate.getMonth()]} ${mem.year}`;
+      html += `<div class="memories-year">
+        <div class="memories-header">
+          <span class="years-ago">${escapeHtml(yearsAgoLabel)}</span>
+          <span style="color:var(--text-muted);font-weight:400;font-size:13px">&mdash; ${escapeHtml(dateLabel)}</span>
+        </div>
+        <div class="memories-scroll">`;
+      for (const f of mem.files) {
+        const thumbUrl = `/api/thumbnail${encodeURI(f.path)}?size=250`;
+        html += `<img class="memories-thumb" src="${thumbUrl}" alt="${escapeHtml(f.path.split("/").pop())}" data-memory-path="${escapeHtml(f.path)}" onerror="this.style.display='none'" loading="lazy">`;
+      }
+      html += `</div></div>`;
+    }
+    html += `</div>`;
+  }
 
   // Managed folders section
   html += `<div class="dashboard-section" style="margin-top:16px">
@@ -348,6 +388,17 @@ async function renderDashboard(container, stats) {
       e.preventDefault();
       const settingsBtn = $("#btn-settings");
       if (settingsBtn) settingsBtn.click();
+    });
+  }
+
+  // Bind memories thumbnail clicks to open lightbox
+  const memThumbs = container.querySelectorAll("[data-memory-path]");
+  if (memThumbs.length > 0) {
+    const memPaths = Array.from(memThumbs).map(el => el.dataset.memoryPath);
+    memThumbs.forEach((thumb, idx) => {
+      thumb.addEventListener("click", () => {
+        openLightbox(memPaths, idx);
+      });
     });
   }
 }

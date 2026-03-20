@@ -1,7 +1,7 @@
 /* GOD MODE Media Library — Fullscreen Lightbox (Google Photos / Apple Photos style) */
 
-import { api } from "./api.js";
-import { escapeHtml, fileName, formatBytes, IMAGE_EXTS } from "./utils.js";
+import { api, apiPost } from "./api.js";
+import { escapeHtml, fileName, formatBytes, IMAGE_EXTS, showToast } from "./utils.js";
 import { t } from "./i18n.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
@@ -17,10 +17,12 @@ let _preloaded = {};
 let _keyHandler = null;
 let _wheelHandler = null;
 let _fileDetailsCache = {};
+let _favoritesSet = new Set();
+let _sourceThumbEl = null;
 
 // ── Public API ───────────────────────────────────────
 
-export function openLightbox(paths, startIndex = 0) {
+export function openLightbox(paths, startIndex = 0, sourceEl = null) {
   if (!paths || !paths.length) return;
   _paths = paths;
   _index = Math.max(0, Math.min(startIndex, paths.length - 1));
@@ -28,6 +30,7 @@ export function openLightbox(paths, startIndex = 0) {
   _infoOpen = false;
   _preloaded = {};
   _fileDetailsCache = {};
+  _sourceThumbEl = sourceEl || _findSourceThumb(paths[startIndex]);
 
   _overlay = document.getElementById("lightbox-overlay");
   if (!_overlay) return;
@@ -36,9 +39,73 @@ export function openLightbox(paths, startIndex = 0) {
   _overlay.setAttribute("aria-hidden", "false");
   document.body.style.overflow = "hidden";
 
+  // Load favorites list
+  api("/files/favorites").then(data => {
+    _favoritesSet = new Set(data.favorites || []);
+    _updateFavButton();
+  }).catch(() => {});
+
   renderCurrent();
+  _animateFlyIn();
   preloadAdjacent();
   bindEvents();
+}
+
+function _findSourceThumb(path) {
+  // Try to find the thumbnail element in the DOM for the given path
+  if (!path) return null;
+  const item = document.querySelector(`[data-file-path="${CSS.escape(path)}"]`);
+  if (!item) return null;
+  const img = item.querySelector("img");
+  return img || item;
+}
+
+function _animateFlyIn() {
+  if (!_sourceThumbEl || !_overlay) return;
+  const sourceRect = _sourceThumbEl.getBoundingClientRect();
+  if (!sourceRect || sourceRect.width === 0) return;
+
+  const mediaWrap = document.getElementById("lightbox-media-wrap");
+  if (!mediaWrap) return;
+
+  // Create a clone of the thumbnail for fly animation
+  const clone = document.createElement("img");
+  clone.className = "lightbox-fly-clone";
+  clone.src = _sourceThumbEl.src || `/api/thumbnail${encodeURI(_paths[_index])}?size=300`;
+  clone.style.left = sourceRect.left + "px";
+  clone.style.top = sourceRect.top + "px";
+  clone.style.width = sourceRect.width + "px";
+  clone.style.height = sourceRect.height + "px";
+
+  // Hide the real media until animation completes
+  mediaWrap.classList.add("fly-entering");
+  document.body.appendChild(clone);
+
+  // Animate to center of viewport
+  requestAnimationFrame(() => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const targetSize = Math.min(vw * 0.8, vh * 0.8);
+    const targetLeft = (vw - targetSize) / 2;
+    const targetTop = (vh - targetSize) / 2;
+
+    clone.style.left = targetLeft + "px";
+    clone.style.top = targetTop + "px";
+    clone.style.width = targetSize + "px";
+    clone.style.height = targetSize + "px";
+    clone.style.borderRadius = "4px";
+
+    clone.addEventListener("transitionend", () => {
+      mediaWrap.classList.remove("fly-entering");
+      clone.remove();
+    }, { once: true });
+
+    // Fallback: remove after timeout in case transitionend doesn't fire
+    setTimeout(() => {
+      mediaWrap.classList.remove("fly-entering");
+      if (clone.parentNode) clone.remove();
+    }, 400);
+  });
 }
 
 export function closeLightbox() {
@@ -105,7 +172,7 @@ function renderCurrent() {
       onerror="this.outerHTML='<div class=\\'lightbox-no-preview\\'>${t("lightbox.no_preview")}</div>'"
     >`;
   } else if (isVideo) {
-    const src = `/api/thumbnail${encodeURI(path)}?size=800`;
+    const src = `/api/stream${encodeURI(path)}`;
     mediaHtml = `<video
       id="lightbox-media"
       class="lightbox-video"
@@ -145,6 +212,9 @@ function renderCurrent() {
       </div>
     </div>
     <button class="lightbox-info-toggle" id="lightbox-info-toggle" aria-label="${t("lightbox.info")}" title="${t("lightbox.info")}">&#9432;</button>
+    <button class="lightbox-fav-btn ${_favoritesSet.has(path) ? "is-favorite" : ""}" id="lightbox-fav-btn" aria-label="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}" title="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}">
+      ${_favoritesSet.has(path) ? "\u2605" : "\u2606"} ${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}
+    </button>
   `;
 
   // Bind internal events
@@ -157,6 +227,27 @@ function renderCurrent() {
 
   contentEl.querySelector("#lightbox-info-toggle").addEventListener("click", toggleInfo);
   contentEl.querySelector("#lightbox-info-close").addEventListener("click", toggleInfo);
+
+  // Favorite button
+  const favBtn = contentEl.querySelector("#lightbox-fav-btn");
+  if (favBtn) {
+    favBtn.addEventListener("click", async () => {
+      const currentPath = _paths[_index];
+      try {
+        const result = await apiPost("/files/favorite", { path: currentPath });
+        if (result.is_favorite) {
+          _favoritesSet.add(currentPath);
+          showToast(t("files.favorited"), "success");
+        } else {
+          _favoritesSet.delete(currentPath);
+          showToast(t("files.unfavorited"), "info");
+        }
+        _updateFavButton();
+      } catch (e) {
+        showToast(t("general.error", { message: e.message }), "error");
+      }
+    });
+  }
 
   // Double-click to zoom
   const mediaWrap = contentEl.querySelector("#lightbox-media-wrap");
@@ -239,9 +330,11 @@ function renderFileInfo(bodyEl, data) {
 
   let html = "";
 
-  // Path
+  // Path and favorite
+  const isFav = _favoritesSet.has(f.path);
   html += `<div class="lightbox-info-section">
     <div class="lightbox-info-path">${escapeHtml(f.path)}</div>
+    <div style="margin-top:6px">${isFav ? '\u2605 ' + t("files.favorites") : ""}</div>
   </div>`;
 
   // Basic info
@@ -322,6 +415,17 @@ function infoRow(label, value) {
   </div>`;
 }
 
+function _updateFavButton() {
+  const favBtn = document.getElementById("lightbox-fav-btn");
+  if (!favBtn) return;
+  const path = _paths[_index];
+  const isFav = _favoritesSet.has(path);
+  favBtn.classList.toggle("is-favorite", isFav);
+  favBtn.title = isFav ? t("files.unfavorite") : t("files.favorite");
+  favBtn.setAttribute("aria-label", isFav ? t("files.unfavorite") : t("files.favorite"));
+  favBtn.innerHTML = `${isFav ? "\u2605" : "\u2606"} ${isFav ? t("files.unfavorite") : t("files.favorite")}`;
+}
+
 // ── Preloading ───────────────────────────────────────
 
 function preloadAdjacent() {
@@ -365,6 +469,14 @@ function bindEvents() {
         if (!e.target.matches("input, textarea, select")) {
           e.preventDefault();
           toggleInfo();
+        }
+        break;
+      case "f":
+      case "F":
+        if (!e.target.matches("input, textarea, select")) {
+          e.preventDefault();
+          const fb = document.getElementById("lightbox-fav-btn");
+          if (fb) fb.click();
         }
         break;
     }

@@ -700,6 +700,30 @@ button.small {
   gap: 12px;
 }
 
+.file-grid {
+  --thumb-size: 200px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-size), 1fr));
+  gap: 12px;
+}
+
+.file-grid .file-grid-item {
+  width: 100%;
+  aspect-ratio: 1;
+}
+
+.file-grid .grid-thumb,
+.file-grid .grid-thumb-large {
+  height: 100%;
+}
+
+.file-grid .grid-thumb img,
+.file-grid .grid-thumb-large img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .files-grid-large {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 14px;
@@ -783,6 +807,7 @@ button.small {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 .grid-thumb-large {
@@ -2615,6 +2640,138 @@ button:focus-visible, a:focus-visible {
   color: var(--text);
 }
 
+/* ── Grid density control ─────────────────────────── */
+
+.grid-density-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.grid-density-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+#grid-density-slider {
+  width: 100px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Infinite scroll sentinel ─────────────────────── */
+
+.infinite-scroll-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0;
+  min-height: 60px;
+}
+
+.scroll-spinner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.scroll-spinner .spinner {
+  width: 20px;
+  height: 20px;
+  border-width: 2px;
+}
+
+.scroll-end-msg {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── Sticky timeline month headers ────────────────── */
+
+.timeline-month-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Timeline scrubber (vertical minimap) ─────────── */
+
+.timeline-scrubber {
+  position: fixed;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  z-index: 30;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.timeline-scrubber:hover,
+.timeline-scrubber.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.timeline-scrubber-track {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0;
+  background: rgba(22, 27, 34, 0.85);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(8px);
+}
+
+.timeline-scrubber-thumb {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 20px;
+  background: var(--accent);
+  opacity: 0.3;
+  border-radius: 4px;
+  transition: top 0.15s ease;
+  pointer-events: none;
+}
+
+.timeline-scrubber-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  user-select: none;
+  text-align: center;
+  width: 100%;
+}
+
+.timeline-scrubber-label:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.timeline-scrubber-label.active {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 /* ── Filter badge ──────────────────────────────────── */
 
 .filter-badge {
@@ -3019,3 +3176,236 @@ button:focus-visible, a:focus-visible {
   .lightbox-nav-prev { left: 4px; }
   .lightbox-nav-next { right: 4px; }
 }
+
+/* ── Thumbnail Badges ──────────────────────────────── */
+
+.thumb-badge {
+  position: absolute;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  line-height: 1;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.thumb-badge-gps { bottom: 6px; left: 6px; }
+.thumb-badge-video { top: 6px; left: 6px; }
+.thumb-badge-dup { top: 6px; right: 6px; }
+.thumb-badge-fav { bottom: 6px; right: 6px; color: #ffd700; }
+
+/* ── Video Hover Preview ───────────────────────────── */
+
+.video-hover-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+  border-radius: inherit;
+}
+
+.video-play-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 28px;
+  color: rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+  z-index: 2;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  transition: opacity 0.2s;
+}
+
+.file-grid-item:hover .video-play-overlay { opacity: 0; }
+
+/* ── Lightbox Favorite Button ──────────────────────── */
+
+.lightbox-fav-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.lightbox-fav-btn:hover {
+  color: #ffd700;
+  border-color: #ffd700;
+}
+
+.lightbox-fav-btn.is-favorite {
+  color: #ffd700;
+  border-color: #ffd700;
+}
+
+/* ── Memories (On This Day) ──────────────────────── */
+
+.memories-section {
+  margin-bottom: 24px;
+}
+
+.memories-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.memories-section-header h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.memories-section-header .memories-icon {
+  font-size: 22px;
+}
+
+.memories-year {
+  margin-bottom: 16px;
+}
+
+.memories-header {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memories-header .years-ago {
+  color: var(--accent);
+}
+
+.memories-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-snap-type: x mandatory;
+}
+
+.memories-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.memories-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.memories-thumb {
+  width: 120px;
+  height: 120px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  cursor: pointer;
+  scroll-snap-align: start;
+  transition: transform 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+  border: 2px solid transparent;
+}
+
+.memories-thumb:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px rgba(88, 166, 255, 0.2);
+  border-color: var(--accent);
+}
+
+/* ── Drag-to-select rectangle ────────────────────── */
+
+.selection-rect {
+  position: fixed;
+  border: 1px solid var(--accent);
+  background: rgba(88, 166, 255, 0.1);
+  pointer-events: none;
+  z-index: 100;
+  border-radius: 2px;
+}
+
+.file-grid-item.drag-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ── Lightbox fly-in transition ──────────────────── */
+
+.lightbox-fly-clone {
+  position: fixed;
+  z-index: 1001;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.lightbox-media-wrap.fly-entering .lightbox-image,
+.lightbox-media-wrap.fly-entering .lightbox-video {
+  opacity: 0;
+}
+
+/* ── Enhanced empty states ───────────────────────── */
+
+.empty-state-hero .empty-state-icon {
+  font-size: 64px;
+  line-height: 1;
+  margin-bottom: 12px;
+  opacity: 0.8;
+}
+
+.empty-state-hero .empty-state-subtitle {
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.5;
+}
+
+.empty-state-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity 0.15s;
+  margin-top: 8px;
+}
+
+.empty-state-action-btn:hover {
+  opacity: 0.85;
+}
+
+/* ── Nav badges for file/similar counts ──────────── */
+
+.nav-badge-accent {
+  position: absolute;
+  right: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.nav-badge-accent.hidden { display: none; }

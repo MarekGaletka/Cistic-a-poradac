@@ -1,4 +1,4 @@
-/* GOD MODE Media Library — Timeline page (upgraded) */
+/* GOD MODE Media Library — Timeline page (scrubber + sticky headers) */
 
 import { api } from "../api.js";
 import { escapeHtml, fileName, IMAGE_EXTS } from "../utils.js";
@@ -12,6 +12,8 @@ const INITIAL_ITEMS = 20;
 
 // Track expanded months
 let _expandedMonths = new Set();
+let _scrubberFadeTimer = null;
+let _monthObserver = null;
 
 function _renderFileItem(f) {
   const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
@@ -36,7 +38,160 @@ function _groupByDay(files) {
   return days;
 }
 
+function _buildScrubber(years, container) {
+  // Create the scrubber bar
+  const scrubber = document.createElement("div");
+  scrubber.className = "timeline-scrubber";
+  scrubber.innerHTML = `
+    <div class="timeline-scrubber-track">
+      <div class="timeline-scrubber-thumb"></div>
+      ${years.map(y => `<div class="timeline-scrubber-label" data-year="${y}" title="${t("timeline.scrubber_label", { year: y })}">${y}</div>`).join("")}
+    </div>
+  `;
+
+  // Click on year label to scroll
+  scrubber.querySelectorAll(".timeline-scrubber-label").forEach(label => {
+    label.addEventListener("click", () => {
+      const year = label.dataset.year;
+      const target = container.querySelector(`[data-year="${year}"]`);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+
+  // Drag to scrub
+  let isDragging = false;
+  const track = scrubber.querySelector(".timeline-scrubber-track");
+
+  const scrubToPosition = (clientY) => {
+    const rect = track.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const labels = scrubber.querySelectorAll(".timeline-scrubber-label");
+    if (!labels.length) return;
+    const idx = Math.min(Math.floor(pct * labels.length), labels.length - 1);
+    const year = labels[idx].dataset.year;
+    const target = container.querySelector(`[data-year="${year}"]`);
+    if (target) target.scrollIntoView({ behavior: "auto", block: "start" });
+  };
+
+  track.addEventListener("mousedown", (e) => {
+    isDragging = true;
+    scrubToPosition(e.clientY);
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (isDragging) {
+      scrubToPosition(e.clientY);
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener("mouseup", () => { isDragging = false; });
+
+  // Touch support
+  track.addEventListener("touchstart", (e) => {
+    isDragging = true;
+    scrubToPosition(e.touches[0].clientY);
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener("touchmove", (e) => {
+    if (isDragging) {
+      scrubToPosition(e.touches[0].clientY);
+    }
+  }, { passive: true });
+
+  document.addEventListener("touchend", () => { isDragging = false; });
+
+  return scrubber;
+}
+
+function _setupScrollTracking(container, scrubber, sortedMonths) {
+  // Observe month headers to update scrubber active state
+  if (_monthObserver) _monthObserver.disconnect();
+
+  const monthEls = container.querySelectorAll(".timeline-month");
+  if (!monthEls.length) return;
+
+  _monthObserver = new IntersectionObserver((entries) => {
+    // Find which months are visible
+    const visibleYears = new Set();
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const year = entry.target.dataset.year;
+        if (year) visibleYears.add(year);
+      }
+    });
+
+    // Also check which months are in viewport right now
+    const allMonths = container.querySelectorAll(".timeline-month");
+    const activeYears = new Set();
+    allMonths.forEach(m => {
+      const rect = m.getBoundingClientRect();
+      if (rect.top < window.innerHeight && rect.bottom > 0) {
+        activeYears.add(m.dataset.year);
+      }
+    });
+
+    // Update scrubber labels
+    const labels = scrubber.querySelectorAll(".timeline-scrubber-label");
+    labels.forEach(label => {
+      label.classList.toggle("active", activeYears.has(label.dataset.year));
+    });
+
+    // Update thumb position
+    const thumb = scrubber.querySelector(".timeline-scrubber-thumb");
+    const track = scrubber.querySelector(".timeline-scrubber-track");
+    if (thumb && track && labels.length) {
+      // Find first active label
+      let firstActiveIdx = -1;
+      labels.forEach((l, i) => {
+        if (activeYears.has(l.dataset.year) && firstActiveIdx === -1) firstActiveIdx = i;
+      });
+      if (firstActiveIdx >= 0) {
+        const pct = firstActiveIdx / Math.max(labels.length - 1, 1);
+        const trackH = track.offsetHeight;
+        thumb.style.top = (pct * (trackH - 20)) + "px";
+      }
+    }
+
+    // Show scrubber on scroll, fade after inactivity
+    scrubber.classList.add("visible");
+    clearTimeout(_scrubberFadeTimer);
+    _scrubberFadeTimer = setTimeout(() => {
+      scrubber.classList.remove("visible");
+    }, 2000);
+
+  }, { rootMargin: "0px", threshold: 0.1 });
+
+  monthEls.forEach(el => _monthObserver.observe(el));
+
+  // Also show scrubber on scroll
+  const mainEl = document.querySelector("main") || document.documentElement;
+  const scrollHandler = () => {
+    scrubber.classList.add("visible");
+    clearTimeout(_scrubberFadeTimer);
+    _scrubberFadeTimer = setTimeout(() => {
+      scrubber.classList.remove("visible");
+    }, 2000);
+  };
+  window.addEventListener("scroll", scrollHandler, { passive: true });
+
+  // Show on hover
+  scrubber.addEventListener("mouseenter", () => {
+    scrubber.classList.add("visible");
+    clearTimeout(_scrubberFadeTimer);
+  });
+  scrubber.addEventListener("mouseleave", () => {
+    _scrubberFadeTimer = setTimeout(() => {
+      scrubber.classList.remove("visible");
+    }, 1000);
+  });
+}
+
 export async function render(container) {
+  if (_monthObserver) { _monthObserver.disconnect(); _monthObserver = null; }
+
   try {
     const data = await api("/files?limit=5000");
     const files = data.files.filter(f => f.date_original);
@@ -45,10 +200,18 @@ export async function render(container) {
       container.innerHTML = `
         <div class="page-header"><h2>${t("timeline.title")}</h2></div>
         <div class="empty-state-hero" style="padding:40px 0">
-          <div class="empty-state-icon" style="font-size:48px">&#128197;</div>
+          <div class="empty-state-icon">&#128197;</div>
           <h3 class="empty-state-title">${t("timeline.empty_title")}</h3>
           <p class="empty-state-subtitle">${t("timeline.empty_hint")}</p>
+          <button class="empty-state-action-btn" id="btn-timeline-empty-pipeline">${t("timeline.empty_action")}</button>
         </div>`;
+      const pipelineBtn = container.querySelector("#btn-timeline-empty-pipeline");
+      if (pipelineBtn) {
+        pipelineBtn.addEventListener("click", () => {
+          const settingsBtn = document.querySelector("#btn-settings");
+          if (settingsBtn) settingsBtn.click();
+        });
+      }
       return;
     }
 
@@ -92,7 +255,7 @@ export async function render(container) {
       const displayFiles = isExpanded ? monthFiles : monthFiles.slice(0, INITIAL_ITEMS);
 
       html += `<div class="timeline-month" id="month-${month}" data-year="${y}">
-        <div class="timeline-header">${escapeHtml(monthName)} <span class="timeline-count">(${monthFiles.length})</span></div>
+        <div class="timeline-month-header">${escapeHtml(monthName)} <span class="timeline-count">(${monthFiles.length})</span></div>
         <div class="timeline-grid" id="grid-${month}">`;
 
       if (isExpanded) {
@@ -128,6 +291,13 @@ export async function render(container) {
     html += '</div>';
     container.innerHTML = html;
 
+    // Add timeline scrubber
+    if (years.length > 0) {
+      const scrubber = _buildScrubber(years, container);
+      container.appendChild(scrubber);
+      _setupScrollTracking(container, scrubber, sortedMonths);
+    }
+
     // Lazy load images with IntersectionObserver
     const lazyImages = container.querySelectorAll(".timeline-lazy");
     if (lazyImages.length && "IntersectionObserver" in window) {
@@ -148,7 +318,6 @@ export async function render(container) {
     }
 
     // Bind click events on file items — open lightbox for images/videos
-    // Collect all visible file paths for lightbox navigation
     const allVisibleItems = container.querySelectorAll("[data-file-path]");
     const allVisiblePaths = Array.from(allVisibleItems).map(el => el.dataset.filePath);
     const lightboxPaths = allVisiblePaths.filter(p => {
