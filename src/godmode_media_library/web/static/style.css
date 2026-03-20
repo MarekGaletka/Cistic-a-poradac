@@ -3457,3 +3457,223 @@ button:focus-visible, a:focus-visible {
 /* Lightbox add tag button */
 .lightbox-add-tag-btn { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer; padding: 4px 10px; }
 .lightbox-add-tag-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ── Quick Look ───────────────────────────────────── */
+
+.quicklook-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: modalFadeIn 0.15s ease;
+}
+.quicklook-overlay.hidden { display: none; }
+
+.quicklook-container {
+  background: var(--surface);
+  border-radius: var(--radius);
+  width: 90%;
+  max-width: 900px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalScaleIn 0.2s ease;
+}
+
+@keyframes modalScaleIn {
+  from { transform: scale(0.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.quicklook-preview {
+  flex: 1;
+  overflow: auto;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quicklook-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ql-footer-name {
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+.ql-footer-meta { flex-shrink: 0; }
+.ql-footer-nav { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+/* Quick Look image */
+.ql-image {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* Quick Look video */
+.ql-video {
+  max-width: 100%;
+  max-height: 70vh;
+  outline: none;
+}
+
+/* PDF preview */
+.ql-pdf {
+  width: 100%;
+  height: 70vh;
+  border: none;
+  background: white;
+}
+
+/* Text/code preview */
+.ql-code {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--bg);
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  overflow: auto;
+  max-height: 60vh;
+  white-space: pre;
+  tab-size: 4;
+  color: var(--text);
+  width: 100%;
+}
+
+.ql-code .line-num {
+  color: var(--text-muted);
+  user-select: none;
+  display: inline-block;
+  width: 40px;
+  text-align: right;
+  margin-right: 16px;
+}
+
+.ql-text-info {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+/* Archive listing */
+.ql-archive {
+  padding: 16px;
+  width: 100%;
+  overflow: auto;
+  max-height: 60vh;
+}
+
+.ql-archive table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ql-archive th {
+  text-align: left;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.ql-archive td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ql-archive .entry-dir { color: var(--accent); }
+
+.ql-archive-info {
+  padding: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Audio preview */
+.ql-audio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px;
+}
+
+.ql-audio-icon { font-size: 64px; }
+
+.ql-audio-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  max-width: 400px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ql-audio audio {
+  width: 100%;
+  max-width: 500px;
+}
+
+/* Unknown file type */
+.ql-unknown {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 40px;
+}
+
+.ql-unknown-icon { font-size: 64px; }
+
+.ql-unknown-ext {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.ql-unknown-msg {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* File focus indicator */
+.file-grid-item.file-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+.file-row.file-focused {
+  background: var(--surface-hover);
+}

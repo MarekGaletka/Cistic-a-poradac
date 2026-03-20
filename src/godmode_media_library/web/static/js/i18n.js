@@ -277,6 +277,18 @@ const translations = {
     "lightbox.video": "Video",
     "lightbox.download": "Stáhnout",
 
+    // Quick Look
+    "quicklook.title": "Náhled",
+    "quicklook.lines": "{count} řádků",
+    "quicklook.entries": "{count} položek v archivu",
+    "quicklook.no_preview": "Náhled není k dispozici pro tento typ souboru",
+    "quicklook.open_external": "Otevřít v aplikaci",
+    "quicklook.pdf": "PDF dokument",
+    "quicklook.audio": "Audio soubor",
+    "quicklook.archive": "Archiv",
+    "quicklook.text": "Textový soubor",
+    "quicklook.code": "Zdrojový kód",
+
     // Folder picker
     "folder.picker_title": "Vyberte složku",
     "folder.select_this": "Vybrat tuto složku",
@@ -336,6 +348,41 @@ const translations = {
     "shortcuts.search": "/: Hledat",
     "shortcuts.close": "Esc: Zav\u0159\u00edt",
     "shortcuts.help": "?: N\u00e1pov\u011bda",
+
+    // Categories
+    "categories.all": "V\u0161e",
+    "categories.images": "Obr\u00e1zky",
+    "categories.videos": "Videa",
+    "categories.audio": "Audio",
+    "categories.documents": "Dokumenty",
+    "categories.text": "Text / K\u00f3d",
+    "categories.archives": "Archivy",
+    "categories.other": "Ostatn\u00ed",
+
+    // Notes
+    "notes.placeholder": "P\u0159idat pozn\u00e1mku...",
+    "notes.saved": "Pozn\u00e1mka ulo\u017eena",
+    "notes.deleted": "Pozn\u00e1mka smaz\u00e1na",
+    "notes.title": "Pozn\u00e1mky",
+
+    // Ratings
+    "rating.title": "Hodnocen\u00ed",
+    "rating.clear": "Zru\u0161it hodnocen\u00ed",
+    "rating.set": "Hodnocen\u00ed nastaveno",
+
+    // Smart views
+    "smart.title": "Chytr\u00e9 filtry",
+    "smart.recent_photos": "Ned\u00e1vn\u00e9 fotky",
+    "smart.all_videos": "V\u0161echna videa",
+    "smart.with_location": "S polohou",
+    "smart.top_rated": "Nejl\u00e9pe hodnocen\u00e9",
+    "smart.large_files": "Velk\u00e9 soubory (>100 MB)",
+    "smart.with_notes": "S pozn\u00e1mkami",
+
+    // File rating/notes filters
+    "files.rating": "Hodnocen\u00ed",
+    "files.min_rating": "Minim\u00e1ln\u00ed hodnocen\u00ed",
+    "files.sort_rating": "Hodnocen\u00ed",
 
     // General
     "general.loading": "Načítání...",

@@ -403,22 +403,97 @@ def list_favorites(request: Request) -> dict:
     return {"favorites": favorites, "count": len(favorites)}
 
 
+# ── Notes ────────────────────────────────────────────────────────────
+# These must be registered before the catch-all /files/{file_path:path}
+
+
+@router.get("/files/{file_path:path}/note")
+def get_file_note(request: Request, file_path: str) -> dict:
+    """Get note for a file."""
+    cat = _open_catalog(request)
+    try:
+        result = cat.get_file_note(f"/{file_path}")
+        if result is None:
+            return {"note": None, "updated_at": None}
+        return {"note": result[0], "updated_at": result[1]}
+    finally:
+        cat.close()
+
+
+@router.put("/files/{file_path:path}/note")
+def set_file_note(request: Request, file_path: str, body: NoteRequest) -> dict:
+    """Set or update a note for a file."""
+    cat = _open_catalog(request)
+    try:
+        cat.set_file_note(f"/{file_path}", body.note)
+        return {"saved": True}
+    finally:
+        cat.close()
+
+
+@router.delete("/files/{file_path:path}/note")
+def delete_file_note(request: Request, file_path: str) -> dict:
+    """Remove a note from a file."""
+    cat = _open_catalog(request)
+    try:
+        deleted = cat.delete_file_note(f"/{file_path}")
+        return {"deleted": deleted}
+    finally:
+        cat.close()
+
+
+# ── Ratings ──────────────────────────────────────────────────────────
+
+
+@router.put("/files/{file_path:path}/rating")
+def set_file_rating(request: Request, file_path: str, body: RatingRequest) -> dict:
+    """Set a rating (1-5) for a file."""
+    if body.rating < 1 or body.rating > 5:
+        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+    cat = _open_catalog(request)
+    try:
+        cat.set_file_rating(f"/{file_path}", body.rating)
+        return {"saved": True, "rating": body.rating}
+    finally:
+        cat.close()
+
+
+@router.delete("/files/{file_path:path}/rating")
+def delete_file_rating(request: Request, file_path: str) -> dict:
+    """Clear a rating from a file."""
+    cat = _open_catalog(request)
+    try:
+        deleted = cat.delete_file_rating(f"/{file_path}")
+        return {"deleted": deleted}
+    finally:
+        cat.close()
+
+
+# ── File detail (catch-all, must be after /note and /rating) ─────────
+
+
 @router.get("/files/{file_path:path}")
 def get_file_detail(request: Request, file_path: str) -> dict:
     """Get file details including deep metadata."""
     cat = _open_catalog(request)
     try:
-        row = cat.get_file_by_path(f"/{file_path}")
+        path = f"/{file_path}"
+        row = cat.get_file_by_path(path)
         if row is None:
             raise HTTPException(status_code=404, detail="File not found in catalog")
-        meta = cat.get_file_metadata(f"/{file_path}")
-        richness = cat.get_metadata_richness(f"/{file_path}")
-        tags = cat.get_file_tags(f"/{file_path}")
+        meta = cat.get_file_metadata(path)
+        richness = cat.get_metadata_richness(path)
+        tags = cat.get_file_tags(path)
+        note_data = cat.get_file_note(path)
+        rating = cat.get_file_rating(path)
         return {
             "file": _row_to_dict(row),
             "metadata": meta,
             "richness": richness,
             "tags": tags,
+            "note": note_data[0] if note_data else None,
+            "note_updated_at": note_data[1] if note_data else None,
+            "rating": rating,
         }
     finally:
         cat.close()

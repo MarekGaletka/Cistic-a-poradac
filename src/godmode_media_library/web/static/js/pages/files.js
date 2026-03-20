@@ -11,6 +11,26 @@ import { renderTagDots, loadTags, getAllTags, openTagPicker } from "../tags.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
 
+const CATEGORY_EXTS = {
+  images: "jpg,jpeg,png,gif,bmp,tiff,tif,webp,heic,heif,svg,raw,cr2,nef,arw,dng",
+  videos: "mp4,mov,avi,mkv,wmv,flv,webm,m4v,3gp",
+  audio: "mp3,wav,flac,aac,ogg,wma,m4a,opus",
+  documents: "pdf,doc,docx,xls,xlsx,ppt,pptx,odt,ods,odp,rtf,epub",
+  text: "txt,md,csv,json,xml,yaml,yml,toml,ini,cfg,py,js,ts,html,css,sql,sh,go,rs,java,c,cpp,h,rb,php,swift,kt,log",
+  archives: "zip,tar,gz,bz2,xz,7z,rar,dmg,iso",
+};
+
+const CATEGORY_ICONS = {
+  all: "",
+  images: "\uD83D\uDCF7",
+  videos: "\uD83C\uDFAC",
+  audio: "\uD83C\uDFB5",
+  documents: "\uD83D\uDCC4",
+  text: "\uD83D\uDCDD",
+  archives: "\uD83D\uDCE6",
+  other: "",
+};
+
 const FILES_PER_PAGE = 500;
 let _offset = 0;
 let _hasMore = true;
@@ -27,12 +47,23 @@ let _container = null;
 let _thumbSize = parseInt(localStorage.getItem("godmode_thumb_size") || "200", 10);
 let _favoritesOnly = false;
 let _tagFilter = null;
+let _activeCategory = "all";
+let _categoryCounts = {};
+let _pendingSmartFilter = null;
 const _videoHoverTimers = new Map();
 let _focusedPath = null;
 let _spacebarHandler = null;
 
 // ── Drag-to-select state ────────────────────────────
 let _dragSelect = null;
+
+/**
+ * Apply a smart filter from the dashboard.
+ * @param {Object} filterObj - Filter parameters
+ */
+export function applySmartFilter(filterObj) {
+  _pendingSmartFilter = filterObj;
+}
 
 export async function render(container) {
   _offset = 0;
@@ -42,8 +73,13 @@ export async function render(container) {
   _totalLoaded = 0;
   _selectionMode = false;
   _container = container;
+  _activeCategory = "all";
 
   if (_observer) { _observer.disconnect(); _observer = null; }
+
+  // Apply pending smart filter if set
+  const smartFilter = _pendingSmartFilter;
+  _pendingSmartFilter = null;
 
   let html = `
     <div class="page-header">
@@ -61,6 +97,7 @@ export async function render(container) {
         </button>
       </div>
     </div>
+    <div class="category-tabs" id="category-tabs"></div>
     <div class="filters-panel ${_filtersVisible ? '' : 'hidden'}" id="filters-panel">
       <div class="filters" role="search" aria-label="${t("files.title")}">
         <input type="text" id="f-ext" placeholder="${t("files.ext_placeholder")}" size="10" aria-label="${t("files.ext_placeholder")}">
@@ -77,6 +114,8 @@ export async function render(container) {
         <label class="filter-checkbox"><input type="checkbox" id="f-has-phash"> ${t("files.has_phash")}</label>
         <label class="filter-checkbox"><input type="checkbox" id="f-favorites-only"> ${t("files.favorites")}</label>
         <div class="filter-group"><label for="f-tag">${t("tags.filter_by")}</label><select id="f-tag"><option value="">${t("tags.title")}</option></select></div>
+        <div class="filter-group"><label for="f-min-rating">${t("files.min_rating")}</label><select id="f-min-rating"><option value="">${t("files.rating")}</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option><option value="5">5</option></select></div>
+        <label class="filter-checkbox"><input type="checkbox" id="f-has-notes"> ${t("smart.with_notes")}</label>
       </div>
     </div>
     <div id="selection-bar" class="selection-bar hidden">
@@ -92,6 +131,7 @@ export async function render(container) {
         <option value="name" ${_sortField === "name" ? "selected" : ""}>${t("files.sort_name")}</option>
         <option value="size" ${_sortField === "size" ? "selected" : ""}>${t("files.sort_size")}</option>
         <option value="ext" ${_sortField === "ext" ? "selected" : ""}>${t("files.sort_ext")}</option>
+        <option value="rating" ${_sortField === "rating" ? "selected" : ""}>${t("files.sort_rating")}</option>
       </select>
       <button id="btn-sort-dir" title="${_sortDir === "asc" ? t("files.sort_asc") : t("files.sort_desc")}">
         ${_sortDir === "asc" ? "\u2191" : "\u2193"} ${_sortDir === "asc" ? t("files.sort_asc") : t("files.sort_desc")}
@@ -192,6 +232,12 @@ export async function render(container) {
     resetAndReload();
   });
 
+  // Min rating filter change
+  container.querySelector("#f-min-rating")?.addEventListener("change", () => { resetAndReload(); });
+
+  // Has notes filter
+  container.querySelector("#f-has-notes")?.addEventListener("change", () => { resetAndReload(); });
+
   // Spacebar → Quick Look
   if (_spacebarHandler) document.removeEventListener("keydown", _spacebarHandler);
   _spacebarHandler = (e) => {
@@ -204,7 +250,99 @@ export async function render(container) {
   };
   document.addEventListener("keydown", _spacebarHandler);
 
+  // Load category counts
+  _loadCategoryTabs(container);
+
+  // Apply smart filter if pending
+  if (smartFilter) {
+    _applySmartFilterValues(container, smartFilter);
+  }
+
   loadFiles();
+}
+
+async function _loadCategoryTabs(container) {
+  const tabsEl = container.querySelector("#category-tabs");
+  if (!tabsEl) return;
+  try {
+    const data = await api("/categories");
+    _categoryCounts = data.categories || {};
+    _renderCategoryTabs(tabsEl);
+  } catch {
+    // silent — tabs just won't show counts
+    _renderCategoryTabs(tabsEl);
+  }
+}
+
+function _renderCategoryTabs(tabsEl) {
+  const cats = ["all", "images", "videos", "audio", "documents", "text", "archives", "other"];
+  const catKeys = {
+    all: "categories.all", images: "categories.images", videos: "categories.videos",
+    audio: "categories.audio", documents: "categories.documents", text: "categories.text",
+    archives: "categories.archives", other: "categories.other",
+  };
+  let totalCount = 0;
+  for (const c of Object.values(_categoryCounts)) totalCount += c.count || 0;
+
+  let html = "";
+  for (const cat of cats) {
+    const count = cat === "all" ? totalCount : (_categoryCounts[cat]?.count || 0);
+    const icon = CATEGORY_ICONS[cat] || "";
+    const active = _activeCategory === cat ? " active" : "";
+    const countStr = count > 0 ? `<span class="category-tab-count">(${count.toLocaleString("cs-CZ")})</span>` : "";
+    html += `<button class="category-tab${active}" data-category="${cat}">${icon ? icon + " " : ""}${t(catKeys[cat])} ${countStr}</button>`;
+  }
+  tabsEl.innerHTML = html;
+
+  // Bind click events
+  tabsEl.querySelectorAll(".category-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      _activeCategory = btn.dataset.category;
+      tabsEl.querySelectorAll(".category-tab").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      // Set ext filter based on category
+      const extInput = document.querySelector("#f-ext");
+      if (extInput) {
+        if (_activeCategory === "all" || _activeCategory === "other") {
+          extInput.value = "";
+        } else {
+          extInput.value = CATEGORY_EXTS[_activeCategory] || "";
+        }
+      }
+      resetAndReload();
+    });
+  });
+}
+
+function _applySmartFilterValues(container, filterObj) {
+  if (filterObj.ext) {
+    const extInput = container.querySelector("#f-ext");
+    if (extInput) extInput.value = filterObj.ext;
+  }
+  if (filterObj.date_from) {
+    const dateInput = container.querySelector("#f-date-from");
+    if (dateInput) dateInput.value = filterObj.date_from;
+  }
+  if (filterObj.has_gps) {
+    const gpsInput = container.querySelector("#f-has-gps");
+    if (gpsInput) gpsInput.checked = true;
+  }
+  if (filterObj.min_rating) {
+    const ratingSelect = container.querySelector("#f-min-rating");
+    if (ratingSelect) ratingSelect.value = String(filterObj.min_rating);
+  }
+  if (filterObj.min_size) {
+    const sizeInput = container.querySelector("#f-min-size");
+    if (sizeInput) sizeInput.value = String(filterObj.min_size);
+  }
+  if (filterObj.has_notes) {
+    const notesInput = container.querySelector("#f-has-notes");
+    if (notesInput) notesInput.checked = true;
+  }
+  // Open filters panel so user can see what's applied
+  _filtersVisible = true;
+  const panel = container.querySelector("#filters-panel");
+  if (panel) panel.classList.remove("hidden");
 }
 
 function resetAndReload() {
@@ -237,6 +375,8 @@ function updateFilterBadge() {
   if ($("#f-has-phash")?.checked) count++;
   if ($("#f-favorites-only")?.checked) count++;
   if ($("#f-tag")?.value) count++;
+  if ($("#f-min-rating")?.value) count++;
+  if ($("#f-has-notes")?.checked) count++;
   if (count > 0) {
     badge.textContent = String(count);
     badge.style.display = "";
@@ -280,6 +420,10 @@ function _buildQuery() {
   const favsOnly = $("#f-favorites-only")?.checked;
   if (favsOnly) q += "&favorites_only=true";
   if (_tagFilter !== null) q += `&tag_id=${_tagFilter}`;
+  const minRating = $("#f-min-rating")?.value || "";
+  if (minRating) q += `&min_rating=${minRating}`;
+  const hasNotes = $("#f-has-notes")?.checked;
+  if (hasNotes) q += "&has_notes=true";
   if (_sortField) q += `&sort=${_sortField}`;
   if (_sortDir) q += `&order=${_sortDir}`;
   return q;
@@ -435,6 +579,8 @@ function renderGridItem(f) {
   if (f.gps_latitude) html += `<span class="thumb-badge thumb-badge-gps">\uD83D\uDCCD</span>`;
   if (f.duplicate_group_id) html += `<span class="thumb-badge thumb-badge-dup">\uD83D\uDCCB</span>`;
   if (f.is_favorite) html += `<span class="thumb-badge thumb-badge-fav">\u2B50</span>`;
+  if (f.has_note) html += `<span class="thumb-badge thumb-badge-note">\uD83D\uDCDD</span>`;
+  if (f.rating) html += `<span class="thumb-badge thumb-badge-rating">\u2605${f.rating}</span>`;
 
   // Video play overlay
   if (isVideo) html += `<span class="video-play-overlay">\u25B6</span>`;
@@ -626,7 +772,8 @@ function bindNewItems(el, newFiles) {
       if (lbIndex >= 0) {
         openLightbox(lightboxPaths, lbIndex);
       } else {
-        showFileDetail(filePath);
+        const allPaths = _currentFiles.map(f => f.path);
+        openQuickLook(filePath, allPaths);
       }
     };
     row.addEventListener("click", handler);
