@@ -34,6 +34,105 @@ function escapeHtml(str) {
   return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
+// ── Modal ────────────────────────────────────────────
+
+function closeModal() {
+  const overlay = $(".modal-overlay");
+  if (overlay) overlay.remove();
+}
+
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+const IMAGE_EXTS = new Set(["jpg","jpeg","png","bmp","tiff","tif","gif","webp","heic","heif"]);
+
+async function showFileDetail(filePath) {
+  // Create overlay immediately with loading state
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal"><button class="modal-close" onclick="closeModal()">&times;</button><div class="loading">Loading...</div></div>`;
+  overlay.addEventListener("click", e => { if (e.target === overlay) closeModal(); });
+  document.body.appendChild(overlay);
+
+  try {
+    const data = await api(`/files${filePath}`);
+    const f = data.file;
+    const meta = data.metadata || {};
+    const richness = data.richness;
+    const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
+
+    // Thumbnail or placeholder
+    let thumbHtml;
+    if (isImage) {
+      thumbHtml = `<img class="modal-thumb" src="/api/thumbnail${f.path}?size=400" onerror="this.outerHTML='<div class=\\'modal-thumb-placeholder\\'>&#128444;</div>'" alt="">`;
+    } else {
+      const icon = (f.ext || "").match(/^(mp4|mov|avi|mkv|wmv|flv|webm)$/i) ? "&#127910;" : "&#128196;";
+      thumbHtml = `<div class="modal-thumb-placeholder">${icon}</div>`;
+    }
+
+    // Richness badge
+    let richnessHtml = "";
+    if (richness != null) {
+      const level = richness >= 30 ? "high" : richness >= 15 ? "medium" : "low";
+      richnessHtml = `<span class="richness-badge ${level}">${Number(richness).toFixed(1)} pts</span>`;
+    }
+
+    // GPS link
+    let gpsHtml = "";
+    if (f.gps_latitude && f.gps_longitude) {
+      gpsHtml = `<div class="meta-row"><span class="meta-label">GPS</span><a class="gps-link" href="https://maps.google.com/?q=${f.gps_latitude},${f.gps_longitude}" target="_blank" rel="noopener">${f.gps_latitude.toFixed(6)}, ${f.gps_longitude.toFixed(6)} &#x2197;</a></div>`;
+    }
+
+    // Basic info rows
+    const cam = [f.camera_make, f.camera_model].filter(Boolean).join(" ");
+    const res = f.width && f.height ? `${f.width} x ${f.height}` : "";
+    const infoRows = [
+      ["Size", formatBytes(f.size)],
+      ["Extension", f.ext],
+      ["Date", f.date_original || "—"],
+      cam ? ["Camera", cam] : null,
+      res ? ["Resolution", res] : null,
+      f.duration_seconds ? ["Duration", `${f.duration_seconds.toFixed(1)}s`] : null,
+      f.video_codec ? ["Video", f.video_codec] : null,
+      f.audio_codec ? ["Audio", f.audio_codec] : null,
+      f.sha256 ? ["SHA-256", f.sha256.slice(0, 16) + "..."] : null,
+      f.phash ? ["PHash", f.phash.slice(0, 16) + "..."] : null,
+    ].filter(Boolean);
+
+    // Deep metadata table
+    let metaHtml = "";
+    const metaKeys = Object.keys(meta);
+    if (metaKeys.length) {
+      metaHtml = `<div class="modal-section"><h4>ExifTool Metadata (${metaKeys.length} tags)</h4><table class="meta-table">`;
+      for (const key of metaKeys.sort()) {
+        const val = typeof meta[key] === "object" ? JSON.stringify(meta[key]) : String(meta[key]);
+        metaHtml += `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(val)}</td></tr>`;
+      }
+      metaHtml += "</table></div>";
+    }
+
+    const modalEl = overlay.querySelector(".modal");
+    modalEl.innerHTML = `
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <div class="modal-header">
+        ${thumbHtml}
+        <div class="modal-info">
+          <h3>${escapeHtml(fileName(f.path))}</h3>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;word-break:break-all">${escapeHtml(f.path)}</div>
+          ${richnessHtml ? `<div style="margin-bottom:12px">${richnessHtml}</div>` : ""}
+          ${infoRows.map(([l,v]) => `<div class="meta-row"><span class="meta-label">${escapeHtml(l)}</span><span>${escapeHtml(v)}</span></div>`).join("")}
+          ${gpsHtml}
+        </div>
+      </div>
+      ${metaHtml}
+    `;
+  } catch (e) {
+    const modalEl = overlay.querySelector(".modal");
+    modalEl.innerHTML = `<button class="modal-close" onclick="closeModal()">&times;</button><div class="empty">Error loading file detail: ${escapeHtml(e.message)}</div>`;
+  }
+}
+window.showFileDetail = showFileDetail;
+window.closeModal = closeModal;
+
 // ── Router ───────────────────────────────────────────
 
 const pages = { dashboard: renderDashboard, files: renderFiles, duplicates: renderDuplicates, similar: renderSimilar, pipeline: renderPipeline, doctor: renderDoctor };
@@ -129,7 +228,7 @@ async function loadFiles() {
       const gps = f.gps_latitude ? `${f.gps_latitude.toFixed(4)}, ${f.gps_longitude.toFixed(4)}` : "";
       const res = f.width && f.height ? `${f.width}x${f.height}` : "";
       const cam = [f.camera_make, f.camera_model].filter(Boolean).join(" ");
-      t += `<tr>
+      t += `<tr style="cursor:pointer" onclick="showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')">
         <td class="path" title="${escapeHtml(f.path)}">${escapeHtml(fileName(f.path))}</td>
         <td>${escapeHtml(f.ext)}</td>
         <td>${formatBytes(f.size)}</td>
