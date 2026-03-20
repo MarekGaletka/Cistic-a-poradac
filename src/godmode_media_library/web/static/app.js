@@ -204,6 +204,14 @@ async function renderFiles() {
       <input type="text" id="f-path" placeholder="Path contains..." size="20">
       <button onclick="loadFiles()">Search</button>
     </div>
+    <div class="filters filters-advanced">
+      <div class="filter-group"><label>From</label><input type="date" id="f-date-from"></div>
+      <div class="filter-group"><label>To</label><input type="date" id="f-date-to"></div>
+      <div class="filter-group"><label>Min KB</label><input type="number" id="f-min-size" min="0" style="width:80px"></div>
+      <div class="filter-group"><label>Max KB</label><input type="number" id="f-max-size" min="0" style="width:80px"></div>
+      <label class="filter-checkbox"><input type="checkbox" id="f-has-gps"> GPS</label>
+      <label class="filter-checkbox"><input type="checkbox" id="f-has-phash"> PHash</label>
+    </div>
     <div id="files-table"></div>`;
   content().innerHTML = html;
   loadFiles();
@@ -213,10 +221,22 @@ async function loadFiles() {
   const ext = $("#f-ext")?.value || "";
   const camera = $("#f-camera")?.value || "";
   const pathC = $("#f-path")?.value || "";
+  const dateFrom = $("#f-date-from")?.value || "";
+  const dateTo = $("#f-date-to")?.value || "";
+  const minSize = $("#f-min-size")?.value || "";
+  const maxSize = $("#f-max-size")?.value || "";
+  const hasGps = $("#f-has-gps")?.checked;
+  const hasPhash = $("#f-has-phash")?.checked;
   let q = "/files?limit=200";
   if (ext) q += `&ext=${encodeURIComponent(ext)}`;
   if (camera) q += `&camera=${encodeURIComponent(camera)}`;
   if (pathC) q += `&path_contains=${encodeURIComponent(pathC)}`;
+  if (dateFrom) q += `&date_from=${encodeURIComponent(dateFrom)}`;
+  if (dateTo) q += `&date_to=${encodeURIComponent(dateTo)}`;
+  if (minSize) q += `&min_size=${encodeURIComponent(minSize)}`;
+  if (maxSize) q += `&max_size=${encodeURIComponent(maxSize)}`;
+  if (hasGps) q += "&has_gps=true";
+  if (hasPhash) q += "&has_phash=true";
   try {
     const data = await api(q);
     if (!data.files.length) {

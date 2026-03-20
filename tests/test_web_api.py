@@ -127,3 +127,25 @@ def test_file_not_found(client):
 def test_thumbnail_not_found(client):
     resp = client.get("/api/thumbnail/nonexistent/path.jpg")
     assert resp.status_code == 404
+
+
+def test_get_files_with_size_filter(client):
+    resp = client.get("/api/files?min_size=0&max_size=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["files"], list)
+
+
+def test_get_files_with_gps_filter(client):
+    resp = client.get("/api/files?has_gps=true")
+    assert resp.status_code == 200
+    data = resp.json()
+    # No files have GPS in test data
+    assert data["count"] == 0
+
+
+def test_get_files_with_phash_filter(client):
+    resp = client.get("/api/files?has_phash=true")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["files"], list)

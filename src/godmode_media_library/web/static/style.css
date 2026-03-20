@@ -182,6 +182,25 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 .filters input::placeholder { color: var(--text-muted); }
+.filters input[type="date"] { color-scheme: dark; }
+
+.filters-advanced { align-items: flex-end; }
+
+.filter-group { display: flex; flex-direction: column; gap: 2px; }
+.filter-group label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+
+.filter-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+.filter-checkbox:hover { color: var(--text); }
+.filter-checkbox input[type="checkbox"] { accent-color: var(--accent); }
 
 /* ── Diff view ──────────────────────────────────────── */
 

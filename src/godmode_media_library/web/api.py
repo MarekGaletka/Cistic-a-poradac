@@ -85,6 +85,8 @@ def get_files(
     max_size: int | None = None,
     path_contains: str | None = None,
     camera: str | None = None,
+    has_gps: bool | None = None,
+    has_phash: bool | None = None,
     limit: int = Query(default=500, le=10000),
 ) -> dict:
     """Query files with filters."""
@@ -98,6 +100,8 @@ def get_files(
             max_size=max_size * 1024 if max_size else None,
             path_contains=path_contains,
             camera=camera,
+            has_gps=has_gps,
+            has_phash=has_phash,
             limit=limit + 1,
         )
         has_more = len(rows) > limit
