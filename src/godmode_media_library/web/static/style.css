@@ -3409,3 +3409,51 @@ button:focus-visible, a:focus-visible {
 }
 
 .nav-badge-accent.hidden { display: none; }
+
+/* ── Tags ──────────────────────────────────────────── */
+
+/* Tag pills */
+.tag-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; cursor: pointer; transition: opacity 0.15s; }
+.tag-pill:hover { opacity: 0.8; }
+.tag-pill-remove { font-size: 14px; cursor: pointer; opacity: 0.6; margin-left: 2px; }
+.tag-pill-remove:hover { opacity: 1; }
+
+/* Tag dots on thumbnails */
+.thumb-tags { position: absolute; bottom: 6px; left: 6px; display: flex; gap: 3px; z-index: 1; }
+.thumb-tag-dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); }
+
+/* Tag picker popover */
+.tag-picker { position: absolute; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; min-width: 240px; z-index: 300; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.tag-picker-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.1s; }
+.tag-picker-item:hover { background: var(--surface-hover); }
+.tag-picker-item.active { background: rgba(88,166,255,0.15); }
+.tag-picker-color { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+.tag-picker-name { flex: 1; font-size: 13px; }
+.tag-picker-check { color: var(--accent); font-size: 14px; }
+
+/* Tag create inline */
+.tag-create-row { display: flex; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); align-items: center; flex-wrap: wrap; }
+.tag-create-input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 8px; color: var(--text); font-size: 13px; min-width: 100px; }
+.tag-create-input:focus { outline: none; border-color: var(--accent); }
+
+/* Color presets */
+.tag-color-presets { display: flex; gap: 4px; }
+.tag-color-preset { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: border-color 0.1s; }
+.tag-color-preset:hover, .tag-color-preset.active { border-color: var(--text); }
+
+/* Tag manager modal */
+.tag-manager-list { max-height: 300px; overflow-y: auto; }
+.tag-manager-item { display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); }
+.tag-manager-delete { color: var(--red); cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; }
+.tag-manager-delete:hover { background: rgba(248,81,73,0.15); }
+
+/* Tags empty state */
+.tags-empty { font-size: 12px; color: var(--text-muted); padding: 4px 0; }
+
+/* Dashboard tag pills */
+.tag-pill-dashboard { cursor: pointer; }
+.tag-pill-dashboard:hover { opacity: 0.85; }
+
+/* Lightbox add tag button */
+.lightbox-add-tag-btn { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer; padding: 4px 10px; }
+.lightbox-add-tag-btn:hover { color: var(--accent); border-color: var(--accent); }

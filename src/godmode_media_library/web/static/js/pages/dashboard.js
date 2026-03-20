@@ -6,6 +6,7 @@ import { t } from "../i18n.js";
 import { showGlobalProgress } from "../tasks.js";
 import { openFolderPicker } from "../folder-picker.js";
 import { openLightbox } from "../lightbox.js";
+import { loadTags } from "../tags.js";
 
 let _selectedRoots = [];
 
@@ -168,17 +169,20 @@ async function renderDashboard(container, stats) {
   let sysInfo = null;
   let memoriesData = null;
   let favoritesCount = 0;
+  let tagsData = [];
   try {
-    const [rootsData, sysData, memData, favsData] = await Promise.all([
+    const [rootsData, sysData, memData, favsData, tagsResult] = await Promise.all([
       api("/roots").catch(() => ({ roots: [] })),
       api("/system-info").catch(() => null),
       api("/memories").catch(() => null),
       api("/files/favorites").catch(() => ({ count: 0 })),
+      loadTags().catch(() => []),
     ]);
     roots = rootsData.roots || [];
     sysInfo = sysData;
     memoriesData = memData;
     favoritesCount = favsData?.count ?? 0;
+    tagsData = tagsResult || [];
   } catch {
     // silent
   }
@@ -292,6 +296,20 @@ async function renderDashboard(container, stats) {
         </button>
       </div>
     </div>`;
+
+  // Top tags section
+  if (tagsData.length > 0) {
+    const topTags = tagsData.filter(t => t.file_count > 0).slice(0, 5);
+    if (topTags.length > 0) {
+      html += `<div class="dashboard-section">
+        <h3>${t("tags.top_tags")}</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">`;
+      for (const tag of topTags) {
+        html += `<a href="#files" class="tag-pill tag-pill-dashboard" style="background:${tag.color}22;color:${tag.color};border:1px solid ${tag.color}44;text-decoration:none" data-tag-id="${tag.id}">${escapeHtml(tag.name)} <span style="opacity:0.7;font-size:11px">(${tag.file_count})</span></a>`;
+      }
+      html += `</div></div>`;
+    }
+  }
 
   // Storage breakdown (donut chart using CSS conic-gradient)
   const topExts = stats.top_extensions || [];

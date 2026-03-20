@@ -79,6 +79,24 @@ class FavoriteRequest(BaseModel):
     path: str
 
 
+class NoteRequest(BaseModel):
+    note: str
+
+
+class RatingRequest(BaseModel):
+    rating: int
+
+
+class CreateTagRequest(BaseModel):
+    name: str
+    color: str = "#58a6ff"
+
+
+class TagFilesRequest(BaseModel):
+    paths: list[str]
+    tag_id: int
+
+
 _DEFAULT_QUARANTINE_ROOT = Path.home() / ".config" / "gml" / "quarantine"
 
 # Directories that should not be browsable for security
@@ -212,6 +230,41 @@ def get_stats(request: Request) -> dict:
         cat.close()
 
 
+@router.get("/categories")
+def get_categories(request: Request) -> dict:
+    """Get file counts grouped by media type category."""
+    cat = _open_catalog(request)
+    try:
+        categories = {}
+        category_defs = [
+            ("images", "jpg,jpeg,png,gif,bmp,tiff,tif,webp,heic,heif,svg,raw,cr2,nef,arw,dng"),
+            ("videos", "mp4,mov,avi,mkv,wmv,flv,webm,m4v,3gp"),
+            ("audio", "mp3,wav,flac,aac,ogg,wma,m4a,opus"),
+            ("documents", "pdf,doc,docx,xls,xlsx,ppt,pptx,odt,ods,odp,rtf,epub"),
+            ("text", "txt,md,csv,json,xml,yaml,yml,toml,ini,cfg,py,js,ts,html,css,sql,sh,go,rs,java,c,cpp,h,rb,php,swift,kt,log"),
+            ("archives", "zip,tar,gz,bz2,xz,7z,rar,dmg,iso"),
+        ]
+        for cat_name, exts in category_defs:
+            ext_list = exts.split(",")
+            placeholders = ",".join("?" * len(ext_list))
+            cur = cat.conn.execute(
+                f"SELECT COUNT(*), COALESCE(SUM(size), 0) FROM files WHERE LOWER(ext) IN ({placeholders})",  # noqa: S608
+                ext_list,
+            )
+            count, total_size = cur.fetchone()
+            categories[cat_name] = {"count": count, "size": total_size}
+
+        total_cur = cat.conn.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM files")
+        total_count, total_size = total_cur.fetchone()
+        known_count = sum(c["count"] for c in categories.values())
+        known_size = sum(c["size"] for c in categories.values())
+        categories["other"] = {"count": total_count - known_count, "size": total_size - known_size}
+
+        return {"categories": categories}
+    finally:
+        cat.close()
+
+
 @router.get("/files")
 def get_files(
     request: Request,
@@ -225,6 +278,9 @@ def get_files(
     has_gps: bool | None = None,
     has_phash: bool | None = None,
     favorites_only: bool | None = None,
+    tag_id: int | None = None,
+    min_rating: int | None = None,
+    has_notes: bool | None = None,
     limit: int = Query(default=500, le=10000),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
@@ -233,12 +289,33 @@ def get_files(
     try:
         favs = _get_favorites_set(request)
 
-        # If favorites_only, restrict query to favorite paths
-        if favorites_only:
-            fav_list = list(favs)
-            if not fav_list:
-                return {"files": [], "count": 0, "has_more": False}
-            # Filter favorites by other criteria using query_files then intersect
+        def _enrich_items(items_list):
+            """Enrich file rows with duplicates, favorites, tags, ratings, notes."""
+            paths = [r.path for r in items_list]
+            dup_map = cat.get_duplicate_group_ids_for_paths(paths)
+            tags_map = cat.get_files_tags_bulk(paths)
+            ratings_map = cat.get_files_ratings_bulk(paths)
+            notes_set = cat.get_files_notes_bulk(paths)
+            result = []
+            for r in items_list:
+                d = _row_to_dict(r)
+                d["duplicate_group_id"] = dup_map.get(r.path)
+                d["is_favorite"] = r.path in favs
+                d["tags"] = tags_map.get(r.path, [])
+                d["rating"] = ratings_map.get(r.path)
+                d["has_note"] = r.path in notes_set
+                result.append(d)
+            return result
+
+        # Determine if we need full-scan mode (rating/notes filters or tag/favorites)
+        needs_full_scan = (
+            tag_id is not None
+            or favorites_only
+            or min_rating is not None
+            or has_notes
+        )
+
+        if needs_full_scan:
             rows = cat.query_files(
                 ext=ext,
                 date_from=date_from,
@@ -249,10 +326,31 @@ def get_files(
                 camera=camera,
                 has_gps=has_gps,
                 has_phash=has_phash,
-                limit=100000,  # get all, then filter
+                limit=100000,
                 offset=0,
             )
-            rows = [r for r in rows if r.path in favs]
+            # Apply tag filter
+            if tag_id is not None:
+                tag_rows = cat.query_files_by_tag(tag_id, limit=100000, offset=0)
+                tag_paths = {r.path for r in tag_rows}
+                rows = [r for r in rows if r.path in tag_paths]
+
+            # Apply favorites filter
+            if favorites_only:
+                rows = [r for r in rows if r.path in favs]
+
+            # Apply rating filter
+            if min_rating is not None:
+                all_paths = [r.path for r in rows]
+                ratings_map = cat.get_files_ratings_bulk(all_paths)
+                rows = [r for r in rows if ratings_map.get(r.path, 0) >= min_rating]
+
+            # Apply notes filter
+            if has_notes:
+                all_paths = [r.path for r in rows]
+                notes_set = cat.get_files_notes_bulk(all_paths)
+                rows = [r for r in rows if r.path in notes_set]
+
             total = len(rows)
             items = rows[offset : offset + limit]
             has_more = (offset + limit) < total
@@ -273,15 +371,7 @@ def get_files(
             has_more = len(rows) > limit
             items = rows[:limit]
 
-        # Look up duplicate group IDs and favorites for these files
-        item_paths = [r.path for r in items]
-        dup_map = cat.get_duplicate_group_ids_for_paths(item_paths)
-        file_dicts = []
-        for r in items:
-            d = _row_to_dict(r)
-            d["duplicate_group_id"] = dup_map.get(r.path)
-            d["is_favorite"] = r.path in favs
-            file_dicts.append(d)
+        file_dicts = _enrich_items(items)
         return {
             "files": file_dicts,
             "count": len(items),
@@ -323,10 +413,12 @@ def get_file_detail(request: Request, file_path: str) -> dict:
             raise HTTPException(status_code=404, detail="File not found in catalog")
         meta = cat.get_file_metadata(f"/{file_path}")
         richness = cat.get_metadata_richness(f"/{file_path}")
+        tags = cat.get_file_tags(f"/{file_path}")
         return {
             "file": _row_to_dict(row),
             "metadata": meta,
             "richness": richness,
+            "tags": tags,
         }
     finally:
         cat.close()
@@ -1236,6 +1328,14 @@ def stream_file(request: Request, file_path: str) -> StreamingResponse:
         ".mov": "video/quicktime",
         ".avi": "video/x-msvideo",
         ".mkv": "video/x-matroska",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".flac": "audio/flac",
+        ".ogg": "audio/ogg",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".wma": "audio/x-ms-wma",
+        ".pdf": "application/pdf",
     }
     ext = full_path.suffix.lower()
     media_type = media_types.get(ext, "application/octet-stream")
@@ -1285,6 +1385,68 @@ def _set_favorites(request: Request, favorites: list[str]) -> None:
         cat.close()
 
 
+# ── Tags ──────────────────────────────────────────────────────────────
+
+
+@router.get("/tags")
+def list_tags(request: Request) -> dict:
+    """List all tags with file counts."""
+    cat = _open_catalog(request)
+    try:
+        tags = cat.get_all_tags()
+        return {"tags": tags}
+    finally:
+        cat.close()
+
+
+@router.post("/tags")
+def create_tag(request: Request, body: CreateTagRequest) -> dict:
+    """Create a new tag."""
+    cat = _open_catalog(request)
+    try:
+        tag = cat.add_tag(body.name, body.color)
+        return tag
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(status_code=409, detail="Tag name already exists") from e
+        raise
+    finally:
+        cat.close()
+
+
+@router.delete("/tags/{tag_id}")
+def delete_tag(request: Request, tag_id: int) -> dict:
+    """Delete a tag."""
+    cat = _open_catalog(request)
+    try:
+        cat.delete_tag(tag_id)
+        return {"deleted": True}
+    finally:
+        cat.close()
+
+
+@router.post("/files/tag")
+def tag_files(request: Request, body: TagFilesRequest) -> dict:
+    """Add a tag to files."""
+    cat = _open_catalog(request)
+    try:
+        count = cat.bulk_tag(body.paths, body.tag_id)
+        return {"tagged": count}
+    finally:
+        cat.close()
+
+
+@router.delete("/files/tag")
+def untag_files(request: Request, body: TagFilesRequest) -> dict:
+    """Remove a tag from files."""
+    cat = _open_catalog(request)
+    try:
+        count = cat.bulk_untag(body.paths, body.tag_id)
+        return {"untagged": count}
+    finally:
+        cat.close()
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 def _row_to_dict(row: Any) -> dict:
@@ -1311,3 +1473,128 @@ def _row_to_dict(row: Any) -> dict:
         "asset_key": getattr(row, "asset_key", None),
         "asset_component": getattr(row, "asset_component", None),
     }
+
+
+# ── File preview ─────────────────────────────────────────────────────────
+
+
+_TEXT_EXTS = {
+    ".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml",
+    ".toml", ".ini", ".cfg", ".conf", ".log", ".sh", ".bash",
+    ".py", ".js", ".ts", ".html", ".css", ".sql", ".r", ".swift",
+    ".go", ".rs", ".java", ".kt", ".c", ".cpp", ".h", ".hpp",
+    ".rb", ".php", ".pl", ".lua", ".vim", ".env", ".gitignore",
+    ".dockerfile", ".makefile",
+}
+
+_TEXT_NAMES = {"makefile", "dockerfile", "readme", "license", "changelog"}
+
+_AUDIO_EXTS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a"}
+
+_ARCHIVE_EXTS = {".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar"}
+
+
+def _detect_language(ext: str) -> str:
+    lang_map = {
+        ".py": "python", ".js": "javascript", ".ts": "typescript",
+        ".html": "html", ".css": "css", ".json": "json",
+        ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
+        ".sql": "sql", ".sh": "bash", ".bash": "bash",
+        ".md": "markdown", ".csv": "csv", ".go": "go",
+        ".rs": "rust", ".java": "java", ".c": "c", ".cpp": "cpp",
+        ".rb": "ruby", ".php": "php", ".swift": "swift",
+    }
+    return lang_map.get(ext, "text")
+
+
+@router.get("/preview/{file_path:path}")
+def get_file_preview(request: Request, file_path: str) -> dict:
+    """Generate preview data for a file."""
+    full_path = Path(f"/{file_path}").resolve()
+
+    # Security check
+    cat = _open_catalog(request)
+    try:
+        row = cat.get_file_by_path(str(full_path))
+        if row is None:
+            raise HTTPException(status_code=404, detail="Not in catalog")
+    finally:
+        cat.close()
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = full_path.suffix.lower()
+    result: dict[str, Any] = {
+        "path": str(full_path),
+        "type": "unknown",
+        "name": full_path.name,
+        "size": full_path.stat().st_size,
+    }
+
+    # Text files
+    if ext in _TEXT_EXTS or full_path.name.lower() in _TEXT_NAMES:
+        try:
+            content = full_path.read_text(encoding="utf-8", errors="replace")[:50000]
+            lang = _detect_language(ext)
+            result.update({
+                "type": "text",
+                "content": content,
+                "language": lang,
+                "lines": content.count("\n") + 1,
+            })
+        except Exception:
+            result["type"] = "unknown"
+        return result
+
+    # PDF
+    if ext == ".pdf":
+        result.update({"type": "pdf", "url": f"/api/stream/{file_path}"})
+        return result
+
+    # Archives
+    if ext in _ARCHIVE_EXTS:
+        import tarfile
+        import zipfile
+
+        try:
+            entries: list[dict[str, Any]] = []
+            if ext == ".zip":
+                with zipfile.ZipFile(full_path) as zf:
+                    for info in zf.infolist()[:100]:
+                        entries.append({
+                            "name": info.filename,
+                            "size": info.file_size,
+                            "is_dir": info.is_dir(),
+                        })
+            elif ext in {".tar", ".gz", ".bz2", ".xz"}:
+                with tarfile.open(full_path) as tf:
+                    for member in tf.getmembers()[:100]:
+                        entries.append({
+                            "name": member.name,
+                            "size": member.size,
+                            "is_dir": member.isdir(),
+                        })
+            result.update({
+                "type": "archive",
+                "entries": entries,
+                "total_entries": len(entries),
+            })
+        except Exception:
+            result["type"] = "unknown"
+        return result
+
+    # Audio
+    if ext in _AUDIO_EXTS:
+        audio_media_types = {
+            ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac",
+            ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+        }
+        result.update({
+            "type": "audio",
+            "url": f"/api/stream/{file_path}",
+            "media_type": audio_media_types.get(ext, "audio/mpeg"),
+        })
+        return result
+
+    return result

@@ -1,8 +1,9 @@
 /* GOD MODE Media Library — Fullscreen Lightbox (Google Photos / Apple Photos style) */
 
-import { api, apiPost } from "./api.js";
+import { api, apiPost, apiDelete } from "./api.js";
 import { escapeHtml, fileName, formatBytes, IMAGE_EXTS, showToast } from "./utils.js";
 import { t } from "./i18n.js";
+import { renderFileTagsWithRemove, openTagPicker } from "./tags.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
 
@@ -337,6 +338,14 @@ function renderFileInfo(bodyEl, data) {
     <div style="margin-top:6px">${isFav ? '\u2605 ' + t("files.favorites") : ""}</div>
   </div>`;
 
+  // Tags
+  const fileTags = data.tags || [];
+  html += `<div class="lightbox-info-section">
+    <div class="lightbox-info-section-title">${t("tags.title")}</div>
+    <div class="lightbox-tags-container" id="lightbox-tags-container">${renderFileTagsWithRemove(fileTags, f.path)}</div>
+    <button class="lightbox-add-tag-btn" id="lightbox-add-tag-btn" style="margin-top:6px;font-size:12px">+ ${t("tags.add_to_file")}</button>
+  </div>`;
+
   // Basic info
   html += `<div class="lightbox-info-section">`;
   html += infoRow(t("detail.size"), formatBytes(f.size));
@@ -406,6 +415,36 @@ function renderFileInfo(bodyEl, data) {
   </div>`;
 
   bodyEl.innerHTML = html;
+
+  // Bind tag remove buttons
+  bodyEl.querySelectorAll(".tag-pill-remove").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const tagId = parseInt(btn.dataset.tagId, 10);
+      const filePath = btn.dataset.filePath;
+      try {
+        await apiDelete("/files/tag", { paths: [filePath], tag_id: tagId });
+        showToast(t("tags.untagged"), "info");
+        // Refresh info
+        delete _fileDetailsCache[filePath];
+        loadFileInfo(filePath);
+      } catch (err) {
+        showToast(t("general.error", { message: err.message }), "error");
+      }
+    });
+  });
+
+  // Bind add tag button
+  const addTagBtn = bodyEl.querySelector("#lightbox-add-tag-btn");
+  if (addTagBtn) {
+    addTagBtn.addEventListener("click", () => {
+      const currentPath = _paths[_index];
+      openTagPicker(addTagBtn, [currentPath], () => {
+        delete _fileDetailsCache[currentPath];
+        loadFileInfo(currentPath);
+      });
+    });
+  }
 }
 
 function infoRow(label, value) {

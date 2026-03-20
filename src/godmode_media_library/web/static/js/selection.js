@@ -3,6 +3,7 @@
 import { $, escapeHtml, showToast } from "./utils.js";
 import { apiPost } from "./api.js";
 import { t } from "./i18n.js";
+import { openTagPicker } from "./tags.js";
 
 const selectedPaths = new Set();
 
@@ -58,10 +59,17 @@ function updateActionBar() {
   bar.classList.remove("hidden");
   bar.innerHTML = `
     <span class="fab-count">${t("general.selected", { count: selectedPaths.size })}</span>
+    <button class="fab-btn" data-action="tag" title="${t("action.tag")}">&#127991; ${t("action.tag")}</button>
     <button class="fab-btn" data-action="quarantine" title="${t("action.quarantine")}">&#128451; ${t("action.quarantine")}</button>
     <button class="fab-btn danger" data-action="delete" title="${t("action.delete")}">&#128465; ${t("action.delete")}</button>
     <button class="fab-btn" data-action="deselect" title="${t("action.deselect_all")}">&#10060; ${t("action.deselect_all")}</button>
   `;
+
+  bar.querySelector('[data-action="tag"]').addEventListener("click", (e) => {
+    openTagPicker(e.target, getSelectedPaths(), () => {
+      showToast(t("tags.files_tagged", { count: selectedPaths.size }), "success");
+    });
+  });
 
   bar.querySelector('[data-action="quarantine"]').addEventListener("click", async () => {
     if (!confirm(t("confirm.quarantine", { count: selectedPaths.size }))) return;

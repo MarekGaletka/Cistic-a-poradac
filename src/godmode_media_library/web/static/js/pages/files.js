@@ -5,7 +5,9 @@ import { $, content, formatBytes, escapeHtml, fileName, IMAGE_EXTS, showToast } 
 import { t } from "../i18n.js";
 import { showFileDetail } from "../modal.js";
 import { openLightbox } from "../lightbox.js";
+import { openQuickLook, isQuickLookOpen } from "../quicklook.js";
 import { toggleSelect, selectAll, deselectAll, isSelected, getSelectedPaths, getSelectedCount } from "../selection.js";
+import { renderTagDots, loadTags, getAllTags, openTagPicker } from "../tags.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
 
@@ -24,7 +26,10 @@ let _observer = null;
 let _container = null;
 let _thumbSize = parseInt(localStorage.getItem("godmode_thumb_size") || "200", 10);
 let _favoritesOnly = false;
+let _tagFilter = null;
 const _videoHoverTimers = new Map();
+let _focusedPath = null;
+let _spacebarHandler = null;
 
 // ── Drag-to-select state ────────────────────────────
 let _dragSelect = null;
@@ -71,6 +76,7 @@ export async function render(container) {
         <label class="filter-checkbox"><input type="checkbox" id="f-has-gps"> ${t("files.has_gps")}</label>
         <label class="filter-checkbox"><input type="checkbox" id="f-has-phash"> ${t("files.has_phash")}</label>
         <label class="filter-checkbox"><input type="checkbox" id="f-favorites-only"> ${t("files.favorites")}</label>
+        <div class="filter-group"><label for="f-tag">${t("tags.filter_by")}</label><select id="f-tag"><option value="">${t("tags.title")}</option></select></div>
       </div>
     </div>
     <div id="selection-bar" class="selection-bar hidden">
@@ -166,6 +172,38 @@ export async function render(container) {
   // Setup drag-to-select
   setupDragSelect(container);
 
+  // Load tags for filter dropdown
+  loadTags().then(tags => {
+    const sel = container.querySelector("#f-tag");
+    if (sel && tags.length) {
+      for (const tag of tags) {
+        const opt = document.createElement("option");
+        opt.value = String(tag.id);
+        opt.textContent = tag.name;
+        if (_tagFilter !== null && _tagFilter === tag.id) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+  });
+
+  // Tag filter change
+  container.querySelector("#f-tag")?.addEventListener("change", (e) => {
+    _tagFilter = e.target.value ? parseInt(e.target.value, 10) : null;
+    resetAndReload();
+  });
+
+  // Spacebar → Quick Look
+  if (_spacebarHandler) document.removeEventListener("keydown", _spacebarHandler);
+  _spacebarHandler = (e) => {
+    if (e.key !== " " || e.target.matches("input, textarea, select")) return;
+    if (isQuickLookOpen()) return; // Quick Look handles its own spacebar
+    if (!_focusedPath) return;
+    e.preventDefault();
+    const allPaths = _currentFiles.map(f => f.path);
+    openQuickLook(_focusedPath, allPaths);
+  };
+  document.addEventListener("keydown", _spacebarHandler);
+
   loadFiles();
 }
 
@@ -198,6 +236,7 @@ function updateFilterBadge() {
   if ($("#f-has-gps")?.checked) count++;
   if ($("#f-has-phash")?.checked) count++;
   if ($("#f-favorites-only")?.checked) count++;
+  if ($("#f-tag")?.value) count++;
   if (count > 0) {
     badge.textContent = String(count);
     badge.style.display = "";
@@ -240,6 +279,7 @@ function _buildQuery() {
   if (hasPhash) q += "&has_phash=true";
   const favsOnly = $("#f-favorites-only")?.checked;
   if (favsOnly) q += "&favorites_only=true";
+  if (_tagFilter !== null) q += `&tag_id=${_tagFilter}`;
   if (_sortField) q += `&sort=${_sortField}`;
   if (_sortDir) q += `&order=${_sortDir}`;
   return q;
@@ -399,6 +439,9 @@ function renderGridItem(f) {
   // Video play overlay
   if (isVideo) html += `<span class="video-play-overlay">\u25B6</span>`;
 
+  // Tag dots
+  html += renderTagDots(f.tags);
+
   html += `</div>`;
 
   html += `<div class="grid-hover-overlay">
@@ -526,15 +569,22 @@ function bindFileEvents(el) {
       if (e.type === "keydown" && e.key !== "Enter") return;
       if (e.target.matches("input[type=checkbox]")) return;
       const filePath = row.dataset.filePath;
+      _setFocusedPath(filePath, el);
       const lbIndex = lightboxPaths.indexOf(filePath);
       if (lbIndex >= 0) {
         openLightbox(lightboxPaths, lbIndex);
       } else {
-        showFileDetail(filePath);
+        const allPaths = _currentFiles.map(f => f.path);
+        openQuickLook(filePath, allPaths);
       }
     };
     row.addEventListener("click", handler);
     row.addEventListener("keydown", handler);
+
+    // Right-click / context focus (set focus without opening)
+    row.addEventListener("mousedown", () => {
+      _setFocusedPath(row.dataset.filePath, el);
+    });
 
     // Video hover preview (grid only)
     if (_viewMode === "grid") _bindVideoHover(row);
@@ -571,6 +621,7 @@ function bindNewItems(el, newFiles) {
     const handler = (e) => {
       if (e.type === "keydown" && e.key !== "Enter") return;
       if (e.target.matches("input[type=checkbox]")) return;
+      _setFocusedPath(filePath, el);
       const lbIndex = lightboxPaths.indexOf(filePath);
       if (lbIndex >= 0) {
         openLightbox(lightboxPaths, lbIndex);
@@ -581,8 +632,25 @@ function bindNewItems(el, newFiles) {
     row.addEventListener("click", handler);
     row.addEventListener("keydown", handler);
 
+    // Right-click / context focus (set focus without opening)
+    row.addEventListener("mousedown", () => {
+      _setFocusedPath(filePath, el);
+    });
+
     // Video hover preview (grid only)
     if (_viewMode === "grid") _bindVideoHover(row);
+  });
+}
+
+// ── Focus tracking (for Quick Look) ─────────────────
+
+function _setFocusedPath(path, parentEl) {
+  _focusedPath = path;
+  // Update visual focus indicator
+  const root = parentEl || _container;
+  if (!root) return;
+  root.querySelectorAll("[data-file-path]").forEach(item => {
+    item.classList.toggle("file-focused", item.dataset.filePath === path);
   });
 }
 

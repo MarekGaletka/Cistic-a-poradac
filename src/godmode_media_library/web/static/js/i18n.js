@@ -237,6 +237,23 @@ const translations = {
     "action.rename": "Přejmenovat",
     "action.move": "Přesunout",
     "action.tag": "Tagovat",
+
+    // Tags
+    "tags.title": "Tagy",
+    "tags.manage": "Spravovat tagy",
+    "tags.create": "Nov\u00fd tag",
+    "tags.create_placeholder": "N\u00e1zev tagu...",
+    "tags.delete_confirm": "Opravdu smazat tag \"{name}\"? Bude odebr\u00e1n ze v\u0161ech soubor\u016f.",
+    "tags.no_tags": "Zat\u00edm \u017e\u00e1dn\u00e9 tagy",
+    "tags.add_to_file": "P\u0159idat tag",
+    "tags.remove_from_file": "Odebrat tag",
+    "tags.filter_by": "Filtrovat podle tagu",
+    "tags.top_tags": "Nejpou\u017e\u00edvan\u011bj\u0161\u00ed tagy",
+    "tags.tagged": "Tag p\u0159id\u00e1n",
+    "tags.untagged": "Tag odebr\u00e1n",
+    "tags.created": "Tag vytvo\u0159en",
+    "tags.deleted": "Tag smaz\u00e1n",
+    "tags.files_tagged": "{count} soubor\u016f otagov\u00e1no",
     "action.select_all": "Vybrat vše",
     "action.deselect_all": "Zrušit výběr",
 

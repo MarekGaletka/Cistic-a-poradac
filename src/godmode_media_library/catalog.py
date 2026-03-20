@@ -14,7 +14,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -97,6 +97,31 @@ CREATE TABLE IF NOT EXISTS duplicates (
 
 CREATE INDEX IF NOT EXISTS idx_dup_group ON duplicates(group_id);
 CREATE INDEX IF NOT EXISTS idx_dup_file ON duplicates(file_id);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    color TEXT NOT NULL DEFAULT '#58a6ff'
+);
+
+CREATE TABLE IF NOT EXISTS file_tags (
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (file_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);
+
+CREATE TABLE IF NOT EXISTS file_notes (
+    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    note TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS file_ratings (
+    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5)
+);
 """
 
 
@@ -232,6 +257,40 @@ class Catalog:
                     file_id      INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
                     raw_json     TEXT    NOT NULL,
                     extracted_at TEXT    NOT NULL
+                )
+            """)
+            self._conn.commit()
+        if from_version < 4:
+            logger.info("Migrating catalog schema v%d → v4: adding tags and file_tags tables", from_version)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS tags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    color TEXT NOT NULL DEFAULT '#58a6ff'
+                )
+            """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS file_tags (
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                    PRIMARY KEY (file_id, tag_id)
+                )
+            """)
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id)")
+            self._conn.commit()
+        if from_version < 5:
+            logger.info("Migrating catalog schema v%d -> v5: adding file_notes and file_ratings tables", from_version)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS file_notes (
+                    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                    note TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS file_ratings (
+                    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                    rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5)
                 )
             """)
             self._conn.commit()
@@ -495,6 +554,238 @@ class Catalog:
                    people=excluded.people, place=excluded.place, updated_at=excluded.updated_at""",
             (file_id, people, place, utc_stamp()),
         )
+
+    # ── Tag operations ──────────────────────────────────────────────
+
+    def get_all_tags(self) -> list[dict]:
+        """Return all tags with file counts."""
+        cur = self.conn.execute(
+            "SELECT t.id, t.name, t.color, COUNT(ft.file_id) AS file_count "
+            "FROM tags t LEFT JOIN file_tags ft ON t.id = ft.tag_id "
+            "GROUP BY t.id ORDER BY t.name"
+        )
+        return [{"id": row[0], "name": row[1], "color": row[2], "file_count": row[3]} for row in cur.fetchall()]
+
+    def get_file_tags(self, path: str) -> list[dict]:
+        """Return tags for a specific file."""
+        cur = self.conn.execute(
+            "SELECT t.id, t.name, t.color FROM tags t "
+            "JOIN file_tags ft ON t.id = ft.tag_id "
+            "JOIN files f ON ft.file_id = f.id "
+            "WHERE f.path = ? ORDER BY t.name",
+            (path,),
+        )
+        return [{"id": row[0], "name": row[1], "color": row[2]} for row in cur.fetchall()]
+
+    def get_files_tags_bulk(self, paths: list[str]) -> dict[str, list[dict]]:
+        """Return tags for multiple files. Returns path -> list of tag dicts."""
+        if not paths:
+            return {}
+        result: dict[str, list[dict]] = {}
+        chunk_size = 500
+        for i in range(0, len(paths), chunk_size):
+            chunk = paths[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self.conn.execute(
+                f"SELECT f.path, t.id, t.name, t.color FROM tags t "  # noqa: S608
+                f"JOIN file_tags ft ON t.id = ft.tag_id "
+                f"JOIN files f ON ft.file_id = f.id "
+                f"WHERE f.path IN ({placeholders}) ORDER BY t.name",
+                chunk,
+            )
+            for row in cur.fetchall():
+                result.setdefault(row[0], []).append({"id": row[1], "name": row[2], "color": row[3]})
+        return result
+
+    def add_tag(self, name: str, color: str = "#58a6ff") -> dict:
+        """Create a new tag. Returns the tag dict."""
+        cur = self.conn.execute(
+            "INSERT INTO tags (name, color) VALUES (?, ?)", (name, color)
+        )
+        self.conn.commit()
+        return {"id": cur.lastrowid, "name": name, "color": color, "file_count": 0}
+
+    def delete_tag(self, tag_id: int) -> None:
+        """Delete a tag and all its file associations."""
+        self.conn.execute("DELETE FROM file_tags WHERE tag_id = ?", (tag_id,))
+        self.conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+        self.conn.commit()
+
+    def tag_file(self, path: str, tag_id: int) -> None:
+        """Add a tag to a file."""
+        cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        file_id = row[0]
+        self.conn.execute(
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id) VALUES (?, ?)",
+            (file_id, tag_id),
+        )
+
+    def untag_file(self, path: str, tag_id: int) -> None:
+        """Remove a tag from a file."""
+        cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        file_id = row[0]
+        self.conn.execute(
+            "DELETE FROM file_tags WHERE file_id = ? AND tag_id = ?",
+            (file_id, tag_id),
+        )
+
+    def bulk_tag(self, paths: list[str], tag_id: int) -> int:
+        """Add a tag to multiple files. Returns count of files tagged."""
+        count = 0
+        for path in paths:
+            cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+            row = cur.fetchone()
+            if row is None:
+                continue
+            file_id = row[0]
+            self.conn.execute(
+                "INSERT OR IGNORE INTO file_tags (file_id, tag_id) VALUES (?, ?)",
+                (file_id, tag_id),
+            )
+            count += 1
+        self.conn.commit()
+        return count
+
+    def bulk_untag(self, paths: list[str], tag_id: int) -> int:
+        """Remove a tag from multiple files. Returns count of files untagged."""
+        count = 0
+        for path in paths:
+            cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+            row = cur.fetchone()
+            if row is None:
+                continue
+            file_id = row[0]
+            c = self.conn.execute(
+                "DELETE FROM file_tags WHERE file_id = ? AND tag_id = ?",
+                (file_id, tag_id),
+            )
+            count += c.rowcount
+        self.conn.commit()
+        return count
+
+    def query_files_by_tag(self, tag_id: int, limit: int = 10000, offset: int = 0) -> list[CatalogFileRow]:
+        """Return files that have a specific tag."""
+        cur = self.conn.execute(
+            "SELECT f.* FROM files f "
+            "JOIN file_tags ft ON f.id = ft.file_id "
+            "WHERE ft.tag_id = ? ORDER BY f.path LIMIT ? OFFSET ?",
+            (tag_id, limit, offset),
+        )
+        return [self._row_to_catalog_file(row) for row in cur.fetchall()]
+
+    # ── Note operations ──────────────────────────────────────────────
+
+    def get_file_note(self, path: str) -> tuple[str, str] | None:
+        """Return (note, updated_at) for a file, or None."""
+        cur = self.conn.execute(
+            "SELECT fn.note, fn.updated_at FROM file_notes fn "
+            "JOIN files f ON fn.file_id = f.id WHERE f.path = ?",
+            (path,),
+        )
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else None
+
+    def set_file_note(self, path: str, note: str) -> None:
+        """Set or update a note for a file."""
+        cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        file_id = row[0]
+        now = utc_stamp()
+        self.conn.execute(
+            "INSERT INTO file_notes (file_id, note, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(file_id) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at",
+            (file_id, note, now),
+        )
+        self.conn.commit()
+
+    def delete_file_note(self, path: str) -> bool:
+        """Remove a note from a file. Returns True if deleted."""
+        cur = self.conn.execute(
+            "DELETE FROM file_notes WHERE file_id = (SELECT id FROM files WHERE path = ?)",
+            (path,),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_files_notes_bulk(self, paths: list[str]) -> set[str]:
+        """Return set of paths that have notes."""
+        if not paths:
+            return set()
+        result: set[str] = set()
+        chunk_size = 500
+        for i in range(0, len(paths), chunk_size):
+            chunk = paths[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self.conn.execute(
+                f"SELECT f.path FROM file_notes fn JOIN files f ON fn.file_id = f.id "  # noqa: S608
+                f"WHERE f.path IN ({placeholders})",
+                chunk,
+            )
+            for row in cur.fetchall():
+                result.add(row[0])
+        return result
+
+    # ── Rating operations ─────────────────────────────────────────────
+
+    def get_file_rating(self, path: str) -> int | None:
+        """Return rating (1-5) for a file, or None."""
+        cur = self.conn.execute(
+            "SELECT fr.rating FROM file_ratings fr "
+            "JOIN files f ON fr.file_id = f.id WHERE f.path = ?",
+            (path,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def set_file_rating(self, path: str, rating: int) -> None:
+        """Set a rating (1-5) for a file."""
+        cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            return
+        file_id = row[0]
+        self.conn.execute(
+            "INSERT INTO file_ratings (file_id, rating) VALUES (?, ?) "
+            "ON CONFLICT(file_id) DO UPDATE SET rating=excluded.rating",
+            (file_id, rating),
+        )
+        self.conn.commit()
+
+    def delete_file_rating(self, path: str) -> bool:
+        """Remove a rating from a file. Returns True if deleted."""
+        cur = self.conn.execute(
+            "DELETE FROM file_ratings WHERE file_id = (SELECT id FROM files WHERE path = ?)",
+            (path,),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_files_ratings_bulk(self, paths: list[str]) -> dict[str, int]:
+        """Return path -> rating dict for files that have ratings."""
+        if not paths:
+            return {}
+        result: dict[str, int] = {}
+        chunk_size = 500
+        for i in range(0, len(paths), chunk_size):
+            chunk = paths[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self.conn.execute(
+                f"SELECT f.path, fr.rating FROM file_ratings fr "  # noqa: S608
+                f"JOIN files f ON fr.file_id = f.id "
+                f"WHERE f.path IN ({placeholders})",
+                chunk,
+            )
+            for row in cur.fetchall():
+                result[row[0]] = row[1]
+        return result
 
     # ── Query operations ─────────────────────────────────────────────
 
