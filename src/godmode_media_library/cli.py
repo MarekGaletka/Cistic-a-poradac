@@ -496,14 +496,14 @@ def cmd_cloud(args: argparse.Namespace) -> int:
     return 0
 
 
-def _get_catalog(args: argparse.Namespace) -> Catalog:
+def _get_catalog(args: argparse.Namespace, *, exclusive: bool = False) -> Catalog:
     db_path = Path(args.catalog) if hasattr(args, "catalog") and args.catalog else default_catalog_path()
-    return Catalog(db_path)
+    return Catalog(db_path, exclusive=exclusive)
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
     roots = _parse_roots(args.roots)
-    catalog = _get_catalog(args)
+    catalog = _get_catalog(args, exclusive=True)
     with catalog:
         stats = incremental_scan(
             catalog,
@@ -571,7 +571,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 def cmd_catalog_import(args: argparse.Namespace) -> int:
     inventory_path = Path(args.inventory).expanduser().resolve()
-    catalog = _get_catalog(args)
+    catalog = _get_catalog(args, exclusive=True)
     with catalog:
         count = catalog.import_from_inventory_tsv(inventory_path)
     print(f"catalog={catalog.db_path}")
@@ -590,7 +590,7 @@ def cmd_catalog_export(args: argparse.Namespace) -> int:
 
 
 def cmd_metadata_extract(args: argparse.Namespace) -> int:
-    catalog = _get_catalog(args)
+    catalog = _get_catalog(args, exclusive=True)
     with catalog:
         if args.force:
             # Re-extract all
@@ -670,7 +670,7 @@ def cmd_metadata_diff(args: argparse.Namespace) -> int:
 
 
 def cmd_metadata_merge(args: argparse.Namespace) -> int:
-    catalog = _get_catalog(args)
+    catalog = _get_catalog(args, exclusive=True)
     with catalog:
         group_ids = [args.group] if args.group else catalog.get_all_duplicate_group_ids()
 

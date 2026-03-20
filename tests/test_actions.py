@@ -329,3 +329,82 @@ def test_promote_from_manifest_dry_run(tmp_path: Path):
     # Both files still exist since it's dry run
     assert primary.exists()
     assert quarantine.exists()
+
+
+# ── Rollback tests ──────────────────────────────────────────────────
+
+
+def test_apply_plan_rollback_on_error(tmp_path: Path):
+    """When apply_plan hits an unexpected error mid-way, already-moved files are rolled back."""
+    from unittest.mock import patch
+
+    from godmode_media_library.utils import sha256_file
+
+    # Create 3 identical file pairs
+    content = b"ROLLBACK_TEST" * 100
+    files = []
+    for i in range(3):
+        keep = tmp_path / f"keep_{i}" / "photo.jpg"
+        move = tmp_path / f"move_{i}" / "photo.jpg"
+        keep.parent.mkdir(parents=True)
+        move.parent.mkdir(parents=True)
+        keep.write_bytes(content)
+        move.write_bytes(content)
+        files.append((keep, move))
+
+    digest = sha256_file(files[0][0])
+
+    plan_path = tmp_path / "plan.tsv"
+    _create_plan_tsv(plan_path, [
+        (digest, str(len(content)), str(f[0]), str(f[1]), "test", "100.0", "50.0")
+        for f in files
+    ])
+
+    quarantine = tmp_path / "quarantine"
+    executed_log = tmp_path / "executed.tsv"
+    skipped_log = tmp_path / "skipped.tsv"
+
+    # Patch shutil.move to fail on the 3rd call
+    original_move = __import__("shutil").move
+    call_count = 0
+
+    def failing_move(src, dst):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 3:
+            raise PermissionError("Simulated disk error")
+        return original_move(src, dst)
+
+    with patch("godmode_media_library.actions.shutil.move", side_effect=failing_move):
+        result = apply_plan(plan_path, quarantine, executed_log, skipped_log, dry_run=False)
+
+    assert result.error is not None
+    assert result.rolled_back > 0
+    # The first two files that were moved should be restored
+    for _, move in files[:2]:
+        assert move.exists(), f"Rolled-back file should be restored: {move}"
+
+
+def test_apply_plan_result_has_rollback_fields(tmp_path: Path):
+    """ApplyResult includes rolled_back and error fields."""
+    from godmode_media_library.utils import sha256_file
+
+    content = b"FIELD_TEST" * 50
+    keep = tmp_path / "keep" / "photo.jpg"
+    move = tmp_path / "move" / "photo.jpg"
+    keep.parent.mkdir(parents=True)
+    move.parent.mkdir(parents=True)
+    keep.write_bytes(content)
+    move.write_bytes(content)
+
+    digest = sha256_file(keep)
+    plan_path = tmp_path / "plan.tsv"
+    _create_plan_tsv(plan_path, [
+        (digest, str(len(content)), str(keep), str(move), "test", "100.0", "50.0"),
+    ])
+
+    result = apply_plan(
+        plan_path, tmp_path / "q", tmp_path / "exec.tsv", tmp_path / "skip.tsv"
+    )
+    assert result.rolled_back == 0
+    assert result.error is None

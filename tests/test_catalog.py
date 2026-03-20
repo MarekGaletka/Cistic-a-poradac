@@ -329,3 +329,42 @@ def test_default_catalog_path() -> None:
     p = default_catalog_path()
     assert p.name == "catalog.db"
     assert str(p).endswith(".config/gml/catalog.db")
+
+
+# ── Exclusive locking ────────────────────────────────────────────────
+
+
+def test_exclusive_lock_prevents_second_open(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog.db"
+    cat1 = Catalog(db_path, exclusive=True)
+    cat1.open(exclusive=True)
+    try:
+        cat2 = Catalog(db_path, exclusive=True)
+        with pytest.raises(RuntimeError, match="Another process"):
+            cat2.open(exclusive=True)
+    finally:
+        cat1.close()
+
+
+def test_exclusive_lock_released_on_close(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog.db"
+    cat1 = Catalog(db_path, exclusive=True)
+    cat1.open(exclusive=True)
+    cat1.close()
+
+    # Should succeed now that lock is released
+    cat2 = Catalog(db_path, exclusive=True)
+    cat2.open(exclusive=True)
+    cat2.close()
+
+
+def test_non_exclusive_open_works_concurrently(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog.db"
+    cat1 = Catalog(db_path)
+    cat1.open()
+    try:
+        cat2 = Catalog(db_path)
+        cat2.open()
+        cat2.close()
+    finally:
+        cat1.close()

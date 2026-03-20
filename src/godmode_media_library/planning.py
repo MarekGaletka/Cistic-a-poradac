@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .catalog import CatalogFileRow
 from .models import DuplicateRow, FileRecord, ManualReviewRow, PlanPolicy, PlanRow
 from .utils import path_startswith, write_tsv
 
@@ -18,11 +19,16 @@ def _origin_time(rec: FileRecord) -> float:
     return rec.mtime
 
 
-def _score(rec: FileRecord, policy: PlanPolicy, catalog: Catalog | None = None) -> float:
+def _score(
+    rec: FileRecord,
+    policy: PlanPolicy,
+    file_cache: dict[str, CatalogFileRow] | None = None,
+    catalog: Catalog | None = None,
+) -> float:
     """Score a file for primary selection. Higher score = more likely to be kept.
 
-    When a catalog is provided, uses metadata richness, resolution, and bitrate
-    for much more informed scoring. Without catalog, falls back to xattr count.
+    Uses file_cache (batch-loaded) for O(1) lookup. Falls back to catalog
+    individual queries only when cache is not provided.
     """
     score = 0.0
 
@@ -35,32 +41,38 @@ def _score(rec: FileRecord, policy: PlanPolicy, catalog: Catalog | None = None) 
     if policy.prefer_earliest_origin_time:
         score += -_origin_time(rec) / 1_000_000_000.0
 
-    # 3. Metadata richness — comprehensive ExifTool-based scoring
+    # 3. Metadata richness + resolution + bitrate
     if policy.prefer_richer_metadata:
-        if catalog is not None:
-            richness = catalog.get_metadata_richness(str(rec.path))
+        file_row = None
+        path_str = str(rec.path)
+
+        # Try batch cache first (O(1)), then individual query
+        if file_cache is not None:
+            file_row = file_cache.get(path_str)
+        elif catalog is not None:
+            file_row = catalog.get_file_by_path(path_str)
+
+        if file_row is not None:
+            # Metadata richness from ExifTool scoring
+            richness = getattr(file_row, "metadata_richness", None)
             if richness is not None:
-                # Up to ~500 points for max richness (100 * 5.0)
                 score += richness * 5.0
             else:
-                # Fallback when no ExifTool metadata available
                 score += rec.meaningful_xattr_count * 3.0
 
-            # 4. Resolution preference — higher resolution = better quality
-            file_row = catalog.get_file_by_path(str(rec.path))
-            if file_row:
-                w = file_row.width or 0
-                h = file_row.height or 0
-                megapixels = (w * h) / 1_000_000
-                score += min(megapixels, 50.0)  # Up to 50 pts
+            # Resolution preference — higher resolution = better quality
+            w = file_row.width or 0
+            h = file_row.height or 0
+            megapixels = (w * h) / 1_000_000
+            score += min(megapixels, 50.0)
 
-                # 5. Bitrate preference for video/audio
-                if file_row.bitrate:
-                    score += min(file_row.bitrate / 1_000_000, 30.0)  # Up to 30 pts for Mbps
+            # Bitrate preference for video/audio
+            if file_row.bitrate:
+                score += min(file_row.bitrate / 1_000_000, 30.0)
         else:
             score += rec.meaningful_xattr_count * 3.0
 
-    # 6. Path length penalty — shorter paths are slightly preferred (tiebreaker)
+    # 4. Path length penalty — shorter paths are slightly preferred (tiebreaker)
     score += -(len(str(rec.path)) / 10_000.0)
 
     return score
@@ -75,6 +87,12 @@ def create_plan(
     by_hash: dict[str, list[DuplicateRow]] = defaultdict(list)
     for row in duplicates:
         by_hash[row.digest].append(row)
+
+    # Batch-load all file rows from catalog to avoid N+1 queries
+    file_cache: dict[str, CatalogFileRow] | None = None
+    if catalog is not None:
+        all_paths = [str(row.path) for row in duplicates]
+        file_cache = catalog.get_files_by_paths(all_paths)
 
     plan: list[PlanRow] = []
     manual: list[ManualReviewRow] = []
@@ -114,7 +132,7 @@ def create_plan(
             continue
 
         scored = sorted(
-            ((rec, _score(rec, policy, catalog)) for rec in group_recs),
+            ((rec, _score(rec, policy, file_cache=file_cache, catalog=catalog)) for rec in group_recs),
             key=lambda x: x[1],
             reverse=True,
         )

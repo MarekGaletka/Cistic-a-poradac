@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +60,9 @@ CREATE INDEX IF NOT EXISTS idx_files_ext       ON files(ext);
 CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size);
 CREATE INDEX IF NOT EXISTS idx_files_phash     ON files(phash);
 CREATE INDEX IF NOT EXISTS idx_files_richness  ON files(metadata_richness);
+CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
+CREATE INDEX IF NOT EXISTS idx_files_birthtime ON files(birthtime);
+CREATE INDEX IF NOT EXISTS idx_files_date_orig ON files(date_original);
 
 CREATE TABLE IF NOT EXISTS file_metadata (
     file_id      INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
@@ -128,6 +133,7 @@ class CatalogFileRow:
     camera_model: str | None = None
     gps_latitude: float | None = None
     gps_longitude: float | None = None
+    metadata_richness: float | None = None
 
 
 @dataclass
@@ -145,16 +151,30 @@ class ScanStats:
 class Catalog:
     """SQLite-backed persistent catalog."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, exclusive: bool = False) -> None:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
+        self._lock_fd: int | None = None
+        self._exclusive = exclusive
 
     @property
     def db_path(self) -> Path:
         return self._db_path
 
-    def open(self) -> None:
+    def open(self, exclusive: bool = False) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        if exclusive:
+            lock_path = self._db_path.with_suffix(".lock")
+            self._lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+            try:
+                fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(self._lock_fd)
+                self._lock_fd = None
+                raise RuntimeError(
+                    f"Another process holds an exclusive lock on {self._db_path}. "
+                    "Wait for it to finish or remove the lock file."
+                ) from None
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -220,9 +240,13 @@ class Catalog:
         if self._conn:
             self._conn.close()
             self._conn = None
+        if self._lock_fd is not None:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            os.close(self._lock_fd)
+            self._lock_fd = None
 
     def __enter__(self) -> Catalog:
-        self.open()
+        self.open(exclusive=self._exclusive)
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -294,6 +318,22 @@ class Catalog:
         if row is None:
             return None
         return self._row_to_catalog_file(row)
+
+    def get_files_by_paths(self, paths: list[str]) -> dict[str, CatalogFileRow]:
+        """Batch-load multiple files by path in a single query. Returns path→row dict."""
+        if not paths:
+            return {}
+        result: dict[str, CatalogFileRow] = {}
+        # Process in chunks of 500 to avoid SQLite variable limit
+        chunk_size = 500
+        for i in range(0, len(paths), chunk_size):
+            chunk = paths[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self.conn.execute(f"SELECT * FROM files WHERE path IN ({placeholders})", chunk)  # noqa: S608
+            for row in cur.fetchall():
+                file_row = self._row_to_catalog_file(row)
+                result[file_row.path] = file_row
+        return result
 
     def get_file_mtime_size(self, path: str) -> tuple[float, int] | None:
         """Fast lookup: returns (mtime, size) or None."""
@@ -664,6 +704,7 @@ class Catalog:
             camera_model=row[25] if len(row) > 25 else None,
             gps_latitude=row[26] if len(row) > 26 else None,
             gps_longitude=row[27] if len(row) > 27 else None,
+            metadata_richness=row[28] if len(row) > 28 else None,
         )
 
 
