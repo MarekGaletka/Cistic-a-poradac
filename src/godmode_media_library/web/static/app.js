@@ -49,7 +49,7 @@ async function showFileDetail(filePath) {
   // Create overlay immediately with loading state
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
-  overlay.innerHTML = `<div class="modal"><button class="modal-close" onclick="closeModal()">&times;</button><div class="loading">Loading...</div></div>`;
+  overlay.innerHTML = `<div class="modal"><button class="modal-close" onclick="closeModal()">&times;</button><div class="loading"><div class="spinner"></div>Loading...</div></div>`;
   overlay.addEventListener("click", e => { if (e.target === overlay) closeModal(); });
   document.body.appendChild(overlay);
 
@@ -139,7 +139,7 @@ const pages = { dashboard: renderDashboard, files: renderFiles, duplicates: rend
 
 function navigate(page) {
   $$("nav a").forEach(a => a.classList.toggle("active", a.dataset.page === page));
-  content().innerHTML = '<div class="loading">Loading...</div>';
+  content().innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
   if (pages[page]) pages[page]();
 }
 
@@ -198,7 +198,7 @@ async function renderDashboard() {
 
     content().innerHTML = html;
   } catch (e) {
-    content().innerHTML = `<div class="empty">No catalog data. Run <code>gml scan --roots /path</code> first.</div>`;
+    content().innerHTML = `<div class="empty"><div class="empty-icon">&#128202;</div><div class="empty-text">No catalog data yet</div><div class="empty-hint">Run <code>gml scan --roots /path</code> or use the Pipeline page to start scanning.</div></div>`;
   }
 }
 
@@ -253,7 +253,7 @@ async function loadFiles() {
   try {
     const data = await api(q);
     if (!data.files.length) {
-      $("#files-table").innerHTML = '<div class="empty">No files found.</div>';
+      $("#files-table").innerHTML = '<div class="empty"><div class="empty-icon">&#128269;</div><div class="empty-text">No files match your filters</div><div class="empty-hint">Try broadening your search or clearing some filters.</div></div>';
       return;
     }
     let t = `<table><tr><th>Name</th><th>Ext</th><th>Size</th><th>Camera</th><th>Date</th><th>GPS</th><th>Resolution</th></tr>`;
@@ -299,7 +299,7 @@ async function renderDuplicates() {
   try {
     const data = await api("/duplicates?limit=50");
     if (!data.groups.length) {
-      content().innerHTML = '<h2>Duplicates</h2><div class="empty">No duplicate groups found.</div>';
+      content().innerHTML = '<h2>Duplicates</h2><div class="empty"><div class="empty-icon">&#9989;</div><div class="empty-text">No duplicates found</div><div class="empty-hint">Your library has no duplicate files. Great!</div></div>';
       return;
     }
     let html = `<h2>Duplicates <span style="color:var(--text-muted);font-size:14px">(${data.total_groups} groups)</span></h2>`;
@@ -376,7 +376,7 @@ async function renderSimilar() {
   try {
     const data = await api("/similar?threshold=10&limit=50");
     if (!data.pairs.length) {
-      content().innerHTML = '<h2>Similar Images</h2><div class="empty">No similar pairs found.</div>';
+      content().innerHTML = '<h2>Similar Images</h2><div class="empty"><div class="empty-icon">&#127912;</div><div class="empty-text">No similar pairs found</div><div class="empty-hint">Try increasing the threshold for looser matching.</div></div>';
       return;
     }
     let html = `<h2>Similar Images <span style="color:var(--text-muted);font-size:14px">(${data.total_pairs} pairs)</span></h2>`;

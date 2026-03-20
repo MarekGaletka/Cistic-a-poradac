@@ -478,7 +478,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .gps-link:hover { text-decoration: underline; }
 
-/* ── Loading ────────────────────────────────────────── */
+/* ── Loading & Empty ────────────────────────────────── */
 
 .loading {
   text-align: center;
@@ -486,12 +486,32 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   color: var(--text-muted);
 }
 
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 12px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .empty {
   text-align: center;
   padding: 40px;
   color: var(--text-muted);
-  font-style: italic;
 }
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.empty-text { font-size: 14px; margin-bottom: 4px; }
+.empty-hint { font-size: 12px; color: var(--text-muted); opacity: 0.7; }
 
 /* ── Responsive ────────────────────────────────────── */
 
