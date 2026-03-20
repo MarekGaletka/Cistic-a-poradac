@@ -120,7 +120,7 @@ async function renderSettingsContent() {
   if (doctorContainer) doctor.render(doctorContainer);
 }
 
-// ── Duplicate badge ─────────────────────────────────
+// ── Nav badges ──────────────────────────────────────
 
 async function updateDuplicateBadge() {
   try {
@@ -137,6 +137,34 @@ async function updateDuplicateBadge() {
     }
   } catch {
     // Silent fail — badge is optional
+  }
+}
+
+async function updateNavBadges() {
+  try {
+    const { api } = await import("./api.js");
+    const [stats, similar] = await Promise.all([
+      api("/stats").catch(() => null),
+      api("/similar?threshold=10&limit=1").catch(() => null),
+    ]);
+
+    // Files badge
+    const filesBadge = $("#files-badge");
+    if (filesBadge && stats && stats.total_files > 0) {
+      filesBadge.textContent = stats.total_files > 999
+        ? Math.round(stats.total_files / 1000) + "k"
+        : stats.total_files;
+      filesBadge.classList.remove("hidden");
+    }
+
+    // Similar badge
+    const similarBadge = $("#similar-badge");
+    if (similarBadge && similar && similar.total_pairs > 0) {
+      similarBadge.textContent = similar.total_pairs;
+      similarBadge.classList.remove("hidden");
+    }
+  } catch {
+    // Silent fail
   }
 }
 
@@ -198,8 +226,9 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "dashboard"));
   navigate(location.hash.slice(1) || "dashboard");
 
-  // Update duplicate badge
+  // Update nav badges
   updateDuplicateBadge();
+  updateNavBadges();
 });
 
 // ── Drag & drop folder support ──────────────────────
