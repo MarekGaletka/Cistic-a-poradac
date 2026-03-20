@@ -335,45 +335,70 @@ async function renderDuplicates() {
 
 async function showDiff(groupId) {
   const el = $("#diff-detail");
-  el.innerHTML = '<div class="loading">Loading diff...</div>';
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Loading diff...</div>';
   try {
-    const data = await api(`/duplicates/${groupId}/diff`);
+    const [groupData, diffData] = await Promise.all([
+      api(`/duplicates/${groupId}`),
+      api(`/duplicates/${groupId}/diff`),
+    ]);
+
+    const files = groupData.files || [];
+    const scores = diffData.scores || {};
+
+    // Find the winner (highest richness score)
+    let winnerPath = null;
+    let winnerScore = -1;
+    for (const [path, score] of Object.entries(scores)) {
+      if (score > winnerScore) { winnerScore = score; winnerPath = path; }
+    }
+
     let html = `<h2 style="margin-top:20px">Metadata Diff — ${groupId.slice(0,12)}</h2>`;
 
-    if (data.scores) {
-      html += '<div class="diff-section"><h3>Richness Scores</h3>';
-      for (const [path, score] of Object.entries(data.scores)) {
-        html += `<div class="tag-row"><span class="tag-name">${escapeHtml(fileName(path))}</span><span class="tag-value">${Number(score).toFixed(1)} pts</span></div>`;
+    // Side-by-side file comparison with thumbnails
+    html += '<div class="dup-compare">';
+    for (const f of files) {
+      const path = f.path;
+      const score = scores[path];
+      const isWinner = path === winnerPath && files.length > 1;
+      html += `<div class="dup-column ${isWinner ? "dup-winner" : ""}">`;
+      html += `<img class="dup-thumb" src="/api/thumbnail${path}?size=250" onerror="this.outerHTML='<div class=\\'dup-thumb-placeholder\\'>&#128444;</div>'" alt="">`;
+      html += `<div class="dup-filename">${escapeHtml(fileName(path))}</div>`;
+      if (score != null) {
+        const level = score >= 30 ? "high" : score >= 15 ? "medium" : "low";
+        html += `<span class="richness-badge ${level}">${Number(score).toFixed(1)} pts${isWinner ? " &#9733;" : ""}</span>`;
       }
-      html += "</div>";
+      html += `<div class="dup-path" title="${escapeHtml(path)}">${escapeHtml(path)}</div>`;
+      html += '</div>';
     }
+    html += '</div>';
 
-    if (Object.keys(data.unanimous).length) {
-      html += '<div class="diff-section"><h3 class="unanimous">Unanimous (' + Object.keys(data.unanimous).length + ' tags)</h3>';
-      for (const [tag, val] of Object.entries(data.unanimous)) {
+    // Diff sections with collapsible details
+    if (Object.keys(diffData.unanimous).length) {
+      html += `<details class="diff-section"><summary class="diff-toggle unanimous">Unanimous (${Object.keys(diffData.unanimous).length} tags)</summary>`;
+      for (const [tag, val] of Object.entries(diffData.unanimous)) {
         html += `<div class="tag-row"><span class="tag-name">${escapeHtml(tag)}</span><span class="tag-value">${escapeHtml(JSON.stringify(val))}</span></div>`;
       }
-      html += "</div>";
+      html += "</details>";
     }
 
-    if (Object.keys(data.partial).length) {
-      html += '<div class="diff-section"><h3 class="partial">Partial (' + Object.keys(data.partial).length + ' tags — merge candidates)</h3>';
-      for (const [tag, sources] of Object.entries(data.partial)) {
+    if (Object.keys(diffData.partial).length) {
+      html += `<details class="diff-section" open><summary class="diff-toggle partial">Partial (${Object.keys(diffData.partial).length} tags — merge candidates)</summary>`;
+      for (const [tag, sources] of Object.entries(diffData.partial)) {
         for (const [path, val] of Object.entries(sources)) {
           html += `<div class="tag-row"><span class="tag-name">${escapeHtml(tag)}</span><span class="tag-value">${escapeHtml(fileName(path))}: ${escapeHtml(JSON.stringify(val))}</span></div>`;
         }
       }
-      html += "</div>";
+      html += "</details>";
     }
 
-    if (Object.keys(data.conflicts).length) {
-      html += '<div class="diff-section"><h3 class="conflicts">Conflicts (' + Object.keys(data.conflicts).length + ' tags)</h3>';
-      for (const [tag, sources] of Object.entries(data.conflicts)) {
+    if (Object.keys(diffData.conflicts).length) {
+      html += `<details class="diff-section" open><summary class="diff-toggle conflicts">Conflicts (${Object.keys(diffData.conflicts).length} tags)</summary>`;
+      for (const [tag, sources] of Object.entries(diffData.conflicts)) {
         for (const [path, val] of Object.entries(sources)) {
           html += `<div class="tag-row"><span class="tag-name">${escapeHtml(tag)}</span><span class="tag-value">${escapeHtml(fileName(path))}: ${escapeHtml(JSON.stringify(val))}</span></div>`;
         }
       }
-      html += "</div>";
+      html += "</details>";
     }
 
     el.innerHTML = html;

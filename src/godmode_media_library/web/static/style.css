@@ -262,6 +262,85 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .tag-name { color: var(--accent); min-width: 220px; }
 .tag-value { color: var(--text); }
 
+.diff-toggle {
+  font-size: 14px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+}
+
+.diff-toggle::-webkit-details-marker { display: none; }
+.diff-toggle::before { content: "▶ "; font-size: 10px; }
+details[open] > .diff-toggle::before { content: "▼ "; }
+
+.diff-toggle.unanimous { background: rgba(63,185,80,0.15); color: var(--green); }
+.diff-toggle.partial { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.diff-toggle.conflicts { background: rgba(248,81,73,0.15); color: var(--red); }
+
+/* ── Duplicate compare ─────────────────────────────── */
+
+.dup-compare {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+
+.dup-column {
+  flex: 1;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.dup-column.dup-winner {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px var(--green);
+}
+
+.dup-thumb {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #000;
+  margin-bottom: 8px;
+}
+
+.dup-thumb-placeholder {
+  width: 100%;
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.dup-filename {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.dup-path {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Deps ───────────────────────────────────────────── */
 
 .dep-item {
