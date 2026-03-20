@@ -407,6 +407,30 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print("Web UI requires: pip install godmode-media-library[web]")
+        print("  or: pip install fastapi uvicorn[standard]")
+        return 2
+
+    from .web.app import create_app
+
+    catalog_path = Path(args.catalog) if args.catalog else None
+    app = create_app(catalog_path=catalog_path)
+
+    if not args.no_browser:
+        import threading
+        import webbrowser
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://{args.host}:{args.port}")).start()
+
+    print("GOD MODE Media Library — Web UI")
+    print(f"http://{args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 def cmd_auto(args: argparse.Namespace) -> int:
     from .pipeline import PipelineConfig, run_pipeline
 
@@ -758,6 +782,13 @@ def build_parser() -> argparse.ArgumentParser:
     pauto.add_argument("--no-interactive", action="store_true", help="Skip confirmation prompts")
     pauto.add_argument("--skip", nargs="*", default=[], help="Steps to skip: scan, extract, diff, merge")
     pauto.set_defaults(func=cmd_auto)
+
+    psrv = sub.add_parser("serve", help="Start web UI server")
+    psrv.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    psrv.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+    psrv.add_argument("--catalog", default=None, help="Catalog DB path")
+    psrv.add_argument("--no-browser", action="store_true", help="Don't open browser automatically")
+    psrv.set_defaults(func=cmd_serve)
 
     # ── Catalog commands ─────────────────────────────────────────────
 
