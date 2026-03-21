@@ -93,29 +93,33 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
         return await call_next(request)
 
-    # Rate limiting middleware
-    @app.middleware("http")
-    async def rate_limit_middleware(request: Request, call_next):
-        if not request.url.path.startswith("/api/"):
+    # Rate limiting middleware — only active when GML_RATE_LIMIT is set
+    # (disabled by default for local/desktop use)
+    rate_limit_max = int(os.environ.get("GML_RATE_LIMIT", "0"))
+
+    if rate_limit_max > 0:
+
+        @app.middleware("http")
+        async def rate_limit_middleware(request: Request, call_next):
+            if not request.url.path.startswith("/api/"):
+                return await call_next(request)
+
+            client_ip = request.client.host if request.client else "unknown"
+            now = time.monotonic()
+
+            hits = _rate_limit_hits[client_ip]
+            cutoff = now - _RATE_LIMIT_WINDOW
+            _rate_limit_hits[client_ip] = [t for t in hits if t > cutoff]
+
+            if len(_rate_limit_hits[client_ip]) >= rate_limit_max:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded. Try again later."},
+                    headers={"Retry-After": str(int(_RATE_LIMIT_WINDOW))},
+                )
+
+            _rate_limit_hits[client_ip].append(now)
             return await call_next(request)
-
-        client_ip = request.client.host if request.client else "unknown"
-        now = time.monotonic()
-
-        # Clean old entries and check limit
-        hits = _rate_limit_hits[client_ip]
-        cutoff = now - _RATE_LIMIT_WINDOW
-        _rate_limit_hits[client_ip] = [t for t in hits if t > cutoff]
-
-        if len(_rate_limit_hits[client_ip]) >= _RATE_LIMIT_MAX:
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Rate limit exceeded. Try again later."},
-                headers={"Retry-After": str(int(_RATE_LIMIT_WINDOW))},
-            )
-
-        _rate_limit_hits[client_ip].append(now)
-        return await call_next(request)
 
     # Security headers
     @app.middleware("http")
