@@ -20,6 +20,7 @@ import * as doctor from "./pages/doctor.js";
 import * as recovery from "./pages/recovery.js";
 import * as scenarios from "./pages/scenarios.js";
 import * as reorganize from "./pages/reorganize.js";
+import * as gallery from "./pages/gallery.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -30,6 +31,7 @@ const pages = {
   similar,
   timeline,
   map,
+  gallery,
   recovery,
   scenarios,
   reorganize,
