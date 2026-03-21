@@ -18,6 +18,7 @@ import * as map from "./pages/map.js";
 import * as pipeline from "./pages/pipeline.js";
 import * as doctor from "./pages/doctor.js";
 import * as recovery from "./pages/recovery.js";
+import * as scenarios from "./pages/scenarios.js";
 import * as reorganize from "./pages/reorganize.js";
 
 // ── Router ──────────────────────────────────────────
@@ -30,6 +31,7 @@ const pages = {
   timeline,
   map,
   recovery,
+  scenarios,
   reorganize,
 };
 

@@ -5266,3 +5266,465 @@ button:focus-visible, a:focus-visible {
   .recovery-card-grid { grid-template-columns: 1fr; }
   .recovery-actions-bar { flex-wrap: wrap; }
 }
+
+/* ── Scenarios page ───────────────────────────────── */
+
+.scenarios-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.scenarios-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.scenarios-header h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.scenarios-subtitle {
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+  margin: 0 0 12px;
+}
+
+/* Scenario cards grid */
+.scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.scenario-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 20px;
+  position: relative;
+  transition: box-shadow 0.2s, transform 0.15s;
+}
+
+.scenario-card:hover {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+.scenario-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.scenario-card-icon {
+  font-size: 1.8rem;
+}
+
+.scenario-card-title {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.scenario-card-desc {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.scenario-card-steps {
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+  letter-spacing: 1px;
+}
+
+.scenario-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.scenario-card-meta {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+.scenario-trigger-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.scenario-run-btn {
+  width: 100%;
+}
+
+/* Menu */
+.scenario-card-menu {
+  position: relative;
+}
+
+.scenario-menu-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.scenario-menu-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.scenario-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.scenario-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  color: var(--color-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.scenario-menu-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.scenario-menu-item.danger {
+  color: #f85149;
+}
+
+/* Template cards */
+.scenarios-templates-section {
+  margin-top: 16px;
+  padding-top: 24px;
+  border-top: 1px solid var(--color-border);
+}
+
+.scenarios-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.scenario-template-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: var(--color-bg-secondary);
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  transition: border-color 0.2s;
+}
+
+.scenario-template-card:hover {
+  border-color: var(--color-accent);
+  border-style: solid;
+}
+
+.scenario-template-card .scenario-card-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.scenario-template-card .scenario-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.scenario-template-card h4 {
+  margin: 0 0 4px;
+  font-size: 0.88rem;
+}
+
+.scenario-template-card p {
+  margin: 0 0 4px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.scenario-step-count {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.scenario-use-template {
+  flex-shrink: 0;
+}
+
+/* Editor overlay */
+.scenario-editor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scenario-editor-overlay.hidden {
+  display: none;
+}
+
+.scenario-editor {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+}
+
+.scenario-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.scenario-editor-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.scenario-editor-close {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.scenario-editor-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.scenario-editor-section {
+  margin-bottom: 16px;
+}
+
+.scenario-editor-section > label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.scenario-editor-row {
+  display: flex;
+  gap: 20px;
+}
+
+.scenario-editor-row > .scenario-editor-section {
+  flex: 1;
+}
+
+/* Icon picker */
+.scenario-icon-picker,
+.scenario-color-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.scenario-icon-option {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.scenario-icon-option:hover {
+  background: var(--color-bg-hover);
+}
+
+.scenario-icon-option.active {
+  border-color: var(--color-accent);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.scenario-color-option {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.scenario-color-option:hover {
+  transform: scale(1.15);
+}
+
+.scenario-color-option.active {
+  border-color: var(--color-text);
+}
+
+/* Trigger options */
+.scenario-trigger-options {
+  display: flex;
+  gap: 12px;
+}
+
+.scenario-trigger-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: border-color 0.15s;
+}
+
+.scenario-trigger-option:hover {
+  border-color: var(--color-accent);
+}
+
+/* Steps list */
+.scenario-steps-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.scenario-steps-header label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.scenario-add-step {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.scenario-add-step select {
+  max-width: 200px;
+  font-size: 0.8rem;
+}
+
+.scenario-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scenario-step-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  transition: opacity 0.2s;
+}
+
+.scenario-step-item.disabled {
+  opacity: 0.45;
+}
+
+.scenario-step-number {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.scenario-step-icon {
+  font-size: 1.1rem;
+}
+
+.scenario-step-name {
+  flex: 1;
+  font-size: 0.85rem;
+}
+
+.scenario-step-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.scenario-no-steps {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  padding: 20px;
+}
+
+/* Editor footer */
+.scenario-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .scenarios-grid { grid-template-columns: 1fr; }
+  .scenarios-template-grid { grid-template-columns: 1fr; }
+  .scenarios-header { flex-direction: column; gap: 12px; }
+  .scenario-editor { width: 95%; }
+  .scenario-editor-row { flex-direction: column; gap: 0; }
+  .scenario-trigger-options { flex-direction: column; gap: 6px; }
+}
