@@ -61,6 +61,14 @@ export function navigate(page) {
 // ── Settings panel ──────────────────────────────────
 
 let _settingsRendered = false;
+let _activeSettingsTab = "pipeline";
+
+const _settingsTabs = [
+  { id: "pipeline", icon: "\u{1F527}", label: t("settings.pipeline_section") },
+  { id: "dedup", icon: "\u{1F4CB}", label: t("dedup.rules_title") },
+  { id: "system", icon: "\u{1F4BB}", label: t("settings.doctor_section") },
+  { id: "about", icon: "\u2139\uFE0F", label: t("settings.about_section") },
+];
 
 function openSettingsPanel() {
   const panel = $("#settings-panel");
@@ -72,7 +80,8 @@ function openSettingsPanel() {
   if (overlay) overlay.classList.remove("hidden");
 
   if (!_settingsRendered) {
-    renderSettingsContent();
+    renderSettingsTabs();
+    switchSettingsTab(_activeSettingsTab);
     _settingsRendered = true;
   }
 }
@@ -87,45 +96,62 @@ function closeSettingsPanel() {
   if (overlay) overlay.classList.add("hidden");
 }
 
-async function renderSettingsContent() {
+function renderSettingsTabs() {
+  const tabsContainer = $("#settings-tabs");
+  if (!tabsContainer) return;
+
+  tabsContainer.innerHTML = _settingsTabs.map(tab =>
+    `<button class="settings-tab${tab.id === _activeSettingsTab ? " active" : ""}" data-tab="${tab.id}" role="tab" aria-selected="${tab.id === _activeSettingsTab}">${tab.icon} ${tab.label}</button>`
+  ).join("");
+
+  tabsContainer.querySelectorAll(".settings-tab").forEach(btn => {
+    btn.addEventListener("click", () => switchSettingsTab(btn.dataset.tab));
+  });
+}
+
+async function switchSettingsTab(tabId) {
+  _activeSettingsTab = tabId;
   const container = $("#settings-panel-content");
   if (!container) return;
 
-  let html = "";
+  // Update tab styles
+  $$(".settings-tab").forEach(btn => {
+    const isActive = btn.dataset.tab === tabId;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive);
+  });
 
-  // Pipeline section
-  html += `<div class="settings-section">
-    <h4 class="settings-section-title">${t("settings.pipeline_section")}</h4>
-    <div id="settings-pipeline"></div>
-  </div>`;
+  // Render tab content
+  container.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
 
-  // Dedup rules section
-  html += `<div class="settings-section">
-    <h4 class="settings-section-title">${t("dedup.rules_title")}</h4>
-    <div id="settings-dedup-rules"></div>
-  </div>`;
-
-  // Doctor section
-  html += `<div class="settings-section">
-    <h4 class="settings-section-title">${t("settings.doctor_section")}</h4>
-    <div id="settings-doctor"></div>
-  </div>`;
-
-  // About section
-  html += `<div class="settings-section">
-    <h4 class="settings-section-title">${t("settings.about_section")}</h4>
-    <p style="font-size:13px;color:var(--text-muted);line-height:1.5">${t("settings.about_text")}</p>
-  </div>`;
-
-  container.innerHTML = html;
-
-  // Render pipeline, dedup rules, and doctor into their containers
-  const pipelineContainer = $("#settings-pipeline");
-  const dedupContainer = $("#settings-dedup-rules");
-  const doctorContainer = $("#settings-doctor");
-  if (pipelineContainer) pipeline.render(pipelineContainer);
-  if (dedupContainer) renderDedupRules(dedupContainer);
-  if (doctorContainer) doctor.render(doctorContainer);
+  switch (tabId) {
+    case "pipeline":
+      container.innerHTML = '<div id="settings-pipeline"></div>';
+      pipeline.render($("#settings-pipeline"));
+      break;
+    case "dedup":
+      container.innerHTML = '<div id="settings-dedup-rules"></div>';
+      renderDedupRules($("#settings-dedup-rules"));
+      break;
+    case "system":
+      container.innerHTML = '<div id="settings-doctor"></div>';
+      doctor.render($("#settings-doctor"));
+      break;
+    case "about":
+      container.innerHTML = `
+        <div class="settings-about">
+          <div class="settings-about-logo">GOD MODE</div>
+          <p class="settings-about-subtitle">Media Library</p>
+          <p class="settings-about-version">v0.1.0</p>
+          <p class="settings-about-desc">${t("settings.about_text")}</p>
+          <div class="settings-about-links">
+            <span class="settings-about-link">\u{1F4E6} Python + FastAPI</span>
+            <span class="settings-about-link">\u{1F3A8} Vanilla JS</span>
+            <span class="settings-about-link">\u{1F5C3}\uFE0F SQLite</span>
+          </div>
+        </div>`;
+      break;
+  }
 }
 
 async function renderDedupRules(container) {
