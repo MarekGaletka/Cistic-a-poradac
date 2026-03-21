@@ -704,13 +704,53 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
 
     ext = full_path.suffix.lower()
     image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif", ".webp", ".heic", ".heif"}
-    if ext not in image_exts:
-        raise HTTPException(status_code=400, detail="Not an image file")
+    video_exts = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp"}
+
+    if ext not in image_exts and ext not in video_exts:
+        raise HTTPException(status_code=400, detail="Not a supported media file")
 
     try:
         from PIL import Image
     except ImportError:
         raise HTTPException(status_code=500, detail="Pillow not installed") from None
+
+    # Video thumbnail: extract a frame with ffmpeg
+    if ext in video_exts:
+        try:
+            import subprocess
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", str(full_path),
+                    "-ss", "00:00:01", "-frames:v", "1",
+                    "-vf", f"scale={size}:{size}:force_original_aspect_ratio=decrease",
+                    tmp_path,
+                ],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode != 0 or not Path(tmp_path).exists():
+                raise HTTPException(status_code=500, detail="Failed to extract video frame")
+
+            with Image.open(tmp_path) as img:
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=80)
+                buf.seek(0)
+            Path(tmp_path).unlink(missing_ok=True)
+            return StreamingResponse(
+                buf,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("Video thumbnail failed for %s: %s", full_path, e)
+            raise HTTPException(status_code=500, detail="Failed to generate video thumbnail") from e
 
     if ext in (".heic", ".heif"):
         try:

@@ -753,7 +753,32 @@ button.small {
   border-radius: var(--radius);
 }
 
-/* Hover overlay */
+/* Always-visible file info below thumbnail */
+.grid-file-info {
+  padding: 8px 10px 10px;
+  min-height: 44px;
+}
+
+.grid-file-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.grid-file-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Legacy hover overlay (kept for backwards compat) */
 .grid-hover-overlay {
   position: absolute;
   bottom: 0;
@@ -826,6 +851,30 @@ button.small {
   font-family: var(--mono);
   color: var(--text-muted);
   text-transform: uppercase;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.grid-icon-styled {
+  flex-direction: column;
+  gap: 6px;
+  background: linear-gradient(145deg, var(--surface), var(--bg));
+}
+
+.grid-icon-emoji {
+  font-size: 36px;
+  font-family: var(--font);
+}
+
+.grid-icon-ext {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  letter-spacing: 1px;
   font-weight: 700;
 }
 

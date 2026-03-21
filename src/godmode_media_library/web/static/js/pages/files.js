@@ -554,17 +554,41 @@ function appendItems(filesEl, newFiles) {
   }
 }
 
+const FILE_TYPE_ICONS = {
+  // Audio
+  mp3: "\uD83C\uDFB5", wav: "\uD83C\uDFB5", flac: "\uD83C\uDFB5", aac: "\uD83C\uDFB5",
+  ogg: "\uD83C\uDFB5", wma: "\uD83C\uDFB5", m4a: "\uD83C\uDFB5", opus: "\uD83C\uDFB5",
+  // Documents
+  pdf: "\uD83D\uDCC4", doc: "\uD83D\uDCC4", docx: "\uD83D\uDCC4", rtf: "\uD83D\uDCC4",
+  xls: "\uD83D\uDCCA", xlsx: "\uD83D\uDCCA", ods: "\uD83D\uDCCA", csv: "\uD83D\uDCCA",
+  ppt: "\uD83D\uDCCA", pptx: "\uD83D\uDCCA", odp: "\uD83D\uDCCA",
+  // Code/Text
+  py: "\uD83D\uDC0D", js: "\uD83D\uDFE8", ts: "\uD83D\uDD35", html: "\uD83C\uDF10", css: "\uD83C\uDFA8",
+  json: "{ }", xml: "\uD83D\uDCDC", yaml: "\uD83D\uDCDC", yml: "\uD83D\uDCDC", toml: "\uD83D\uDCDC",
+  sh: "\uD83D\uDCBB", sql: "\uD83D\uDDC4", md: "\uD83D\uDCDD", txt: "\uD83D\uDCDD", log: "\uD83D\uDCDD",
+  // Archives
+  zip: "\uD83D\uDCE6", tar: "\uD83D\uDCE6", gz: "\uD83D\uDCE6", "7z": "\uD83D\uDCE6",
+  rar: "\uD83D\uDCE6", dmg: "\uD83D\uDCBF", iso: "\uD83D\uDCBF",
+};
+
 function renderGridItem(f) {
   const ext = (f.ext || "").toLowerCase();
   const isImage = IMAGE_EXTS.has(ext);
   const isVideo = VIDEO_EXTS.has(ext);
+  const hasThumb = isImage || isVideo;
   const checked = isSelected(f.path) ? "checked" : "";
-  const thumb = isImage
-    ? `<img src="/api/thumbnail${encodeURI(f.path)}?size=300" onerror="this.style.display='none'" alt="${escapeHtml(fileName(f.path))}" loading="lazy">`
-    : `<div class="grid-icon">${escapeHtml(f.ext)}</div>`;
+
+  let thumb;
+  if (hasThumb) {
+    thumb = `<img src="/api/thumbnail${encodeURI(f.path)}?size=300" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" alt="${escapeHtml(fileName(f.path))}" loading="lazy"><div class="grid-icon" style="display:none">${FILE_TYPE_ICONS[ext] || escapeHtml(ext.toUpperCase())}</div>`;
+  } else {
+    const icon = FILE_TYPE_ICONS[ext] || "\uD83D\uDCC1";
+    thumb = `<div class="grid-icon grid-icon-styled"><span class="grid-icon-emoji">${icon}</span><span class="grid-icon-ext">${escapeHtml(ext.toUpperCase())}</span></div>`;
+  }
 
   const cam = [f.camera_make, f.camera_model].filter(Boolean).join(" ");
   const dateStr = f.date_original ? f.date_original.split(" ")[0] : "";
+  const name = fileName(f.path);
 
   let html = `<div class="file-grid-item file-grid-item-large" data-file-path="${escapeHtml(f.path)}" tabindex="0" role="button">`;
 
@@ -590,9 +614,10 @@ function renderGridItem(f) {
 
   html += `</div>`;
 
-  html += `<div class="grid-hover-overlay">
-    <div class="grid-hover-name">${escapeHtml(fileName(f.path))}</div>
-    <div class="grid-hover-meta">${formatBytes(f.size)}${dateStr ? ' &middot; ' + escapeHtml(dateStr) : ''}${cam ? ' &middot; ' + escapeHtml(cam) : ''}</div>
+  // Always-visible file info
+  html += `<div class="grid-file-info">
+    <div class="grid-file-name" title="${escapeHtml(f.path)}">${escapeHtml(name)}</div>
+    <div class="grid-file-meta">${formatBytes(f.size)}${dateStr ? ' \u00B7 ' + escapeHtml(dateStr) : ''}${cam ? ' \u00B7 ' + escapeHtml(cam) : ''}</div>
   </div>`;
   html += `</div>`;
   return html;
