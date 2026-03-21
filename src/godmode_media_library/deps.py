@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -39,11 +40,28 @@ def _platform() -> str:
     return "linux"
 
 
+# ── Path resolution ──────────────────────────────────────────────────
+
+_EXTRA_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def _which(name: str) -> str | None:
+    """Resolve a binary, falling back to common Homebrew/system paths."""
+    resolved = shutil.which(name)
+    if resolved:
+        return resolved
+    for prefix in _EXTRA_BIN_DIRS:
+        candidate = os.path.join(prefix, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 # ── Individual checkers ───────────────────────────────────────────────
 
 def check_exiftool(bin_path: str = "exiftool") -> DependencyStatus:
     """Check ExifTool availability and version."""
-    resolved = shutil.which(bin_path) if "/" not in bin_path else bin_path
+    resolved = _which(bin_path) if "/" not in bin_path else bin_path
     if resolved is None:
         plat = _platform()
         hints = {
@@ -71,7 +89,7 @@ def check_exiftool(bin_path: str = "exiftool") -> DependencyStatus:
 
 def check_ffprobe() -> DependencyStatus:
     """Check ffprobe availability and version."""
-    resolved = shutil.which("ffprobe")
+    resolved = _which("ffprobe")
     if resolved is None:
         plat = _platform()
         hints = {
@@ -100,7 +118,7 @@ def check_ffprobe() -> DependencyStatus:
 
 def check_ffmpeg() -> DependencyStatus:
     """Check ffmpeg availability (needed for video perceptual hashing)."""
-    resolved = shutil.which("ffmpeg")
+    resolved = _which("ffmpeg")
     if resolved is None:
         plat = _platform()
         hints = {
@@ -119,7 +137,7 @@ def check_ffmpeg() -> DependencyStatus:
 
 def check_rclone() -> DependencyStatus:
     """Check rclone availability (needed for cloud storage access)."""
-    resolved = shutil.which("rclone")
+    resolved = _which("rclone")
     if resolved is None:
         return DependencyStatus(
             name="rclone",

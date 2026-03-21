@@ -709,12 +709,14 @@ button.small {
 
 .file-grid .file-grid-item {
   width: 100%;
-  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .file-grid .grid-thumb,
 .file-grid .grid-thumb-large {
-  height: 100%;
+  aspect-ratio: 1;
+  flex-shrink: 0;
 }
 
 .file-grid .grid-thumb img,
