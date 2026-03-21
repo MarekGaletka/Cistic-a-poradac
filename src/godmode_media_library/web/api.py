@@ -108,6 +108,23 @@ class TagFilesRequest(BaseModel):
     tag_id: int
 
 
+class ReorganizeConfigRequest(BaseModel):
+    sources: list[str]
+    destination: str
+    structure_pattern: str = "year_month"
+    deduplicate: bool = True
+    merge_metadata: bool = True
+    delete_originals: bool = False
+    dry_run: bool = True
+    workers: int = 4
+    exclude_patterns: list[str] = []
+
+
+class ReorganizeExecuteRequest(BaseModel):
+    plan_id: str
+    delete_originals: bool = False
+
+
 _DEFAULT_QUARANTINE_ROOT = Path.home() / ".config" / "gml" / "quarantine"
 
 # Directories that should not be browsable for security
@@ -131,6 +148,7 @@ class TaskStatus:
 
 _tasks: dict[str, TaskStatus] = {}
 _tasks_lock = threading.Lock()
+_reorganize_plans: dict[str, Any] = {}
 
 _ws_connections: dict[str, list[WebSocket]] = {}
 _ws_lock = threading.Lock()
@@ -1691,6 +1709,104 @@ async def put_dedup_rules(request: Request, body: DedupRulesRequest):
     config_path.write_text("\n".join(lines) + "\n")
 
     return {"status": "ok"}
+
+
+@router.get("/reorganize/sources")
+def get_reorganize_sources():
+    """Detect available media sources (mounted volumes, common folders)."""
+    from ..reorganize import detect_sources
+    return {"sources": detect_sources()}
+
+
+@router.post("/reorganize/plan")
+def start_reorganize_plan(request: Request, background_tasks: BackgroundTasks, config: ReorganizeConfigRequest):
+    """Start planning reorganization (background task)."""
+    from ..reorganize import ReorganizeConfig, plan_reorganization
+
+    task = _create_task("reorganize-plan")
+
+    def run_plan():
+        try:
+            rc = ReorganizeConfig(
+                sources=[Path(s) for s in config.sources],
+                destination=Path(config.destination),
+                structure_pattern=config.structure_pattern,
+                deduplicate=config.deduplicate,
+                merge_metadata=config.merge_metadata,
+                delete_originals=config.delete_originals,
+                dry_run=True,  # planning is always dry
+                workers=config.workers,
+                exclude_patterns=config.exclude_patterns,
+            )
+            cat_path = request.app.state.catalog_path
+
+            def on_progress(info):
+                _update_progress(task.id, info)
+
+            plan = plan_reorganization(rc, catalog_path=cat_path, progress_fn=on_progress)
+
+            # Store plan for later execution
+            _reorganize_plans[task.id] = plan
+
+            # Build summary for the client
+            summary = {
+                "total_files": plan.total_files,
+                "unique_files": plan.unique_files,
+                "duplicate_files": plan.duplicate_files,
+                "total_size": plan.total_size,
+                "unique_size": plan.unique_size,
+                "duplicate_size": plan.duplicate_size,
+                "categories": plan.categories,
+                "source_stats": {str(k): v for k, v in plan.source_stats.items()},
+                "errors": plan.errors[:50],
+                "plan_id": task.id,
+            }
+            _finish_task(task.id, result=summary)
+        except Exception as e:
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run_plan)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/reorganize/execute")
+def start_reorganize_execute(request: Request, background_tasks: BackgroundTasks, body: ReorganizeExecuteRequest):
+    """Execute a previously planned reorganization."""
+    plan = _reorganize_plans.get(body.plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found. Please re-scan.")
+
+    from ..reorganize import execute_reorganization
+
+    task = _create_task("reorganize-execute")
+
+    # Override delete_originals from execution request
+    plan.config.delete_originals = body.delete_originals
+    plan.config.dry_run = False
+
+    def run_execute():
+        try:
+            def on_progress(info):
+                _update_progress(task.id, info)
+
+            result = execute_reorganization(plan, progress_fn=on_progress)
+
+            _finish_task(task.id, result={
+                "files_processed": result.files_processed,
+                "files_copied": result.files_copied,
+                "files_skipped": result.files_skipped,
+                "originals_deleted": result.originals_deleted,
+                "space_saved": result.space_saved,
+                "errors": result.errors[:50],
+            })
+
+            # Clean up the plan
+            _reorganize_plans.pop(body.plan_id, None)
+        except Exception as e:
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run_execute)
+    return {"task_id": task.id, "status": "started"}
 
 
 @router.get("/preview/{file_path:path}")
