@@ -43,8 +43,8 @@ const TIER_COLORS = {
 
 // ── Init ────────────────────────────────────────────────────────────
 
-export async function init() {
-  content().innerHTML = `
+export async function render(container) {
+  container.innerHTML = `
     <div class="gallery-page">
       <div class="gallery-header">
         <h1>${t("gallery.title")}</h1>
@@ -52,7 +52,7 @@ export async function init() {
       </div>
 
       <div class="gallery-collections" id="gallery-collections">
-        <div class="loading-spinner"></div>
+        <div class="loading"><div class="spinner"></div>${t("general.loading")}</div>
       </div>
 
       <div class="gallery-toolbar" id="gallery-toolbar" style="display:none">
