@@ -812,8 +812,14 @@ class Catalog:
         params: list[object] = []
 
         if ext is not None:
-            conditions.append("ext = ?")
-            params.append(ext.lower().lstrip("."))
+            ext_list = [e.strip().lower().lstrip(".") for e in ext.split(",") if e.strip()]
+            if len(ext_list) == 1:
+                conditions.append("ext = ?")
+                params.append(ext_list[0])
+            elif ext_list:
+                placeholders = ",".join("?" for _ in ext_list)
+                conditions.append(f"ext IN ({placeholders})")
+                params.extend(ext_list)
         if date_from is not None:
             conditions.append("birthtime >= ?")
             params.append(_date_to_timestamp(date_from))
