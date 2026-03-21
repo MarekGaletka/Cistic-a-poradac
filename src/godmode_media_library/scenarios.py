@@ -34,6 +34,11 @@ STEP_TYPES = {
         "icon": "\U0001f50d",
         "config_fields": [],
     },
+    "app_mine": {
+        "label_key": "scenario.step_app_mine",
+        "icon": "\U0001f4f1",
+        "config_fields": ["app_ids"],
+    },
     "integrity_check": {
         "label_key": "scenario.step_integrity",
         "icon": "\U0001f6e1\ufe0f",
@@ -403,6 +408,15 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         from .recovery import deep_scan
         result = deep_scan()
         return {"files_found": result.files_found, "total_size": result.total_size}
+
+    if step_type == "app_mine":
+        from .recovery import mine_app_media
+        app_ids = config.get("app_ids")
+        results = mine_app_media(app_ids=app_ids)
+        total_files = sum(r.files_found for r in results)
+        total_size = sum(r.total_size for r in results)
+        apps_with_files = sum(1 for r in results if r.files_found > 0)
+        return {"total_files": total_files, "total_size": total_size, "apps_with_media": apps_with_files}
 
     if step_type == "integrity_check":
         from .recovery import check_integrity

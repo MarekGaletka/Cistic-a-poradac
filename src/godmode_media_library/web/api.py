@@ -1930,6 +1930,68 @@ class QuarantineRestoreRequest(BaseModel):
     restore_to: str | None = None
 
 
+class AppMineRequest(BaseModel):
+    app_ids: list[str] | None = None
+
+
+@router.get("/recovery/apps")
+def get_available_apps_endpoint():
+    """List all known apps and whether they have data present."""
+    from ..recovery import get_available_apps
+    return {"apps": get_available_apps()}
+
+
+@router.post("/recovery/app-mine")
+def start_app_mine(background_tasks: BackgroundTasks, body: AppMineRequest):
+    """Mine media from selected app data directories (background task)."""
+    from ..recovery import mine_app_media
+
+    task = _create_task("app-mine")
+
+    def run():
+        try:
+            results = mine_app_media(
+                app_ids=body.app_ids,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            # Serialize results — cap file lists for response size
+            serialized = []
+            for r in results:
+                serialized.append({
+                    "app_id": r.app_id,
+                    "app_name": r.app_name,
+                    "icon": r.icon,
+                    "color": r.color,
+                    "category": r.category,
+                    "available": r.available,
+                    "encrypted": r.encrypted,
+                    "note": r.note,
+                    "files_found": r.files_found,
+                    "total_size": r.total_size,
+                    "raw_files_count": r.raw_files_count,
+                    "raw_total_size": r.raw_total_size,
+                    "images": r.images,
+                    "videos": r.videos,
+                    "audio": r.audio,
+                    "other": r.other,
+                    "files": r.files[:200],  # Cap per app
+                    "paths_checked": r.paths_checked,
+                })
+            total_files = sum(r.files_found for r in results)
+            total_size = sum(r.total_size for r in results)
+            _finish_task(task.id, result={
+                "apps": serialized,
+                "total_files": total_files,
+                "total_size": total_size,
+            })
+        except Exception as e:
+            logger.exception("App mining failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started"}
+
+
 @router.get("/recovery/quarantine")
 def get_quarantine(request: Request):
     """List all files in the quarantine."""

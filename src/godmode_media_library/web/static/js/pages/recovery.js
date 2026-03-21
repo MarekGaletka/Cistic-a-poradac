@@ -11,9 +11,11 @@ let _container = null;
 let _quarantineEntries = [];
 let _deepScanResult = null;
 let _integrityResult = null;
+let _appMineResult = null;
 let _photorec = { available: false };
 let _selectedQuarantine = new Set();
 let _selectedDeepScan = new Set();
+let _selectedAppFiles = new Set();
 
 export async function render(container) {
   _container = container;
@@ -33,6 +35,7 @@ export async function render(container) {
 
 const _tabs = [
   { id: "quarantine", icon: "\u{1F5C3}\uFE0F", label: "recovery.tab_quarantine" },
+  { id: "app_mine", icon: "\u{1F4F1}", label: "recovery.tab_app_mine" },
   { id: "deep_scan", icon: "\u{1F50D}", label: "recovery.tab_deep_scan" },
   { id: "integrity", icon: "\u{1F6E1}\uFE0F", label: "recovery.tab_integrity" },
   { id: "photorec", icon: "\u{1F4BE}", label: "recovery.tab_photorec" },
@@ -63,6 +66,7 @@ async function _switchTab(tabId) {
 
   switch (tabId) {
     case "quarantine": await _renderQuarantine(content); break;
+    case "app_mine": await _renderAppMine(content); break;
     case "deep_scan": _renderDeepScan(content); break;
     case "integrity": _renderIntegrity(content); break;
     case "photorec": await _renderPhotoRec(content); break;
@@ -192,6 +196,292 @@ function _bindQuarantineEvents(container) {
         showToast(t("recovery.deleted_count", { count: _selectedQuarantine.size }), "success");
         _selectedQuarantine.clear();
         await _renderQuarantine(container);
+      } catch (e) {
+        showToast(t("general.error", { message: e.message }), "error");
+      }
+    });
+  }
+}
+
+// ── App Mining ───────────────────────────────────────
+
+async function _renderAppMine(container) {
+  if (_appMineResult) {
+    _renderAppMineResults(container);
+    return;
+  }
+
+  // Show available apps
+  let apps = [];
+  try {
+    const data = await api("/recovery/apps");
+    apps = data.apps || [];
+  } catch (e) {
+    container.innerHTML = `<div class="recovery-error">${t("general.error", { message: e.message })}</div>`;
+    return;
+  }
+
+  const categories = [
+    { id: "messaging", label: t("appmine.cat_messaging"), icon: "\u{1F4AC}" },
+    { id: "social", label: t("appmine.cat_social"), icon: "\u{1F465}" },
+    { id: "work", label: t("appmine.cat_work"), icon: "\u{1F4BC}" },
+    { id: "browser", label: t("appmine.cat_browser"), icon: "\u{1F310}" },
+    { id: "apple", label: t("appmine.cat_apple"), icon: "\u{1F34E}" },
+    { id: "creative", label: t("appmine.cat_creative"), icon: "\u{1F3A8}" },
+  ];
+
+  let appCardsHtml = "";
+  for (const cat of categories) {
+    const catApps = apps.filter(a => a.category === cat.id);
+    if (catApps.length === 0) continue;
+
+    const cards = catApps.map(a => `
+      <label class="appmine-app-card ${a.available ? "" : "unavailable"} ${a.encrypted ? "encrypted" : ""}" data-app="${a.id}">
+        <input type="checkbox" class="appmine-check" data-app="${a.id}" ${a.available ? "checked" : "disabled"}>
+        <span class="appmine-app-icon" style="color:${a.color}">${a.icon}</span>
+        <span class="appmine-app-name">${_escHtml(a.name)}${a.encrypted ? " \u{1F512}" : ""}</span>
+        ${a.available ? `<span class="appmine-badge-ok">\u2705</span>` : `<span class="appmine-badge-na">\u2014</span>`}
+        ${a.note ? `<span class="appmine-app-note" title="${_escHtml(a.note)}">\u2139\uFE0F</span>` : ""}
+      </label>
+    `).join("");
+
+    appCardsHtml += `
+      <div class="appmine-category">
+        <h4 class="appmine-category-title">${cat.icon} ${cat.label}</h4>
+        <div class="appmine-apps-grid">${cards}</div>
+      </div>
+    `;
+  }
+
+  const availableCount = apps.filter(a => a.available).length;
+
+  container.innerHTML = `
+    <div class="recovery-section">
+      <div class="appmine-intro">
+        <p>${t("appmine.intro")}</p>
+      </div>
+      ${appCardsHtml}
+      <div class="recovery-action-center">
+        <button class="btn-primary btn-lg" id="btn-app-mine">
+          \u{1F4F1} ${t("appmine.start_mining")} (${availableCount} ${t("appmine.apps_available")})
+        </button>
+        <p class="recovery-hint">${t("appmine.hint")}</p>
+      </div>
+      <div id="appmine-progress" class="recovery-progress hidden"></div>
+    </div>`;
+
+  container.querySelector("#btn-app-mine")?.addEventListener("click", () => {
+    const selected = [...container.querySelectorAll(".appmine-check:checked")].map(c => c.dataset.app);
+    if (selected.length === 0) { showToast(t("appmine.select_at_least_one"), "error"); return; }
+    _startAppMine(container, selected);
+  });
+}
+
+async function _startAppMine(container, appIds) {
+  const btn = container.querySelector("#btn-app-mine");
+  const progressEl = container.querySelector("#appmine-progress");
+  if (btn) { btn.disabled = true; btn.textContent = t("appmine.mining"); }
+  if (progressEl) progressEl.classList.remove("hidden");
+
+  try {
+    const { task_id } = await apiPost("/recovery/app-mine", { app_ids: appIds });
+    await _pollTask(task_id, progressEl, (result) => {
+      _appMineResult = result;
+      _renderAppMineResults(container);
+    });
+  } catch (e) {
+    showToast(t("general.error", { message: e.message }), "error");
+    if (btn) { btn.disabled = false; btn.textContent = `\u{1F4F1} ${t("appmine.start_mining")}`; }
+  }
+}
+
+function _renderAppMineResults(container) {
+  const r = _appMineResult;
+  if (!r) return;
+
+  const appsWithFiles = (r.apps || []).filter(a => a.files_found > 0);
+  const appsEncrypted = (r.apps || []).filter(a => a.encrypted && a.raw_files_count > 0);
+
+  const appCards = appsWithFiles.map(a => {
+    const breakdown = [
+      a.images > 0 ? `\u{1F5BC}\uFE0F ${a.images}` : "",
+      a.videos > 0 ? `\u{1F3AC} ${a.videos}` : "",
+      a.audio > 0 ? `\u{1F3B5} ${a.audio}` : "",
+    ].filter(Boolean).join("  ");
+
+    return `
+      <div class="appmine-result-card" style="border-left:4px solid ${a.color}">
+        <div class="appmine-result-header">
+          <span class="appmine-result-icon" style="color:${a.color}">${a.icon}</span>
+          <div class="appmine-result-info">
+            <span class="appmine-result-name">${_escHtml(a.app_name)}</span>
+            <span class="appmine-result-meta">${a.files_found} ${t("appmine.files")} \u2022 ${_formatSize(a.total_size)}</span>
+          </div>
+        </div>
+        <div class="appmine-result-breakdown">${breakdown}</div>
+        <div class="appmine-result-actions">
+          <button class="btn-sm appmine-view-files" data-app="${a.app_id}">\u{1F4C2} ${t("appmine.view_files")}</button>
+          <button class="btn-sm btn-primary appmine-recover-app" data-app="${a.app_id}">\u{1F4E5} ${t("appmine.recover_all")}</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const encryptedCards = appsEncrypted.map(a => `
+    <div class="appmine-result-card appmine-encrypted-card" style="border-left:4px solid ${a.color}">
+      <div class="appmine-result-header">
+        <span class="appmine-result-icon" style="color:${a.color}">${a.icon}</span>
+        <div class="appmine-result-info">
+          <span class="appmine-result-name">\u{1F512} ${_escHtml(a.app_name)}</span>
+          <span class="appmine-result-meta">${a.raw_files_count} ${t("appmine.encrypted_files")} \u2022 ${_formatSize(a.raw_total_size)}</span>
+        </div>
+      </div>
+      <p class="appmine-encrypted-note">${_escHtml(a.note)}</p>
+    </div>
+  `).join("");
+
+  container.innerHTML = `
+    <div class="recovery-section">
+      <div class="recovery-stats-row">
+        <div class="recovery-stat-card accent">
+          <span class="recovery-stat-value">${r.total_files}</span>
+          <span class="recovery-stat-label">${t("appmine.total_files")}</span>
+        </div>
+        <div class="recovery-stat-card">
+          <span class="recovery-stat-value">${_formatSize(r.total_size)}</span>
+          <span class="recovery-stat-label">${t("recovery.total_size")}</span>
+        </div>
+        <div class="recovery-stat-card success">
+          <span class="recovery-stat-value">${appsWithFiles.length}</span>
+          <span class="recovery-stat-label">${t("appmine.apps_with_media")}</span>
+        </div>
+      </div>
+
+      ${appsWithFiles.length > 0 ? `
+        <h4 class="recovery-section-title">${t("appmine.found_in_apps")}</h4>
+        <div class="appmine-results-grid">${appCards}</div>
+      ` : `
+        <div class="recovery-empty-state">
+          <div class="recovery-empty-icon">\u{1F50D}</div>
+          <h3>${t("appmine.no_media_found")}</h3>
+        </div>
+      `}
+
+      ${encryptedCards ? `
+        <h4 class="recovery-section-title">\u{1F512} ${t("appmine.encrypted_apps")}</h4>
+        <div class="appmine-results-grid">${encryptedCards}</div>
+      ` : ""}
+
+      <div id="appmine-file-detail" class="appmine-file-detail hidden"></div>
+
+      <div class="recovery-action-center" style="margin-top:24px">
+        ${appsWithFiles.length > 0 ? `<button class="btn-primary" id="btn-recover-all-apps">\u{1F4E5} ${t("appmine.recover_all_apps")} (${r.total_files})</button>` : ""}
+        <button class="btn-secondary" id="btn-rescan-apps">\u{1F504} ${t("recovery.rescan")}</button>
+      </div>
+    </div>`;
+
+  // View files for specific app
+  container.querySelectorAll(".appmine-view-files").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const appId = btn.dataset.app;
+      const appData = appsWithFiles.find(a => a.app_id === appId);
+      if (!appData) return;
+      _showAppFiles(container, appData);
+    });
+  });
+
+  // Recover all files from one app
+  container.querySelectorAll(".appmine-recover-app").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const appId = btn.dataset.app;
+      const appData = appsWithFiles.find(a => a.app_id === appId);
+      if (!appData) return;
+      const dest = prompt(t("recovery.recover_destination"), `${_homeDir()}/Desktop/GML_Recovery/${appData.app_name}`);
+      if (!dest) return;
+      try {
+        const paths = appData.files.map(f => f.path);
+        const result = await apiPost("/recovery/recover-files", { paths, destination: dest });
+        showToast(t("recovery.recovered_count", { count: result.recovered }), "success");
+      } catch (e) {
+        showToast(t("general.error", { message: e.message }), "error");
+      }
+    });
+  });
+
+  // Recover all
+  container.querySelector("#btn-recover-all-apps")?.addEventListener("click", async () => {
+    const dest = prompt(t("recovery.recover_destination"), `${_homeDir()}/Desktop/GML_Recovery`);
+    if (!dest) return;
+    try {
+      const allPaths = appsWithFiles.flatMap(a => a.files.map(f => f.path));
+      const result = await apiPost("/recovery/recover-files", { paths: allPaths, destination: dest });
+      showToast(t("recovery.recovered_count", { count: result.recovered }), "success");
+    } catch (e) {
+      showToast(t("general.error", { message: e.message }), "error");
+    }
+  });
+
+  // Rescan
+  container.querySelector("#btn-rescan-apps")?.addEventListener("click", () => {
+    _appMineResult = null;
+    _renderAppMine(container);
+  });
+}
+
+function _showAppFiles(container, appData) {
+  const detail = container.querySelector("#appmine-file-detail");
+  if (!detail) return;
+  detail.classList.remove("hidden");
+
+  const files = (appData.files || []).slice(0, 100);
+  detail.innerHTML = `
+    <h4 class="recovery-section-title">${appData.icon} ${_escHtml(appData.app_name)} \u2014 ${appData.files_found} ${t("appmine.files")}</h4>
+    <div class="recovery-actions-bar">
+      <button class="btn-secondary" id="appmine-close-detail">${t("general.close")}</button>
+      <button class="btn-secondary" id="appmine-select-all-files">${t("action.select_all")}</button>
+      <button class="btn-primary" id="appmine-recover-selected" disabled>\u{1F4E5} ${t("appmine.recover_selected")}</button>
+    </div>
+    <div class="recovery-file-list">
+      ${files.map((f, i) => `
+        <div class="recovery-file-item">
+          <label class="recovery-file-check">
+            <input type="checkbox" data-path="${_escHtml(f.path)}" class="af-check">
+          </label>
+          <div class="recovery-file-icon">${_categoryIcon(f.category)}</div>
+          <div class="recovery-file-info">
+            <span class="recovery-file-name">${_escHtml(f.name)}</span>
+            <span class="recovery-file-meta">${f.ext || t("appmine.no_extension")} \u2022 ${_formatSize(f.size)}</span>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+    ${appData.files_found > 100 ? `<p class="recovery-hint">${t("recovery.showing_first", { count: 100, total: appData.files_found })}</p>` : ""}
+  `;
+
+  detail.querySelector("#appmine-close-detail")?.addEventListener("click", () => detail.classList.add("hidden"));
+
+  const recoverBtn = detail.querySelector("#appmine-recover-selected");
+  function updateSelection() {
+    const checked = detail.querySelectorAll(".af-check:checked");
+    _selectedAppFiles = new Set([...checked].map(c => c.dataset.path));
+    if (recoverBtn) recoverBtn.disabled = _selectedAppFiles.size === 0;
+  }
+  detail.querySelectorAll(".af-check").forEach(cb => cb.addEventListener("change", updateSelection));
+
+  detail.querySelector("#appmine-select-all-files")?.addEventListener("click", () => {
+    const checks = detail.querySelectorAll(".af-check");
+    const allChecked = [...checks].every(c => c.checked);
+    checks.forEach(c => { c.checked = !allChecked; });
+    updateSelection();
+  });
+
+  if (recoverBtn) {
+    recoverBtn.addEventListener("click", async () => {
+      const dest = prompt(t("recovery.recover_destination"), `${_homeDir()}/Desktop/GML_Recovery/${appData.app_name}`);
+      if (!dest) return;
+      try {
+        const result = await apiPost("/recovery/recover-files", { paths: [..._selectedAppFiles], destination: dest });
+        showToast(t("recovery.recovered_count", { count: result.recovered }), "success");
       } catch (e) {
         showToast(t("general.error", { message: e.message }), "error");
       }

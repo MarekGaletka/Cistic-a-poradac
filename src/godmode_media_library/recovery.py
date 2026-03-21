@@ -228,16 +228,457 @@ _DEEP_SCAN_LOCATIONS = [
     # Temp directories
     ("Dočasné soubory", Path("/tmp")),
     ("Uživatelský temp", Path(tempfile.gettempdir())),
-    # Application caches
-    ("App cache", Path.home() / "Library" / "Caches"),
-    # Screenshots
-    ("Snímky obrazovky", Path.home() / "Desktop"),
     # iPhoto / Photos library
     ("Fotky (Photos Library)", Path.home() / "Pictures" / "Photos Library.photoslibrary"),
-    # WhatsApp / Telegram media
-    ("WhatsApp", Path.home() / "Library" / "Group Containers" / "group.net.whatsapp.WhatsApp.shared" / "Message" / "Media"),
-    ("Telegram", Path.home() / "Library" / "Group Containers" / "6N38VWS5BX.ru.keepcoder.Telegram" / "appstore" / "account-*"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# 2b. App media mining — known app data locations on macOS
+# ---------------------------------------------------------------------------
+
+# Magic bytes for detecting media files without extensions (e.g. Signal)
+_MAGIC_BYTES: dict[bytes, tuple[str, str]] = {
+    b"\xff\xd8\xff": (".jpg", "image"),
+    b"\x89PNG": (".png", "image"),
+    b"GIF87a": (".gif", "image"),
+    b"GIF89a": (".gif", "image"),
+    b"RIFF": (".webp", "image"),  # could also be .wav/.avi, check further
+    b"\x00\x00\x00\x18ftypmp4": (".mp4", "video"),
+    b"\x00\x00\x00\x1cftypmp4": (".mp4", "video"),
+    b"\x00\x00\x00\x20ftypmp4": (".mp4", "video"),
+    b"\x00\x00\x00\x18ftypisom": (".mp4", "video"),
+    b"\x00\x00\x00\x1cftypisom": (".mp4", "video"),
+    b"\x00\x00\x00\x14ftypqt": (".mov", "video"),
+    b"\x00\x00\x00\x18ftypqt": (".mov", "video"),
+    b"\x1aE\xdf\xa3": (".webm", "video"),
+    b"OggS": (".ogg", "audio"),
+    b"fLaC": (".flac", "audio"),
+    b"ID3": (".mp3", "audio"),
+    b"\xff\xfb": (".mp3", "audio"),
+    b"\xff\xf3": (".mp3", "audio"),
+    b"\xff\xf2": (".mp3", "audio"),
+}
+
+# Comprehensive list of apps and their media storage locations on macOS
+_APP_SOURCES: list[dict[str, Any]] = [
+    # ── Messaging apps ──
+    {
+        "id": "whatsapp",
+        "name": "WhatsApp",
+        "icon": "\U0001f4ac",
+        "color": "#25D366",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Containers" / "net.whatsapp.WhatsApp" / "Data" / "Downloads",
+            Path.home() / "Library" / "Containers" / "net.whatsapp.WhatsApp" / "Data" / "Library" / "Caches" / "ChatMedia",
+            Path.home() / "Library" / "Containers" / "net.whatsapp.WhatsApp" / "Data" / "Library" / "Caches" / "GalleryMedia",
+            Path.home() / "Library" / "Containers" / "net.whatsapp.WhatsApp" / "Data" / "tmp" / "MediaCache",
+            Path.home() / "Library" / "Containers" / "desktop.WhatsApp" / "Data" / "Downloads",
+            Path.home() / "Library" / "Containers" / "desktop.WhatsApp" / "Data" / "Library" / "Caches" / "ChatMedia",
+            Path.home() / "Library" / "Group Containers" / "group.net.whatsapp.WhatsApp.shared" / "Message" / "Media",
+        ],
+    },
+    {
+        "id": "signal",
+        "name": "Signal",
+        "icon": "\U0001f512",
+        "color": "#3A76F0",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Application Support" / "Signal" / "attachments.noindex",
+        ],
+        "extensionless": True,  # Signal stores files without extensions
+        "encrypted": True,  # Signal encrypts attachments at rest — magic bytes won't work
+        "note": "Signal šifruje přílohy. Média lze exportovat pouze přímo z aplikace Signal.",
+    },
+    {
+        "id": "telegram",
+        "name": "Telegram",
+        "icon": "\u2708\ufe0f",
+        "color": "#0088cc",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Containers" / "ru.keepcoder.Telegram" / "Data" / "Documents",
+            Path.home() / "Library" / "Containers" / "ru.keepcoder.Telegram" / "Data" / "Library" / "Caches",
+            Path.home() / "Library" / "Group Containers" / "6N38VWS5BX.ru.keepcoder.Telegram" / "appstore",
+        ],
+    },
+    {
+        "id": "imessage",
+        "name": "iMessage",
+        "icon": "\U0001f4e8",
+        "color": "#34C759",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Messages" / "Attachments",
+        ],
+    },
+    {
+        "id": "messenger",
+        "name": "Messenger (Facebook)",
+        "icon": "\U0001f4ad",
+        "color": "#0084FF",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Containers" / "com.facebook.archon" / "Data",
+            Path.home() / "Library" / "Group Containers" / "group.com.facebook.Messenger",
+        ],
+    },
+    {
+        "id": "viber",
+        "name": "Viber",
+        "icon": "\U0001f4de",
+        "color": "#7360F2",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Application Support" / "Viber" / "Media",
+            Path.home() / "Library" / "Application Support" / "ViberPC" / "Media",
+        ],
+    },
+    {
+        "id": "skype",
+        "name": "Skype",
+        "icon": "\U0001f4f9",
+        "color": "#00AFF0",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Application Support" / "Skype",
+            Path.home() / "Library" / "Containers" / "com.skype.skype" / "Data" / "Library" / "Application Support" / "Skype",
+        ],
+    },
+    {
+        "id": "line",
+        "name": "LINE",
+        "icon": "\U0001f49a",
+        "color": "#00C300",
+        "category": "messaging",
+        "paths": [
+            Path.home() / "Library" / "Containers" / "jp.naver.line.mac" / "Data" / "Library" / "Application Support",
+        ],
+    },
+    # ── Social / Community ──
+    {
+        "id": "discord",
+        "name": "Discord",
+        "icon": "\U0001f3ae",
+        "color": "#5865F2",
+        "category": "social",
+        "paths": [
+            Path.home() / "Library" / "Application Support" / "discord" / "Cache",
+            Path.home() / "Library" / "Application Support" / "discord" / "Cached",
+        ],
+    },
+    {
+        "id": "slack",
+        "name": "Slack",
+        "icon": "\U0001f4bc",
+        "color": "#4A154B",
+        "category": "work",
+        "paths": [
+            Path.home() / "Library" / "Containers" / "com.tinyspeck.slackmacgap" / "Data" / "Library" / "Application Support" / "Slack" / "Cache",
+            Path.home() / "Library" / "Application Support" / "Slack" / "Cache",
+            Path.home() / "Library" / "Application Support" / "Slack" / "Service Worker" / "CacheStorage",
+        ],
+    },
+    {
+        "id": "teams",
+        "name": "Microsoft Teams",
+        "icon": "\U0001f465",
+        "color": "#6264A7",
+        "category": "work",
+        "paths": [
+            Path.home() / "Library" / "Application Support" / "Microsoft" / "Teams" / "Cache",
+            Path.home() / "Library" / "Containers" / "com.microsoft.teams2" / "Data" / "Library" / "Caches",
+        ],
+    },
+    # ── Browsers (cached media) ──
+    {
+        "id": "safari",
+        "name": "Safari",
+        "icon": "\U0001f310",
+        "color": "#006CFF",
+        "category": "browser",
+        "paths": [
+            Path.home() / "Library" / "Containers" / "com.apple.Safari" / "Data" / "Library" / "Caches",
+        ],
+    },
+    {
+        "id": "chrome",
+        "name": "Google Chrome",
+        "icon": "\U0001f30d",
+        "color": "#4285F4",
+        "category": "browser",
+        "paths": [
+            Path.home() / "Library" / "Caches" / "Google" / "Chrome" / "Default" / "Cache",
+            Path.home() / "Library" / "Application Support" / "Google" / "Chrome" / "Default" / "Cache",
+        ],
+    },
+    {
+        "id": "firefox",
+        "name": "Firefox",
+        "icon": "\U0001f525",
+        "color": "#FF7139",
+        "category": "browser",
+        "paths": [
+            Path.home() / "Library" / "Caches" / "Firefox" / "Profiles",
+        ],
+    },
+    # ── Apple ecosystem ──
+    {
+        "id": "photos",
+        "name": "Fotky (Apple Photos)",
+        "icon": "\U0001f338",
+        "color": "#FF2D55",
+        "category": "apple",
+        "paths": [
+            Path.home() / "Pictures" / "Photos Library.photoslibrary" / "originals",
+            Path.home() / "Pictures" / "Photos Library.photoslibrary" / "resources" / "media",
+        ],
+    },
+    {
+        "id": "icloud_drive",
+        "name": "iCloud Drive",
+        "icon": "\u2601\ufe0f",
+        "color": "#3693F3",
+        "category": "apple",
+        "paths": [
+            Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs",
+        ],
+    },
+    {
+        "id": "airdrop",
+        "name": "AirDrop",
+        "icon": "\U0001f4e1",
+        "color": "#007AFF",
+        "category": "apple",
+        "paths": [
+            Path.home() / "Library" / "Sharing",
+        ],
+    },
+    # ── Creative / Edit ──
+    {
+        "id": "preview",
+        "name": "Náhled (Preview)",
+        "icon": "\U0001f5bc\ufe0f",
+        "color": "#30B0C7",
+        "category": "creative",
+        "paths": [
+            Path.home() / "Library" / "Containers" / "com.apple.Preview" / "Data" / "Library",
+        ],
+    },
+]
+
+
+@dataclass
+class AppMineResult:
+    """Result of mining media from a single app."""
+    app_id: str
+    app_name: str
+    icon: str
+    color: str
+    category: str
+    available: bool = False
+    encrypted: bool = False
+    note: str = ""
+    files_found: int = 0
+    total_size: int = 0
+    raw_files_count: int = 0  # Total files including encrypted/undetectable
+    raw_total_size: int = 0
+    images: int = 0
+    videos: int = 0
+    audio: int = 0
+    other: int = 0
+    files: list[dict] = field(default_factory=list)
+    paths_checked: list[str] = field(default_factory=list)
+
+
+def _detect_type_by_magic(fpath: str) -> tuple[str, str] | None:
+    """Detect file type by reading magic bytes (for extensionless files like Signal)."""
+    try:
+        with open(fpath, "rb") as f:
+            header = f.read(32)
+        if len(header) < 4:
+            return None
+
+        # Check ftyp-based formats (MP4/MOV) — variable offset
+        if b"ftyp" in header[:16]:
+            ftyp_pos = header.find(b"ftyp")
+            brand = header[ftyp_pos + 4:ftyp_pos + 8]
+            if brand in (b"mp41", b"mp42", b"isom", b"M4A ", b"M4V ", b"avc1", b"dash"):
+                return (".mp4", "video")
+            if brand in (b"qt  ", b"MSNV"):
+                return (".mov", "video")
+            if brand in (b"M4A ",):
+                return (".m4a", "audio")
+            return (".mp4", "video")  # generic ftyp
+
+        # Check RIFF-based (WAV, WebP, AVI)
+        if header[:4] == b"RIFF" and len(header) >= 12:
+            fmt = header[8:12]
+            if fmt == b"WEBP":
+                return (".webp", "image")
+            if fmt == b"WAVE":
+                return (".wav", "audio")
+            if fmt == b"AVI ":
+                return (".avi", "video")
+
+        # Simple prefix matching
+        for magic, result in _MAGIC_BYTES.items():
+            if header[:len(magic)] == magic:
+                return result
+
+        return None
+    except (OSError, PermissionError):
+        return None
+
+
+def mine_app_media(
+    app_ids: list[str] | None = None,
+    progress_fn: Callable | None = None,
+) -> list[AppMineResult]:
+    """Mine media files from application data directories.
+
+    Args:
+        app_ids: If given, only mine these apps. Otherwise mine all known apps.
+        progress_fn: Progress callback.
+
+    Returns:
+        List of per-app results.
+    """
+    sources = _APP_SOURCES
+    if app_ids:
+        sources = [s for s in sources if s["id"] in app_ids]
+
+    results: list[AppMineResult] = []
+    total = len(sources)
+
+    for idx, source in enumerate(sources):
+        if progress_fn:
+            progress_fn({
+                "phase": "app_mining",
+                "app": source["name"],
+                "app_icon": source["icon"],
+                "progress_pct": int((idx / max(total, 1)) * 100),
+                "apps_scanned": idx,
+            })
+
+        app_result = AppMineResult(
+            app_id=source["id"],
+            app_name=source["name"],
+            icon=source["icon"],
+            color=source["color"],
+            category=source["category"],
+            encrypted=source.get("encrypted", False),
+            note=source.get("note", ""),
+        )
+        extensionless = source.get("extensionless", False)
+        is_encrypted = source.get("encrypted", False)
+
+        for base_path in source["paths"]:
+            if not base_path.exists():
+                continue
+            app_result.available = True
+
+            # For encrypted apps, just count files and total size
+            if is_encrypted:
+                try:
+                    for dirpath, _dirnames, filenames in os.walk(base_path, followlinks=False):
+                        for fname in filenames:
+                            fpath = os.path.join(dirpath, fname)
+                            try:
+                                fsize = os.path.getsize(fpath)
+                                if fsize < 100:
+                                    continue
+                                app_result.raw_files_count += 1
+                                app_result.raw_total_size += fsize
+                            except OSError:
+                                continue
+                except (OSError, PermissionError):
+                    pass
+                continue  # Skip normal scanning for encrypted apps
+            app_result.paths_checked.append(str(base_path))
+
+            try:
+                for dirpath, _dirnames, filenames in os.walk(base_path, followlinks=False):
+                    for fname in filenames:
+                        fpath = os.path.join(dirpath, fname)
+                        ext = os.path.splitext(fname)[1].lower()
+
+                        # For extensionless files (Signal), detect via magic bytes
+                        if not ext and extensionless:
+                            detected = _detect_type_by_magic(fpath)
+                            if detected:
+                                ext, cat = detected
+                            else:
+                                continue  # Skip non-media
+                        elif ext and ext in _MEDIA_EXTS:
+                            cat = _categorize_ext(ext)
+                        elif not ext:
+                            continue  # No extension and not extensionless mode
+                        else:
+                            continue  # Extension but not media
+
+                        try:
+                            fsize = os.path.getsize(fpath)
+                            if fsize < 100:
+                                continue
+                        except OSError:
+                            continue
+
+                        file_info = {
+                            "path": fpath,
+                            "name": fname,
+                            "size": fsize,
+                            "ext": ext,
+                            "category": cat,
+                            "app": source["id"],
+                            "app_name": source["name"],
+                        }
+                        app_result.files.append(file_info)
+                        app_result.files_found += 1
+                        app_result.total_size += fsize
+
+                        if cat == "image":
+                            app_result.images += 1
+                        elif cat == "video":
+                            app_result.videos += 1
+                        elif cat == "audio":
+                            app_result.audio += 1
+                        else:
+                            app_result.other += 1
+
+            except (OSError, PermissionError):
+                continue
+
+        results.append(app_result)
+
+    if progress_fn:
+        progress_fn({
+            "phase": "complete",
+            "progress_pct": 100,
+            "apps_scanned": total,
+        })
+
+    return results
+
+
+def get_available_apps() -> list[dict]:
+    """Quick check which apps have data directories present (no file scanning)."""
+    apps: list[dict] = []
+    for source in _APP_SOURCES:
+        available = any(p.exists() for p in source["paths"])
+        apps.append({
+            "id": source["id"],
+            "name": source["name"],
+            "icon": source["icon"],
+            "color": source["color"],
+            "category": source["category"],
+            "available": available,
+            "encrypted": source.get("encrypted", False),
+            "note": source.get("note", ""),
+        })
+    return apps
 
 
 def deep_scan(

@@ -5267,6 +5267,179 @@ button:focus-visible, a:focus-visible {
   .recovery-actions-bar { flex-wrap: wrap; }
 }
 
+/* ── App mining ───────────────────────────────────── */
+
+.appmine-intro {
+  margin-bottom: 20px;
+  font-size: 0.88rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.appmine-category {
+  margin-bottom: 18px;
+}
+
+.appmine-category-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.appmine-apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.appmine-app-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+
+.appmine-app-card:hover {
+  border-color: var(--color-accent);
+}
+
+.appmine-app-card.unavailable {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.appmine-app-card input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.appmine-app-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.appmine-app-name {
+  font-size: 0.82rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appmine-badge-ok {
+  font-size: 0.8rem;
+}
+
+.appmine-badge-na {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+/* App mine results */
+.appmine-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.appmine-result-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px;
+  transition: box-shadow 0.2s;
+}
+
+.appmine-result-card:hover {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.appmine-result-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.appmine-result-icon {
+  font-size: 1.5rem;
+}
+
+.appmine-result-info {
+  flex: 1;
+}
+
+.appmine-result-name {
+  display: block;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.appmine-result-meta {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.appmine-result-breakdown {
+  font-size: 0.82rem;
+  margin-bottom: 10px;
+  letter-spacing: 0.5px;
+}
+
+.appmine-result-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.appmine-file-detail {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.appmine-file-detail.hidden {
+  display: none;
+}
+
+.appmine-encrypted-card {
+  opacity: 0.75;
+}
+
+.appmine-encrypted-note {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
+
+.appmine-app-note {
+  font-size: 0.8rem;
+  cursor: help;
+}
+
+.appmine-app-card.encrypted {
+  border-style: dashed;
+}
+
+@media (max-width: 768px) {
+  .appmine-apps-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .appmine-results-grid { grid-template-columns: 1fr; }
+}
+
 /* ── Scenarios page ───────────────────────────────── */
 
 .scenarios-page {

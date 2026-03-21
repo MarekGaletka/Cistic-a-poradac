@@ -565,6 +565,33 @@ const translations = {
     "recovery.photorec_complete": "{count} souborů obnoveno z disku",
     "recovery.photorec_warning": "PhotoRec provádí hloubkovou analýzu disku. Proces může trvat delší dobu. Disk, ze kterého obnovujete, by neměl být zapisován.",
 
+    // App mining
+    "recovery.tab_app_mine": "Aplikace",
+    "appmine.intro": "Prohledejte data lokálních aplikací \u2014 zprávy, sociální sítě, prohlížeče a Apple ekosystém. Aplikace ukládají média lokálně a tato data lze vytěžit a zálohovat.",
+    "appmine.cat_messaging": "Zprávy",
+    "appmine.cat_social": "Sociální sítě",
+    "appmine.cat_work": "Práce",
+    "appmine.cat_browser": "Prohlížeče",
+    "appmine.cat_apple": "Apple",
+    "appmine.cat_creative": "Kreativní",
+    "appmine.start_mining": "Spustit těžbu médií",
+    "appmine.apps_available": "aplikací nalezeno",
+    "appmine.hint": "Prohledá data vybraných aplikací a najde fotky, videa a audio soubory.",
+    "appmine.select_at_least_one": "Vyberte alespoň jednu aplikaci",
+    "appmine.mining": "Těžím média z aplikací\u2026",
+    "appmine.total_files": "Celkem souborů",
+    "appmine.apps_with_media": "Aplikací s médii",
+    "appmine.found_in_apps": "Nalezená média podle aplikací",
+    "appmine.no_media_found": "Žádná média nenalezena",
+    "appmine.files": "souborů",
+    "appmine.view_files": "Zobrazit",
+    "appmine.recover_all": "Obnovit vše",
+    "appmine.recover_selected": "Obnovit vybrané",
+    "appmine.recover_all_apps": "Obnovit vše ze všech aplikací",
+    "appmine.no_extension": "bez přípony (detekce magic bytes)",
+    "appmine.encrypted_files": "šifrovaných souborů",
+    "appmine.encrypted_apps": "Šifrované aplikace",
+
     // Scenarios
     "nav.scenarios": "Scénáře",
     "scenario.title": "Scénáře",
@@ -612,6 +639,7 @@ const translations = {
     "scenario.step_dedup": "Řešení duplicit",
     "scenario.step_quarantine_cleanup": "Úklid karantény",
     "scenario.step_photorec": "PhotoRec recovery",
+    "scenario.step_app_mine": "Těžba z aplikací",
   },
 };
 
