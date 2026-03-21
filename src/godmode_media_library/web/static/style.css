@@ -6454,6 +6454,16 @@ button:focus-visible, a:focus-visible {
   backdrop-filter: blur(8px);
 }
 
+/* ── Fullscreen: hide all UI, pure media only ─────────────────────── */
+
+.slideshow-overlay:fullscreen .slideshow-controls,
+.slideshow-overlay:fullscreen .slideshow-top-bar,
+.slideshow-overlay:fullscreen .slideshow-info,
+.slideshow-overlay:fullscreen .slideshow-progress-track,
+.slideshow-overlay:fullscreen .slideshow-pause-indicator {
+  display: none !important;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {
