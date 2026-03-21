@@ -17,6 +17,7 @@ import * as timeline from "./pages/timeline.js";
 import * as map from "./pages/map.js";
 import * as pipeline from "./pages/pipeline.js";
 import * as doctor from "./pages/doctor.js";
+import * as recovery from "./pages/recovery.js";
 import * as reorganize from "./pages/reorganize.js";
 
 // ── Router ──────────────────────────────────────────
@@ -28,6 +29,7 @@ const pages = {
   similar,
   timeline,
   map,
+  recovery,
   reorganize,
 };
 

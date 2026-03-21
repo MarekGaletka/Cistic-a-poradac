@@ -4742,3 +4742,527 @@ button:focus-visible, a:focus-visible {
   .reorg-stat-grid { grid-template-columns: 1fr 1fr; }
   .reorg-step-label { display: none !important; }
 }
+
+/* ── Recovery page ────────────────────────────────── */
+
+.recovery-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.recovery-header {
+  margin-bottom: 24px;
+}
+
+.recovery-header h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.recovery-subtitle {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.recovery-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  border-bottom: 2px solid var(--color-border);
+  padding-bottom: 0;
+}
+
+.recovery-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s;
+  border-radius: 6px 6px 0 0;
+}
+
+.recovery-tab:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.recovery-tab.active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  font-weight: 600;
+}
+
+.recovery-tab-icon {
+  font-size: 1.1em;
+}
+
+.recovery-section {
+  animation: fadeIn 0.3s ease;
+}
+
+/* Stats row */
+.recovery-stats-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.recovery-stat-card {
+  flex: 1;
+  min-width: 120px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+}
+
+.recovery-stat-card.accent {
+  border-color: var(--color-accent);
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.recovery-stat-card.success {
+  border-color: #3fb950;
+  background: rgba(63, 185, 80, 0.06);
+}
+
+.recovery-stat-card.danger {
+  border-color: #f85149;
+  background: rgba(248, 81, 73, 0.06);
+}
+
+.recovery-stat-value {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.recovery-stat-card.accent .recovery-stat-value { color: var(--color-accent); }
+.recovery-stat-card.success .recovery-stat-value { color: #3fb950; }
+.recovery-stat-card.danger .recovery-stat-value { color: #f85149; }
+
+.recovery-stat-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+/* Feature cards */
+.recovery-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.recovery-feature-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 20px;
+  transition: border-color 0.2s;
+}
+
+.recovery-feature-card:hover {
+  border-color: var(--color-accent);
+}
+
+.recovery-feature-icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+}
+
+.recovery-feature-card h4 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.recovery-feature-card p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+/* Action center */
+.recovery-action-center {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.recovery-hint {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  margin-top: 8px;
+}
+
+/* Actions bar */
+.recovery-actions-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+
+/* File list */
+.recovery-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.recovery-file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--color-bg-secondary);
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.recovery-file-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.recovery-file-item.repaired {
+  opacity: 0.5;
+}
+
+.recovery-file-check input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.recovery-file-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+}
+
+.recovery-file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recovery-file-name {
+  font-size: 0.88rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recovery-file-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recovery-file-path {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recovery-file-actions {
+  flex-shrink: 0;
+}
+
+/* Buttons */
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  border-radius: 5px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-sm:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.btn-lg {
+  padding: 12px 32px;
+  font-size: 1rem;
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: opacity 0.2s;
+}
+
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.btn-secondary:hover { border-color: var(--color-accent); }
+
+.btn-danger {
+  background: rgba(248, 81, 73, 0.1);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-danger:hover { background: rgba(248, 81, 73, 0.2); }
+.btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.recovery-badge-danger {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(248, 81, 73, 0.1);
+  color: #f85149;
+  font-weight: 500;
+}
+
+/* Empty state */
+.recovery-empty-state {
+  text-align: center;
+  padding: 48px 20px;
+}
+
+.recovery-empty-icon {
+  font-size: 3rem;
+  margin-bottom: 12px;
+}
+
+.recovery-empty-state h3 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.recovery-empty-state p {
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+  margin: 0 0 16px;
+}
+
+.recovery-install-cmd {
+  display: inline-block;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+/* Progress */
+.recovery-progress {
+  margin-top: 16px;
+}
+
+.recovery-progress-bar {
+  height: 6px;
+  background: var(--color-bg-secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.recovery-progress-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.recovery-progress-text {
+  display: block;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+}
+
+/* Location cards */
+.recovery-locations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.recovery-location-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.recovery-location-icon {
+  font-size: 1.3rem;
+}
+
+.recovery-location-name {
+  font-weight: 500;
+  font-size: 0.88rem;
+}
+
+.recovery-location-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.recovery-location-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Section title */
+.recovery-section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 20px 0 10px;
+}
+
+/* Disk cards */
+.recovery-disk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.recovery-disk-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.recovery-disk-card:hover {
+  border-color: var(--color-accent);
+}
+
+.recovery-disk-card.selected {
+  border-color: var(--color-accent);
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.recovery-disk-icon {
+  font-size: 1.5rem;
+}
+
+.recovery-disk-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recovery-disk-name {
+  font-weight: 500;
+  font-size: 0.88rem;
+}
+
+.recovery-disk-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* PhotoRec config */
+.recovery-field {
+  margin-bottom: 12px;
+}
+
+.recovery-field label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.recovery-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  font-family: var(--font-mono);
+}
+
+.recovery-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.recovery-error {
+  color: #f85149;
+  padding: 20px;
+  text-align: center;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .recovery-card-grid { grid-template-columns: 1fr 1fr; }
+  .recovery-stats-row { flex-direction: column; }
+  .recovery-tabs { flex-wrap: wrap; }
+  .recovery-tab { padding: 8px 12px; font-size: 0.78rem; }
+  .recovery-disk-grid { grid-template-columns: 1fr; }
+  .recovery-locations-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .recovery-card-grid { grid-template-columns: 1fr; }
+  .recovery-actions-bar { flex-wrap: wrap; }
+}

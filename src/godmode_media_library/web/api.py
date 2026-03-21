@@ -1900,3 +1900,194 @@ def get_file_preview(request: Request, file_path: str) -> dict:
         return result
 
     return result
+
+
+# ── Recovery endpoints ────────────────────────────────────────────────
+
+
+class RecoverFilesRequest(BaseModel):
+    paths: list[str]
+    destination: str
+    delete_source: bool = False
+
+
+class RepairRequest(BaseModel):
+    path: str
+
+
+class PhotoRecRequest(BaseModel):
+    source: str
+    output_dir: str | None = None
+    file_types: list[str] | None = None
+
+
+class QuarantineDeleteRequest(BaseModel):
+    paths: list[str]
+
+
+class QuarantineRestoreRequest(BaseModel):
+    paths: list[str]
+    restore_to: str | None = None
+
+
+@router.get("/recovery/quarantine")
+def get_quarantine(request: Request):
+    """List all files in the quarantine."""
+    from ..recovery import list_quarantine
+
+    qroot = getattr(request.app.state, "quarantine_root", None)
+    entries = list_quarantine(Path(qroot) if qroot else None)
+    return {
+        "entries": [
+            {
+                "path": e.path,
+                "original_path": e.original_path,
+                "size": e.size,
+                "ext": e.ext,
+                "quarantine_date": e.quarantine_date,
+                "category": e.category,
+            }
+            for e in entries
+        ],
+        "total": len(entries),
+        "total_size": sum(e.size for e in entries),
+    }
+
+
+@router.post("/recovery/quarantine/restore")
+def restore_quarantine(request: Request, body: QuarantineRestoreRequest):
+    """Restore files from quarantine."""
+    from ..recovery import restore_from_quarantine
+
+    qroot = getattr(request.app.state, "quarantine_root", None)
+    return restore_from_quarantine(
+        body.paths,
+        quarantine_root=Path(qroot) if qroot else None,
+        restore_to=body.restore_to,
+    )
+
+
+@router.post("/recovery/quarantine/delete")
+def delete_quarantine(request: Request, body: QuarantineDeleteRequest):
+    """Permanently delete files from quarantine."""
+    from ..recovery import delete_from_quarantine
+
+    qroot = getattr(request.app.state, "quarantine_root", None)
+    return delete_from_quarantine(body.paths, quarantine_root=Path(qroot) if qroot else None)
+
+
+@router.post("/recovery/deep-scan")
+def start_deep_scan(request: Request, background_tasks: BackgroundTasks):
+    """Start a deep scan for hidden/lost media files (background task)."""
+    from ..recovery import deep_scan
+
+    task = _create_task("deep-scan")
+
+    def run_scan():
+        try:
+            result = deep_scan(
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result={
+                "locations_scanned": result.locations_scanned,
+                "files_found": result.files_found,
+                "total_size": result.total_size,
+                "files": result.files[:500],
+                "locations": result.locations,
+            })
+        except Exception as e:
+            logger.exception("Deep scan failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run_scan)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/recovery/recover-files")
+def start_recover_files(body: RecoverFilesRequest):
+    """Copy/move found files to a recovery destination."""
+    from ..recovery import recover_files
+    return recover_files(body.paths, body.destination, body.delete_source)
+
+
+@router.post("/recovery/integrity-check")
+def start_integrity_check(request: Request, background_tasks: BackgroundTasks):
+    """Check integrity of all cataloged media files (background task)."""
+    from ..recovery import check_integrity
+
+    task = _create_task("integrity-check")
+    catalog_path = str(request.app.state.catalog_path)
+
+    def run_check():
+        try:
+            result = check_integrity(
+                catalog_path=catalog_path,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result={
+                "total_checked": result.total_checked,
+                "healthy": result.healthy,
+                "corrupted": result.corrupted,
+                "repaired": result.repaired,
+                "errors": result.errors[:200],
+            })
+        except Exception as e:
+            logger.exception("Integrity check failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run_check)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/recovery/repair")
+def repair_single_file(body: RepairRequest):
+    """Attempt to repair a single corrupted file."""
+    from ..recovery import repair_file
+    return repair_file(body.path)
+
+
+@router.get("/recovery/photorec/status")
+def photorec_status():
+    """Check if PhotoRec is available."""
+    from ..recovery import check_photorec
+    return check_photorec()
+
+
+@router.get("/recovery/disks")
+def get_disks():
+    """List available disks for recovery."""
+    from ..recovery import list_disks
+    return {"disks": list_disks()}
+
+
+@router.post("/recovery/photorec/run")
+def start_photorec(background_tasks: BackgroundTasks, body: PhotoRecRequest):
+    """Start a PhotoRec recovery run (background task)."""
+    from ..recovery import check_photorec, run_photorec
+
+    check = check_photorec()
+    if not check["available"]:
+        raise HTTPException(status_code=400, detail="PhotoRec není nainstalován. Spusťte: brew install testdisk")
+
+    task = _create_task("photorec")
+
+    def run():
+        try:
+            result = run_photorec(
+                source=body.source,
+                output_dir=body.output_dir,
+                file_types=body.file_types,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result={
+                "files_recovered": result.files_recovered,
+                "total_size": result.total_size,
+                "output_dir": result.output_dir,
+                "files": result.files[:500],
+            })
+        except Exception as e:
+            logger.exception("PhotoRec failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started"}
