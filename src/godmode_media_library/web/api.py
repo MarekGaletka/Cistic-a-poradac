@@ -1480,6 +1480,17 @@ def stream_file(request: Request, file_path: str) -> StreamingResponse:
         ".aac": "audio/aac",
         ".wma": "audio/x-ms-wma",
         ".pdf": "application/pdf",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+        ".tiff": "image/tiff",
+        ".tif": "image/tiff",
+        ".heic": "image/heic",
+        ".heif": "image/heif",
+        ".svg": "image/svg+xml",
     }
     ext = full_path.suffix.lower()
     media_type = media_types.get(ext, "application/octet-stream")

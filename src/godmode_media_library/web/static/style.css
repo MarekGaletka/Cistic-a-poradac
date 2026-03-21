@@ -6197,6 +6197,22 @@ button:focus-visible, a:focus-visible {
   color: var(--fg);
 }
 
+/* ── Loop toggle in toolbar ────────────────────────────────────────── */
+
+.gallery-loop-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.gallery-loop-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 /* ── Slideshow overlay ────────────────────────────────────────────── */
 
 .slideshow-overlay {
@@ -6221,25 +6237,64 @@ button:focus-visible, a:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.3s ease;
+  cursor: pointer;
+}
+
+.slideshow-media-wrap.ss-fade-out {
+  animation: ssFadeOut 0.3s ease forwards;
+}
+
+.slideshow-media-wrap.ss-fade-in {
+  animation: ssFadeIn 0.5s ease forwards;
+}
+
+@keyframes ssFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes ssFadeIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .slideshow-image {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  animation: slideshowImageIn 0.5s ease;
-}
-
-@keyframes slideshowImageIn {
-  from { opacity: 0; transform: scale(0.97); }
-  to { opacity: 1; transform: scale(1); }
 }
 
 .slideshow-video {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+/* ── Slideshow pause indicator ────────────────────────────────────── */
+
+.slideshow-pause-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.5);
+  font-size: 4rem;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.4);
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+  backdrop-filter: blur(8px);
+}
+
+.slideshow-pause-indicator.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 /* ── Slideshow controls ───────────────────────────────────────────── */
@@ -6250,6 +6305,7 @@ button:focus-visible, a:focus-visible {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
+  align-items: center;
   gap: 8px;
   background: rgba(0, 0, 0, 0.6);
   padding: 8px 16px;
@@ -6261,6 +6317,13 @@ button:focus-visible, a:focus-visible {
 
 .slideshow-overlay:hover .slideshow-controls {
   opacity: 1;
+}
+
+.slideshow-separator {
+  width: 1px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 0 4px;
 }
 
 .slideshow-btn {
@@ -6281,6 +6344,11 @@ button:focus-visible, a:focus-visible {
 .slideshow-btn:hover {
   background: rgba(255, 255, 255, 0.25);
   transform: scale(1.1);
+}
+
+.slideshow-btn.ss-active {
+  background: rgba(59, 130, 246, 0.5);
+  color: #93c5fd;
 }
 
 /* ── Slideshow top bar ────────────────────────────────────────────── */
