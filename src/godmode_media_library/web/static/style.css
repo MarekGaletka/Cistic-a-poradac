@@ -3321,17 +3321,22 @@ button:focus-visible, a:focus-visible {
 /* ── Lightbox Favorite Button ──────────────────────── */
 
 .lightbox-fav-btn {
-  background: none;
-  border: 1px solid var(--border);
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  z-index: 1010;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.2);
   border-radius: var(--radius-sm);
-  padding: 6px 14px;
+  padding: 8px 16px;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 14px;
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: color 0.2s, border-color 0.2s;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
 
 .lightbox-fav-btn:hover {
