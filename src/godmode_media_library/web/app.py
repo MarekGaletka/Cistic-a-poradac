@@ -121,13 +121,17 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             _rate_limit_hits[client_ip].append(now)
             return await call_next(request)
 
-    # Security headers
+    # Security headers + no-cache for static assets (development)
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Prevent browser caching of JS/CSS so changes are picked up immediately
+        path = request.url.path
+        if path.endswith((".js", ".css", ".html")):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
 
     app.include_router(api_router, prefix="/api")
