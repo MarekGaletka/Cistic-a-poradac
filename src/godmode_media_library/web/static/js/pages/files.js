@@ -350,6 +350,7 @@ function resetAndReload() {
   _hasMore = true;
   _currentFiles = [];
   _totalLoaded = 0;
+  _loading = false;  // cancel any in-flight load so the new one can start
   if (_observer) { _observer.disconnect(); _observer = null; }
   updateDensityVisibility(_container);
   loadFiles();
