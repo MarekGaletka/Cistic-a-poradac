@@ -5428,6 +5428,94 @@ button:focus-visible, a:focus-visible {
   line-height: 1.4;
 }
 
+/* ── App mine file grid with thumbnails ────────────────────────────── */
+
+.appmine-file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.appmine-file-card {
+  flex-direction: column !important;
+  padding: 0 !important;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.appmine-file-card .recovery-file-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+}
+
+.appmine-file-card {
+  position: relative;
+}
+
+.appmine-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-hover);
+}
+
+.appmine-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.appmine-thumb-icon {
+  background: var(--surface-hover);
+}
+
+.appmine-thumb-fallback {
+  font-size: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.appmine-thumb-video {
+  position: absolute;
+  bottom: calc(100% - 80px);
+  right: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+}
+
+.appmine-file-card .recovery-file-info {
+  padding: 6px 8px;
+}
+
+.appmine-file-card .recovery-file-name {
+  font-size: 0.74rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.appmine-file-card .recovery-file-meta {
+  font-size: 0.66rem;
+}
+
 .appmine-decrypt-section {
   display: flex;
   align-items: center;

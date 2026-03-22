@@ -793,6 +793,51 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
         raise HTTPException(status_code=500, detail="Failed to generate thumbnail") from e
 
 
+@router.get("/preview/{file_path:path}")
+def get_preview(file_path: str, size: int = Query(default=120, le=400)) -> StreamingResponse:
+    """Generate a thumbnail preview for any file on disk (no catalog check).
+
+    Used by recovery/app-mine to preview files not yet in the catalog.
+    Only serves image thumbnails — no video frame extraction for speed.
+    """
+    full_path = Path(f"/{file_path}").resolve()
+
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = full_path.suffix.lower()
+    image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".gif", ".webp", ".heic", ".heif"}
+
+    if ext not in image_exts:
+        raise HTTPException(status_code=400, detail="Not a supported image")
+
+    try:
+        from PIL import Image
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Pillow not installed") from None
+
+    if ext in (".heic", ".heif"):
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except ImportError:
+            raise HTTPException(status_code=400, detail="pillow-heif required") from None
+
+    try:
+        with Image.open(full_path) as img:
+            img.thumbnail((size, size), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=75)
+            buf.seek(0)
+            return StreamingResponse(
+                buf,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
+    except (OSError, ValueError):
+        raise HTTPException(status_code=500, detail="Preview failed") from None
+
+
 @router.post("/scan")
 def start_scan(
     request: Request,

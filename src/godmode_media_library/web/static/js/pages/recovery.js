@@ -501,21 +501,28 @@ function _showAppFiles(container, appData) {
     <div class="recovery-actions-bar">
       <button class="btn-secondary" id="appmine-close-detail">${t("general.close")}</button>
       <button class="btn-secondary" id="appmine-select-all-files">${t("action.select_all")}</button>
-      <button class="btn-primary" id="appmine-recover-selected" disabled>\u{1F4E5} ${t("appmine.recover_selected")}</button>
+      <button class="btn-primary" id="appmine-recover-selected" disabled>\u{1F4E5} ${t("appmine.download_media")}</button>
     </div>
-    <div class="recovery-file-list">
-      ${files.map((f, i) => `
-        <div class="recovery-file-item">
+    <div class="recovery-file-list appmine-file-grid">
+      ${files.map((f, i) => {
+        const isImage = f.category === "image";
+        const isVideo = f.category === "video";
+        const thumbSrc = isImage ? `/api/preview${encodeURI(f.path)}?size=160` : "";
+        return `
+        <div class="recovery-file-item appmine-file-card">
           <label class="recovery-file-check">
             <input type="checkbox" data-path="${_escHtml(f.path)}" class="af-check">
           </label>
-          <div class="recovery-file-icon">${_categoryIcon(f.category)}</div>
+          <div class="appmine-thumb${isImage ? '' : ' appmine-thumb-icon'}">
+            ${isImage ? `<img src="${thumbSrc}" loading="lazy" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="appmine-thumb-fallback" style="display:none">${_categoryIcon(f.category)}</span>` : `<span class="appmine-thumb-fallback">${_categoryIcon(f.category)}</span>`}
+            ${isVideo ? '<span class="appmine-thumb-video">\u25B6</span>' : ''}
+          </div>
           <div class="recovery-file-info">
-            <span class="recovery-file-name">${_escHtml(f.name)}</span>
+            <span class="recovery-file-name" title="${_escHtml(f.name)}">${_escHtml(f.name)}</span>
             <span class="recovery-file-meta">${f.ext || t("appmine.no_extension")} \u2022 ${_formatSize(f.size)}</span>
           </div>
         </div>
-      `).join("")}
+      `;}).join("")}
     </div>
     ${appData.files_found > 100 ? `<p class="recovery-hint">${t("recovery.showing_first", { count: 100, total: appData.files_found })}</p>` : ""}
   `;
