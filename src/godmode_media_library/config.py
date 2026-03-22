@@ -31,6 +31,10 @@ class GMLConfig:
     min_samples: int = 2
     scan_workers: int = 4
 
+    # Cache
+    thumbnail_cache: bool = True  # Persist generated thumbnails on disk
+    thumbnail_cache_dir: str = ""  # Custom path (empty = ~/.config/gml/cache/thumbnails)
+
     # Deduplication rules
     dedup_strategy: str = "richness"  # richness | newest | largest | manual
     dedup_similarity_threshold: int = 10  # Hamming distance for perceptual hash similarity

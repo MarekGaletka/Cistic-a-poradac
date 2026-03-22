@@ -9,6 +9,7 @@ const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
 
 let _collections = {};
 let _activeCollection = "best_of";
+let _offlineRoots = [];  // roots that are currently offline
 let _slideshowActive = false;
 let _slideshowTimer = null;
 let _slideshowIndex = 0;
@@ -109,8 +110,14 @@ export function destroy() {
 
 async function _loadCollections() {
   try {
-    const data = await api("/gallery/collections");
+    const [data, srcData] = await Promise.all([
+      api("/gallery/collections"),
+      api("/sources").catch(() => null),
+    ]);
     _collections = data.collections || {};
+    _offlineRoots = (srcData?.sources || [])
+      .filter(s => !s.online)
+      .map(s => s.path);
     _renderCollections();
   } catch (e) {
     console.error("Failed to load collections:", e);
@@ -118,6 +125,10 @@ async function _loadCollections() {
       <div class="gallery-empty">${t("gallery.load_error")}</div>
     `;
   }
+}
+
+function _isOffline(filePath) {
+  return _offlineRoots.some(root => filePath.startsWith(root));
 }
 
 async function _loadCollection(name) {
@@ -225,9 +236,10 @@ function _renderGrid(files) {
       const name = fileName(f.path);
       const tierColor = TIER_COLORS[f.tier] || "#6b7280";
       const scoreDisplay = Math.round(f.total);
+      const offline = _isOffline(f.path);
 
       return `
-        <div class="gallery-item" data-index="${idx}" data-path="${escapeHtml(f.path)}">
+        <div class="gallery-item${offline ? ' gallery-item-offline' : ''}" data-index="${idx}" data-path="${escapeHtml(f.path)}">
           <div class="gallery-thumb">
             ${
               isImage || isVideo
@@ -240,6 +252,7 @@ function _renderGrid(files) {
               ${scoreDisplay}
             </div>
             <div class="gallery-tier-label">${t("gallery.tier_" + f.tier)}</div>
+            ${offline ? '<div class="gallery-offline-badge" title="' + t("dashboard.source_offline") + '">\uD83D\uDD34</div>' : ''}
           </div>
           <div class="gallery-item-info">
             <div class="gallery-item-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>

@@ -171,19 +171,22 @@ async function renderDashboard(container, stats) {
   let memoriesData = null;
   let favoritesCount = 0;
   let tagsData = [];
+  let sourcesData = null;
   try {
-    const [rootsData, sysData, memData, favsData, tagsResult] = await Promise.all([
+    const [rootsData, sysData, memData, favsData, tagsResult, srcData] = await Promise.all([
       api("/roots").catch(() => ({ roots: [] })),
       api("/system-info").catch(() => null),
       api("/memories").catch(() => null),
       api("/files/favorites").catch(() => ({ count: 0 })),
       loadTags().catch(() => []),
+      api("/sources").catch(() => null),
     ]);
     roots = rootsData.roots || [];
     sysInfo = sysData;
     memoriesData = memData;
     favoritesCount = favsData?.count ?? 0;
     tagsData = tagsResult || [];
+    sourcesData = srcData;
   } catch {
     // silent
   }
@@ -262,10 +265,41 @@ async function renderDashboard(container, stats) {
     html += `</div>`;
   }
 
-  // Managed folders section
+  // Sources / managed folders section
+  const sources = sourcesData?.sources || [];
   html += `<div class="dashboard-section" style="margin-top:16px">
-    <h3>${t("dashboard.managed_folders")}</h3>`;
-  if (roots.length > 0) {
+    <h3>${t("dashboard.sources")}</h3>`;
+  if (sources.length > 0) {
+    html += `<div class="sources-grid">`;
+    for (const src of sources) {
+      const statusClass = src.online ? "source-online" : "source-offline";
+      const statusIcon = src.online ? "\u{1F7E2}" : "\u{1F534}";
+      const statusLabel = src.online ? t("dashboard.source_online") : t("dashboard.source_offline");
+      const lastScanLabel = src.last_scan
+        ? t("dashboard.source_last_scan", { date: new Date(src.last_scan).toLocaleDateString("cs") })
+        : "";
+      html += `<div class="source-card ${statusClass}">
+        <div class="source-card-header">
+          <span class="source-status-dot">${statusIcon}</span>
+          <span class="source-name">${escapeHtml(src.name)}</span>
+          <span class="source-status-label">${statusLabel}</span>
+        </div>
+        <div class="source-card-path">${escapeHtml(src.path)}</div>
+        <div class="source-card-stats">
+          <span>${src.file_count.toLocaleString()} ${t("dashboard.source_files")}</span>
+          <span>${formatBytes(src.total_size)}</span>
+        </div>
+        ${lastScanLabel ? `<div class="source-card-scan">${lastScanLabel}</div>` : ""}
+        ${src.online ? `<button class="source-sync-btn" data-root="${escapeHtml(src.path)}">${t("dashboard.source_sync")}</button>` : ""}
+      </div>`;
+    }
+    html += `</div>`;
+    // Thumbnail cache info
+    const cache = sourcesData?.thumbnail_cache;
+    if (cache && cache.count > 0) {
+      html += `<div class="source-cache-info">${t("dashboard.thumb_cache", { count: cache.count.toLocaleString(), size: formatBytes(cache.size) })}</div>`;
+    }
+  } else if (roots.length > 0) {
     html += `<div style="display:flex;flex-wrap:wrap;gap:6px">`;
     for (const root of roots) {
       const name = root.split("/").pop() || root;
@@ -433,6 +467,24 @@ async function renderDashboard(container, stats) {
       if (settingsBtn) settingsBtn.click();
     });
   }
+
+  // Bind source sync buttons (incremental scan for a single root)
+  container.querySelectorAll(".source-sync-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const root = btn.dataset.root;
+      btn.disabled = true;
+      btn.textContent = t("general.loading");
+      try {
+        const data = await apiPost("/pipeline", { roots: [root], workers: 1, extract_exiftool: true });
+        showToast(t("dashboard.source_sync_started", { name: root.split("/").pop() }), "info");
+        showGlobalProgress(data.task_id);
+      } catch (e) {
+        showToast(e.message, "error");
+        btn.disabled = false;
+        btn.textContent = t("dashboard.source_sync");
+      }
+    });
+  });
 
   // Bind smart view cards
   container.querySelectorAll(".smart-view-card").forEach(btn => {

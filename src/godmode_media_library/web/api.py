@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import io
 import json
 import logging
@@ -703,9 +704,36 @@ def get_deps() -> dict:
     }
 
 
+def _thumb_cache_dir() -> Path:
+    """Return the persistent thumbnail cache directory."""
+    return Path.home() / ".config" / "gml" / "cache" / "thumbnails"
+
+
+def _thumb_cache_key(path: str, size: int) -> str:
+    """Deterministic cache key from file path + size."""
+    return hashlib.sha256(f"{path}:{size}".encode()).hexdigest()
+
+
+def _thumb_cache_get(path: str, size: int) -> bytes | None:
+    """Read cached thumbnail bytes or None."""
+    cache_dir = _thumb_cache_dir()
+    cache_file = cache_dir / f"{_thumb_cache_key(path, size)}.jpg"
+    if cache_file.exists():
+        return cache_file.read_bytes()
+    return None
+
+
+def _thumb_cache_put(path: str, size: int, data: bytes) -> None:
+    """Write thumbnail bytes to cache."""
+    cache_dir = _thumb_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{_thumb_cache_key(path, size)}.jpg"
+    cache_file.write_bytes(data)
+
+
 @router.get("/thumbnail/{file_path:path}")
 def get_thumbnail(request: Request, file_path: str, size: int = Query(default=200, le=800)) -> StreamingResponse:
-    """Generate and serve a thumbnail for an image file."""
+    """Generate and serve a thumbnail for an image file. Uses persistent disk cache."""
     full_path = Path(f"/{file_path}").resolve()
 
     # Security: verify the file is within the catalog (exists in DB)
@@ -716,6 +744,15 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             raise HTTPException(status_code=404, detail="File not found in catalog")
     finally:
         cat.close()
+
+    # Try cached thumbnail first (works even when source disk is offline)
+    cached = _thumb_cache_get(str(full_path), size)
+    if cached is not None:
+        return StreamingResponse(
+            io.BytesIO(cached),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
@@ -757,10 +794,11 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             with Image.open(tmp_path) as img:
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=80)
-                buf.seek(0)
+                thumb_bytes = buf.getvalue()
             Path(tmp_path).unlink(missing_ok=True)
+            _thumb_cache_put(str(full_path), size, thumb_bytes)
             return StreamingResponse(
-                buf,
+                io.BytesIO(thumb_bytes),
                 media_type="image/jpeg",
                 headers={"Cache-Control": "public, max-age=86400"},
             )
@@ -782,9 +820,10 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             img.thumbnail((size, size), Image.LANCZOS)
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=80)
-            buf.seek(0)
+            thumb_bytes = buf.getvalue()
+            _thumb_cache_put(str(full_path), size, thumb_bytes)
             return StreamingResponse(
-                buf,
+                io.BytesIO(thumb_bytes),
                 media_type="image/jpeg",
                 headers={"Cache-Control": "public, max-age=86400"},
             )
@@ -1492,6 +1531,83 @@ def remove_root(request: Request, body: RemoveRootRequest) -> dict:
     roots = [r for r in roots if r != path_to_remove]
     _set_configured_roots(request, roots)
     return {"removed": True, "roots": roots}
+
+
+@router.get("/sources")
+def get_sources(request: Request) -> dict:
+    """Check availability of all configured roots and scanned root prefixes.
+
+    Returns each source with online/offline status and file counts.
+    Works without requiring the source to be currently mounted.
+    """
+    cat = _open_catalog(request)
+    try:
+        # Gather roots from config + distinct path prefixes from catalog
+        configured = _get_configured_roots(request)
+
+        # Also discover roots from scan history
+        scan_roots: list[str] = []
+        try:
+            for row in cat.conn.execute("SELECT DISTINCT root FROM scans"):
+                for r in (row[0] or "").split(";"):
+                    r = r.strip()
+                    if r:
+                        scan_roots.append(r)
+        except Exception:
+            pass
+
+        all_roots = list(dict.fromkeys(configured + scan_roots))  # dedupe, preserve order
+
+        sources = []
+        for root in all_roots:
+            root_path = Path(root)
+            online = root_path.exists() and root_path.is_dir()
+
+            # Count files in catalog under this root
+            count_row = cat.conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM files WHERE path LIKE ? || '%'",
+                (root.rstrip("/"),),
+            ).fetchone()
+            file_count = count_row[0] if count_row else 0
+            total_size = count_row[1] if count_row else 0
+
+            # Last scan time for this root
+            last_scan_row = cat.conn.execute(
+                "SELECT MAX(finished_at) FROM scans WHERE root LIKE '%' || ? || '%'",
+                (root,),
+            ).fetchone()
+            last_scan = last_scan_row[0] if last_scan_row else None
+
+            sources.append({
+                "path": root,
+                "name": root_path.name or root,
+                "online": online,
+                "file_count": file_count,
+                "total_size": total_size,
+                "last_scan": last_scan,
+                "configured": root in configured,
+            })
+
+        # Thumbnail cache stats
+        cache_dir = _thumb_cache_dir()
+        cache_count = 0
+        cache_size = 0
+        if cache_dir.exists():
+            for f in cache_dir.iterdir():
+                if f.suffix == ".jpg":
+                    cache_count += 1
+                    cache_size += f.stat().st_size
+
+        return {
+            "sources": sources,
+            "thumbnail_cache": {
+                "path": str(cache_dir),
+                "count": cache_count,
+                "size": cache_size,
+            },
+        }
+    finally:
+        cat.close()
 
 
 # ── Video streaming ───────────────────────────────────────────────────
