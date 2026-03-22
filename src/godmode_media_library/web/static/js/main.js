@@ -22,6 +22,7 @@ import * as scenarios from "./pages/scenarios.js";
 import * as reorganize from "./pages/reorganize.js";
 import * as gallery from "./pages/gallery.js";
 import * as people from "./pages/people.js";
+import * as cloud from "./pages/cloud.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -37,6 +38,7 @@ const pages = {
   scenarios,
   reorganize,
   people,
+  cloud,
 };
 
 let _currentPage = null;

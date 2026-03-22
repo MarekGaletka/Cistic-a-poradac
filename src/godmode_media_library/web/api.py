@@ -15,7 +15,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..catalog import Catalog
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
@@ -1832,7 +1835,7 @@ def _detect_language(ext: str) -> str:
 @router.get("/config/dedup-rules")
 async def get_dedup_rules(request: Request):
     """Get current deduplication rules."""
-    from ..config import load_config, _global_config_path
+    from ..config import load_config
     config = load_config()
     return {
         "strategy": config.dedup_strategy,
@@ -1849,8 +1852,9 @@ async def get_dedup_rules(request: Request):
 @router.put("/config/dedup-rules")
 async def put_dedup_rules(request: Request, body: DedupRulesRequest):
     """Update deduplication rules. Saves to global config.toml."""
-    from ..config import _global_config_path, load_config
     import tomllib
+
+    from ..config import _global_config_path
 
     config_path = _global_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2940,7 +2944,143 @@ def create_person(request: Request, body: PersonRenameRequest):
         cat.close()
 
 
-def _sync_person_labels(cat: "Catalog", person_id: int) -> None:
+# ── Cloud API ──────────────────────────────────────────────────────
+
+
+class CloudSyncRequest(BaseModel):
+    remote: str
+    remote_path: str = ""
+    local_path: str = ""
+    include_pattern: str = "*.{jpg,jpeg,png,heic,heif,mp4,mov,avi,mkv,mp3,m4a}"
+    dry_run: bool = False
+
+
+class CloudMountRequest(BaseModel):
+    remote: str
+    mount_point: str = ""
+
+
+@router.get("/cloud/status")
+def cloud_status():
+    """Get cloud storage status — rclone remotes + native paths."""
+    from godmode_media_library.cloud import get_cloud_status
+    return get_cloud_status()
+
+
+@router.get("/cloud/remotes")
+def cloud_remotes():
+    """List configured rclone remotes."""
+    from godmode_media_library.cloud import check_rclone, list_remotes, rclone_version
+    if not check_rclone():
+        return {"installed": False, "remotes": [], "version": None}
+    return {
+        "installed": True,
+        "version": rclone_version(),
+        "remotes": [{"name": r.name, "type": r.type, "label": r.provider_label, "icon": r.icon} for r in list_remotes()],
+    }
+
+
+@router.get("/cloud/native")
+def cloud_native_paths():
+    """Detect natively synced cloud storage paths (iCloud, MEGA, pCloud, etc.)."""
+    from godmode_media_library.cloud import detect_native_cloud_paths
+    paths = detect_native_cloud_paths()
+    return {"paths": paths, "count": len(paths)}
+
+
+@router.get("/cloud/providers")
+def cloud_providers():
+    """List supported cloud providers with setup instructions."""
+    from godmode_media_library.cloud import PROVIDERS, provider_setup_guide
+    result = {}
+    for key in PROVIDERS:
+        result[key] = provider_setup_guide(key)
+    return {"providers": result}
+
+
+@router.get("/cloud/providers/{provider_key}")
+def cloud_provider_guide(provider_key: str):
+    """Get setup guide for a specific cloud provider."""
+    from godmode_media_library.cloud import provider_setup_guide
+    guide = provider_setup_guide(provider_key)
+    if "error" in guide:
+        raise HTTPException(404, guide["error"])
+    return guide
+
+
+@router.get("/cloud/remote/{remote_name}/browse")
+def cloud_browse(remote_name: str, path: str = Query("")):
+    """Browse files/folders in a remote."""
+    from godmode_media_library.cloud import rclone_ls
+    try:
+        items = rclone_ls(remote_name, path)
+        return {"remote": remote_name, "path": path, "items": items}
+    except RuntimeError as e:
+        raise HTTPException(500, str(e)) from e
+
+
+@router.get("/cloud/remote/{remote_name}/about")
+def cloud_remote_about(remote_name: str):
+    """Get storage usage for a remote (total, used, free)."""
+    from godmode_media_library.cloud import rclone_about
+    return rclone_about(remote_name)
+
+
+@router.post("/cloud/sync")
+def cloud_sync(request: Request, background: BackgroundTasks, body: CloudSyncRequest):
+    """Start background sync (download) from cloud to local."""
+    task = _create_task("cloud_sync")
+
+    def _run():
+        try:
+            from godmode_media_library.cloud import default_sync_dir, rclone_copy
+
+            local = body.local_path or str(default_sync_dir() / body.remote)
+            result = rclone_copy(
+                body.remote, body.remote_path, local,
+                include_pattern=body.include_pattern,
+                dry_run=body.dry_run,
+            )
+            task.result = {
+                "remote": result.remote,
+                "local_path": result.local_path,
+                "files_transferred": result.files_transferred,
+                "errors": result.errors,
+                "elapsed_seconds": round(result.elapsed_seconds, 1),
+            }
+            task.status = "completed"
+        except Exception as exc:
+            task.status = "failed"
+            task.error = str(exc)
+            logger.exception("Cloud sync task failed")
+        task.finished_at = datetime.now(timezone.utc).isoformat()
+        _notify_ws(task.id, _task_to_msg(task))
+
+    background.add_task(_run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/cloud/mount")
+def cloud_mount_remote(body: CloudMountRequest):
+    """Mount a remote as a local filesystem."""
+    from godmode_media_library.cloud import rclone_mount
+    try:
+        path, success = rclone_mount(body.remote, body.mount_point or None)
+        return {"mount_path": path, "success": success}
+    except RuntimeError as e:
+        raise HTTPException(500, str(e)) from e
+
+
+@router.post("/cloud/unmount")
+def cloud_unmount_remote(body: CloudMountRequest):
+    """Unmount a FUSE mount."""
+    from godmode_media_library.cloud import rclone_unmount
+    mount_point = body.mount_point or str(Path.home() / "mnt" / body.remote)
+    success = rclone_unmount(mount_point)
+    return {"mount_point": mount_point, "success": success}
+
+
+def _sync_person_labels(cat: Catalog, person_id: int) -> None:
     """Sync labels table when person name changes — update people column for all files with this person's faces."""
     faces = cat.get_faces_for_person(person_id, limit=100000)
     file_ids = {f["file_id"] for f in faces}
