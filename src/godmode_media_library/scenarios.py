@@ -274,11 +274,13 @@ def get_templates() -> list[dict]:
         {
             "id": "tpl_full_disk",
             "name": "Kompletní zpracování disku",
-            "description": "Recovery → kontrola integrity → sken → deduplikace → reorganizace",
+            "description": "Recovery → těžba z aplikací → sken → deduplikace → reorganizace",
             "icon": "\U0001f4bd",
             "color": "#58a6ff",
             "steps": [
                 {"type": "deep_scan", "config": {}, "enabled": True},
+                {"type": "app_download", "config": {}, "enabled": True},
+                {"type": "signal_decrypt", "config": {}, "enabled": True},
                 {"type": "integrity_check", "config": {}, "enabled": True},
                 {"type": "scan", "config": {"workers": 4}, "enabled": True},
                 {"type": "dedup_resolve", "config": {"strategy": "richness"}, "enabled": True},
@@ -328,6 +330,19 @@ def get_templates() -> list[dict]:
             "icon": "\u26a1",
             "color": "#a371f7",
             "steps": [
+                {"type": "scan", "config": {"workers": 4}, "enabled": True},
+                {"type": "dedup_resolve", "config": {"strategy": "richness"}, "enabled": True},
+            ],
+        },
+        {
+            "id": "tpl_app_harvest",
+            "name": "Těžba médií z aplikací",
+            "description": "Prohledá WhatsApp, Telegram, Signal a další → stáhne média → sken → deduplikace",
+            "icon": "\U0001f4f1",
+            "color": "#ec4899",
+            "steps": [
+                {"type": "app_download", "config": {}, "enabled": True},
+                {"type": "signal_decrypt", "config": {}, "enabled": True},
                 {"type": "scan", "config": {"workers": 4}, "enabled": True},
                 {"type": "dedup_resolve", "config": {"strategy": "richness"}, "enabled": True},
             ],
