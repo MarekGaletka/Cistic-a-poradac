@@ -311,6 +311,8 @@ def get_files(
     tag_id: int | None = None,
     min_rating: int | None = None,
     has_notes: bool | None = None,
+    sort: str | None = None,
+    order: str | None = None,
     limit: int = Query(default=500, le=10000),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
@@ -356,6 +358,8 @@ def get_files(
                 camera=camera,
                 has_gps=has_gps,
                 has_phash=has_phash,
+                sort=sort,
+                order=order,
                 limit=100000,
                 offset=0,
             )
@@ -395,6 +399,8 @@ def get_files(
                 camera=camera,
                 has_gps=has_gps,
                 has_phash=has_phash,
+                sort=sort,
+                order=order,
                 limit=limit + 1,
                 offset=offset,
             )

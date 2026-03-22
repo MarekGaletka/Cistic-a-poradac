@@ -805,6 +805,8 @@ class Catalog:
         min_width: int | None = None,
         has_gps: bool | None = None,
         has_phash: bool | None = None,
+        sort: str | None = None,
+        order: str | None = None,
         limit: int = 10000,
         offset: int = 0,
     ) -> list[CatalogFileRow]:
@@ -861,7 +863,20 @@ class Catalog:
             conditions.append("phash IS NULL")
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        sql = f"SELECT * FROM files WHERE {where} ORDER BY path LIMIT ? OFFSET ?"  # noqa: S608
+
+        # Dynamic sort — whitelist columns to prevent SQL injection
+        _SORT_MAP = {
+            "date": "COALESCE(date_original, birthtime, mtime)",
+            "name": "path",
+            "size": "size",
+            "ext": "ext",
+            "rating": "metadata_richness",
+            "path": "path",
+        }
+        sort_col = _SORT_MAP.get(sort or "", "COALESCE(date_original, birthtime, mtime)")
+        sort_dir = "ASC" if (order or "").lower() == "asc" else "DESC"
+
+        sql = f"SELECT * FROM files WHERE {where} ORDER BY {sort_col} {sort_dir} LIMIT ? OFFSET ?"  # noqa: S608
         params.append(limit)
         params.append(offset)
 
