@@ -591,6 +591,13 @@ const translations = {
     "appmine.no_extension": "bez přípony (detekce magic bytes)",
     "appmine.encrypted_files": "šifrovaných souborů",
     "appmine.encrypted_apps": "Šifrované aplikace",
+    "appmine.signal_decrypt": "Dešifrovat a vytěžit",
+    "appmine.signal_decrypt_hint": "Přečte klíč z macOS Keychain (vyžaduje autorizaci)",
+    "appmine.signal_decrypt_destination": "Kam uložit dešifrovaná média ze Signalu?",
+    "appmine.signal_decrypting": "Dešifruji\u2026",
+    "appmine.signal_decrypt_success": "Dešifrováno {count} souborů ({size})",
+    "appmine.signal_decrypt_none": "Žádná média se nepodařilo dešifrovat",
+    "appmine.signal_decrypt_unavailable": "Dešifrování není k dispozici — chybí požadované nástroje",
 
     // Gallery & Slideshow
     "nav.gallery": "Galerie",

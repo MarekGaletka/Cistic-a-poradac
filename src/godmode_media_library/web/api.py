@@ -2290,6 +2290,45 @@ def run_scenario(scenario_id: str, request: Request, background_tasks: Backgroun
     return {"task_id": task.id, "status": "started", "scenario": sc["name"]}
 
 
+# ── Signal decryption ─────────────────────────────────────────────────
+
+
+class SignalDecryptRequest(BaseModel):
+    destination: str
+
+
+@router.get("/recovery/signal/status")
+def signal_decrypt_status():
+    """Check if Signal decryption is possible."""
+    from ..recovery import check_signal_decrypt
+    return check_signal_decrypt()
+
+
+@router.post("/recovery/signal/decrypt")
+def start_signal_decrypt(
+    background_tasks: BackgroundTasks,
+    body: SignalDecryptRequest,
+):
+    """Decrypt Signal attachments and save to destination (background task)."""
+    from ..recovery import decrypt_signal_attachments
+
+    task = _create_task("signal-decrypt")
+
+    def run():
+        try:
+            result = decrypt_signal_attachments(
+                destination=body.destination,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("Signal decryption failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started"}
+
+
 # ── Gallery & Smart Scoring ──────────────────────────────────────────
 
 @router.get("/gallery/highlights")

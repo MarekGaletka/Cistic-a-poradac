@@ -5428,6 +5428,36 @@ button:focus-visible, a:focus-visible {
   line-height: 1.4;
 }
 
+.appmine-decrypt-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.signal-decrypt-btn {
+  background: #3A76F0 !important;
+  color: #fff !important;
+  border: none !important;
+  font-weight: 600;
+}
+
+.signal-decrypt-btn:hover {
+  background: #2563eb !important;
+}
+
+.signal-decrypt-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.signal-decrypt-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .appmine-app-note {
   font-size: 0.8rem;
   cursor: help;

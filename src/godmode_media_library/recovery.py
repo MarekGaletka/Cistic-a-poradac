@@ -288,9 +288,10 @@ _APP_SOURCES: list[dict[str, Any]] = [
         "paths": [
             Path.home() / "Library" / "Application Support" / "Signal" / "attachments.noindex",
         ],
-        "extensionless": True,  # Signal stores files without extensions
-        "encrypted": True,  # Signal encrypts attachments at rest — magic bytes won't work
-        "note": "Signal šifruje přílohy. Média lze exportovat pouze přímo z aplikace Signal.",
+        "extensionless": True,
+        "encrypted": True,
+        "decryptable": True,  # We can decrypt via SQLCipher + Keychain
+        "note": "Signal šifruje přílohy. Klikněte na 'Dešifrovat' pro extrakci médií.",
     },
     {
         "id": "telegram",
@@ -676,6 +677,7 @@ def get_available_apps() -> list[dict]:
             "category": source["category"],
             "available": available,
             "encrypted": source.get("encrypted", False),
+            "decryptable": source.get("decryptable", False),
             "note": source.get("note", ""),
         })
     return apps
@@ -1071,6 +1073,420 @@ def run_photorec(
             "phase": "complete",
             "files_recovered": result.files_recovered,
             "total_size": result.total_size,
+        })
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 5. Signal decryption
+# ---------------------------------------------------------------------------
+
+_SIGNAL_DB_PATH = Path.home() / "Library" / "Application Support" / "Signal" / "sql" / "db.sqlite"
+_SIGNAL_ATTACH_DIR = Path.home() / "Library" / "Application Support" / "Signal" / "attachments.noindex"
+_SIGNAL_KEYCHAIN_SERVICE = "Signal Safe Storage"
+_SIGNAL_KEYCHAIN_ACCOUNT = "Signal Key"
+
+
+def check_signal_decrypt() -> dict:
+    """Check if Signal decryption is possible.
+
+    Returns status dict with:
+      - possible: bool — all prerequisites met
+      - db_exists: bool
+      - attachments_exist: bool
+      - sqlcipher_available: bool
+      - keychain_accessible: bool
+      - attachment_count: int
+      - error: str | None
+    """
+    result = {
+        "possible": False,
+        "db_exists": _SIGNAL_DB_PATH.exists(),
+        "attachments_exist": _SIGNAL_ATTACH_DIR.exists(),
+        "sqlcipher_available": False,
+        "keychain_accessible": False,
+        "attachment_count": 0,
+        "error": None,
+    }
+
+    # Count attachments
+    if result["attachments_exist"]:
+        try:
+            count = 0
+            for _, _, files in os.walk(_SIGNAL_ATTACH_DIR):
+                count += len(files)
+            result["attachment_count"] = count
+        except OSError:
+            pass
+
+    # Check sqlcipher
+    try:
+        import pysqlcipher3.dbapi2  # noqa: F401
+        result["sqlcipher_available"] = True
+    except ImportError:
+        # Try system sqlcipher via subprocess (check Homebrew paths too)
+        sqlcipher_bin = shutil.which("sqlcipher")
+        if not sqlcipher_bin:
+            for prefix in ("/opt/homebrew/bin", "/usr/local/bin"):
+                candidate = os.path.join(prefix, "sqlcipher")
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    sqlcipher_bin = candidate
+                    break
+        try:
+            subprocess.run(
+                [sqlcipher_bin or "sqlcipher", "--version"],
+                capture_output=True, timeout=5,
+            )
+            result["sqlcipher_available"] = True
+        except (FileNotFoundError, subprocess.TimeoutExpired, TypeError):
+            result["error"] = "SQLCipher není nainstalován. Spusťte: pip install pysqlcipher3  nebo  brew install sqlcipher"
+            return result
+
+    # Check keychain entry exists (without reading value — that requires user auth)
+    try:
+        proc = subprocess.run(
+            [
+                "security", "find-generic-password",
+                "-s", _SIGNAL_KEYCHAIN_SERVICE,
+                "-a", _SIGNAL_KEYCHAIN_ACCOUNT,
+            ],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0:
+            result["keychain_accessible"] = True
+        else:
+            result["error"] = "Signal klíč nenalezen v Keychain. Je Signal Desktop nainstalován?"
+            return result
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        result["error"] = f"Chyba při přístupu ke Keychain: {e}"
+        return result
+
+    result["possible"] = (
+        result["db_exists"]
+        and result["attachments_exist"]
+        and result["sqlcipher_available"]
+        and result["keychain_accessible"]
+    )
+    return result
+
+
+def _get_signal_key() -> str | None:
+    """Read Signal's SQLCipher encryption key from macOS Keychain."""
+    try:
+        proc = subprocess.run(
+            [
+                "security", "find-generic-password",
+                "-s", _SIGNAL_KEYCHAIN_SERVICE,
+                "-a", _SIGNAL_KEYCHAIN_ACCOUNT,
+                "-w",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _open_signal_db(key: str):
+    """Open Signal's SQLCipher database and return connection.
+
+    Tries pysqlcipher3 first, falls back to sqlcipher CLI.
+    """
+    try:
+        import pysqlcipher3.dbapi2 as sqlcipher
+        conn = sqlcipher.connect(str(_SIGNAL_DB_PATH))
+        conn.execute(f"PRAGMA key = \"x'{key}'\"")
+        conn.execute("PRAGMA cipher_compatibility = 4")
+        # Verify access
+        conn.execute("SELECT count(*) FROM sqlite_master")
+        return conn
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning("pysqlcipher3 failed: %s, trying CLI", e)
+
+    # Fallback: use sqlcipher CLI
+    return None
+
+
+def _find_sqlcipher_bin() -> str:
+    """Find sqlcipher binary, checking Homebrew paths."""
+    resolved = shutil.which("sqlcipher")
+    if resolved:
+        return resolved
+    for prefix in ("/opt/homebrew/bin", "/usr/local/bin"):
+        candidate = os.path.join(prefix, "sqlcipher")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "sqlcipher"
+
+
+def _query_signal_attachments_cli(key: str) -> list[dict]:
+    """Query Signal attachments via sqlcipher CLI."""
+    query = """
+        SELECT
+            json_extract(json, '$.path') as path,
+            json_extract(json, '$.contentType') as content_type,
+            json_extract(json, '$.size') as size,
+            json_extract(json, '$.fileName') as file_name,
+            json_extract(json, '$.localKey') as local_key,
+            json_extract(json, '$.width') as width,
+            json_extract(json, '$.height') as height
+        FROM messages
+        WHERE json_extract(json, '$.hasAttachments') = 1
+        LIMIT 10000;
+    """
+    try:
+        proc = subprocess.run(
+            [
+                _find_sqlcipher_bin(), str(_SIGNAL_DB_PATH),
+                f"PRAGMA key = \"x'{key}'\";",
+                "PRAGMA cipher_compatibility = 4;",
+                ".mode json",
+                query,
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return json.loads(proc.stdout)
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        logger.error("sqlcipher CLI failed: %s", e)
+    return []
+
+
+def decrypt_signal_attachments(
+    destination: str,
+    progress_fn: Callable | None = None,
+) -> dict:
+    """Decrypt and export Signal media attachments.
+
+    Reads encryption keys from Signal's SQLCipher database (via macOS Keychain),
+    then decrypts each attachment and saves it with the correct file extension.
+
+    Args:
+        destination: Directory to save decrypted files
+        progress_fn: Progress callback
+
+    Returns:
+        Dict with: decrypted, skipped, errors, total_size, files
+    """
+    import base64
+    import hashlib
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.backends import default_backend
+
+    result = {
+        "decrypted": 0,
+        "skipped": 0,
+        "errors": [],
+        "total_size": 0,
+        "files": [],
+    }
+
+    dest = Path(destination)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    if progress_fn:
+        progress_fn({"phase": "signal_decrypt", "status": "reading_key", "progress_pct": 0})
+
+    # Get encryption key from Keychain
+    key = _get_signal_key()
+    if not key:
+        result["errors"].append("Nelze přečíst šifrovací klíč z Keychain")
+        return result
+
+    if progress_fn:
+        progress_fn({"phase": "signal_decrypt", "status": "reading_db", "progress_pct": 5})
+
+    # Read attachment metadata from database
+    attachments = []
+    conn = _open_signal_db(key)
+    if conn:
+        try:
+            cursor = conn.execute("""
+                SELECT
+                    json_extract(json, '$.attachments') as attachments_json
+                FROM messages
+                WHERE json_extract(json, '$.hasAttachments') = 1
+            """)
+            for row in cursor:
+                if row[0]:
+                    try:
+                        atts = json.loads(row[0])
+                        if isinstance(atts, list):
+                            attachments.extend(atts)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except Exception as e:
+            logger.error("Signal DB query failed: %s", e)
+            result["errors"].append(f"Chyba při čtení databáze: {e}")
+        finally:
+            conn.close()
+    else:
+        # Try CLI fallback
+        rows = _query_signal_attachments_cli(key)
+        attachments = rows
+
+    if not attachments:
+        result["errors"].append("Nenalezeny žádné přílohy v databázi Signal")
+        return result
+
+    total = len(attachments)
+    logger.info("Found %d Signal attachments to process", total)
+
+    if progress_fn:
+        progress_fn({
+            "phase": "signal_decrypt",
+            "status": "decrypting",
+            "progress_pct": 10,
+            "total": total,
+        })
+
+    # Process each attachment
+    media_types = {
+        "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+        "image/webp": ".webp", "image/heic": ".heic", "image/heif": ".heif",
+        "image/bmp": ".bmp", "image/tiff": ".tiff",
+        "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm",
+        "video/3gpp": ".3gp",
+        "audio/aac": ".aac", "audio/mpeg": ".mp3", "audio/ogg": ".ogg",
+        "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
+    }
+
+    for idx, att in enumerate(attachments):
+        if progress_fn and idx % 20 == 0:
+            progress_fn({
+                "phase": "signal_decrypt",
+                "status": "decrypting",
+                "progress_pct": 10 + int((idx / max(total, 1)) * 85),
+                "processed": idx,
+                "total": total,
+                "decrypted": result["decrypted"],
+            })
+
+        att_path = att.get("path")
+        content_type = att.get("contentType", "")
+        local_key = att.get("localKey")
+        file_name = att.get("fileName")
+
+        # Skip non-media
+        if not content_type or not content_type.startswith(("image/", "video/", "audio/")):
+            result["skipped"] += 1
+            continue
+
+        if not att_path:
+            result["skipped"] += 1
+            continue
+
+        # Resolve attachment file on disk
+        full_path = _SIGNAL_ATTACH_DIR / att_path
+        if not full_path.exists():
+            # Try without leading directories
+            for candidate in _SIGNAL_ATTACH_DIR.rglob(Path(att_path).name):
+                full_path = candidate
+                break
+            else:
+                result["skipped"] += 1
+                continue
+
+        # Determine output filename
+        ext = media_types.get(content_type, "")
+        if not ext and "/" in content_type:
+            ext = "." + content_type.split("/")[-1]
+        if file_name:
+            out_name = file_name
+            if not os.path.splitext(out_name)[1]:
+                out_name += ext
+        else:
+            out_name = f"signal_{idx:05d}{ext}"
+
+        out_path = dest / out_name
+        # Avoid collisions
+        if out_path.exists():
+            stem = out_path.stem
+            suffix = out_path.suffix
+            counter = 1
+            while out_path.exists():
+                out_path = dest / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        try:
+            encrypted_data = full_path.read_bytes()
+
+            if local_key and len(encrypted_data) > 80:
+                # Signal uses AES-256-CBC with HMAC-SHA256
+                # localKey is base64-encoded: first 32 bytes = AES key, next 32 = HMAC key
+                try:
+                    key_material = base64.b64decode(local_key)
+                    aes_key = key_material[:32]
+                    # First 16 bytes of encrypted data = IV
+                    iv = encrypted_data[:16]
+                    # Last 32 bytes = HMAC
+                    ciphertext = encrypted_data[16:-32]
+
+                    cipher = Cipher(
+                        algorithms.AES(aes_key), modes.CBC(iv),
+                        backend=default_backend(),
+                    )
+                    decryptor = cipher.decryptor()
+                    plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+
+                    # Remove PKCS7 padding
+                    pad_len = plaintext[-1] if plaintext else 0
+                    if 0 < pad_len <= 16:
+                        plaintext = plaintext[:-pad_len]
+
+                    out_path.write_bytes(plaintext)
+                    result["decrypted"] += 1
+                    result["total_size"] += len(plaintext)
+                    result["files"].append({
+                        "path": str(out_path),
+                        "name": out_name,
+                        "size": len(plaintext),
+                        "ext": ext,
+                        "category": _categorize_ext(ext),
+                        "content_type": content_type,
+                    })
+                    continue
+                except Exception as e:
+                    logger.debug("AES decrypt failed for %s: %s, trying raw copy", att_path, e)
+
+            # Fallback: try raw copy (some attachments may not be encrypted)
+            # Check if it's actually a valid media file via magic bytes
+            detected = _detect_type_by_magic(str(full_path))
+            if detected:
+                ext_detected, cat = detected
+                if not ext:
+                    ext = ext_detected
+                    out_path = out_path.with_suffix(ext)
+
+                shutil.copy2(str(full_path), str(out_path))
+                result["decrypted"] += 1
+                fsize = out_path.stat().st_size
+                result["total_size"] += fsize
+                result["files"].append({
+                    "path": str(out_path),
+                    "name": out_path.name,
+                    "size": fsize,
+                    "ext": ext,
+                    "category": cat,
+                    "content_type": content_type,
+                })
+            else:
+                result["skipped"] += 1
+
+        except Exception as e:
+            result["errors"].append(f"{att_path}: {e}")
+
+    if progress_fn:
+        progress_fn({
+            "phase": "complete",
+            "progress_pct": 100,
+            "decrypted": result["decrypted"],
+            "total_size": result["total_size"],
         })
 
     return result

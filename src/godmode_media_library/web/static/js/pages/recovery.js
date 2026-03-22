@@ -337,6 +337,14 @@ function _renderAppMineResults(container) {
         </div>
       </div>
       <p class="appmine-encrypted-note">${_escHtml(a.note)}</p>
+      ${a.app_id === "signal" ? `
+        <div class="appmine-decrypt-section">
+          <button class="btn-sm btn-accent signal-decrypt-btn" data-app="signal">
+            \u{1F511} ${t("appmine.signal_decrypt")}
+          </button>
+          <span class="signal-decrypt-hint">${t("appmine.signal_decrypt_hint")}</span>
+        </div>
+      ` : ""}
     </div>
   `).join("");
 
@@ -425,6 +433,60 @@ function _renderAppMineResults(container) {
   container.querySelector("#btn-rescan-apps")?.addEventListener("click", () => {
     _appMineResult = null;
     _renderAppMine(container);
+  });
+
+  // Signal decrypt
+  container.querySelector(".signal-decrypt-btn")?.addEventListener("click", async () => {
+    // First check if decryption is possible
+    try {
+      const status = await api("/recovery/signal/status");
+      if (!status.possible) {
+        showToast(status.error || t("appmine.signal_decrypt_unavailable"), "error");
+        return;
+      }
+
+      const dest = prompt(
+        t("appmine.signal_decrypt_destination"),
+        `${_homeDir()}/Desktop/GML_Recovery/Signal`,
+      );
+      if (!dest) return;
+
+      const btn = container.querySelector(".signal-decrypt-btn");
+      if (btn) { btn.disabled = true; btn.textContent = `\u{23F3} ${t("appmine.signal_decrypting")}`; }
+
+      const resp = await apiPost("/recovery/signal/decrypt", { destination: dest });
+      const taskId = resp.task_id;
+
+      // Poll for result
+      _pollTask(taskId, container, (result) => {
+        if (btn) { btn.disabled = false; btn.textContent = `\u{1F511} ${t("appmine.signal_decrypt")}`; }
+
+        if (result.error) {
+          showToast(result.error, "error");
+          return;
+        }
+
+        const r = result.result || result;
+        const decrypted = r.decrypted || 0;
+        const totalSize = r.total_size || 0;
+        const errors = r.errors || [];
+
+        if (decrypted > 0) {
+          showToast(
+            t("appmine.signal_decrypt_success", { count: decrypted, size: _formatSize(totalSize) }),
+            "success",
+          );
+        } else {
+          showToast(t("appmine.signal_decrypt_none"), "warning");
+        }
+
+        if (errors.length > 0) {
+          console.warn("Signal decrypt errors:", errors);
+        }
+      });
+    } catch (e) {
+      showToast(t("general.error", { message: e.message }), "error");
+    }
   });
 }
 
