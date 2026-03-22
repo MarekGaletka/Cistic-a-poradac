@@ -727,7 +727,7 @@ button.small {
 }
 
 .files-grid-large {
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-size, 200px), 1fr));
   gap: 14px;
 }
 
@@ -2134,7 +2134,7 @@ button.danger:hover {
 
   .quick-actions-grid { flex-direction: column; }
 
-  .files-grid-large { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .files-grid-large { grid-template-columns: repeat(auto-fill, minmax(var(--thumb-size, 140px), 1fr)); }
 
   .folder-picker { width: 95vw; height: 80vh; }
   .folder-picker-body { flex-direction: column; }
