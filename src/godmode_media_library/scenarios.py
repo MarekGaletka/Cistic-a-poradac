@@ -39,6 +39,16 @@ STEP_TYPES = {
         "icon": "\U0001f4f1",
         "config_fields": ["app_ids"],
     },
+    "app_download": {
+        "label_key": "scenario.step_app_download",
+        "icon": "\U0001f4e5",
+        "config_fields": ["app_ids", "destination"],
+    },
+    "signal_decrypt": {
+        "label_key": "scenario.step_signal_decrypt",
+        "icon": "\U0001f511",
+        "config_fields": ["destination"],
+    },
     "integrity_check": {
         "label_key": "scenario.step_integrity",
         "icon": "\U0001f6e1\ufe0f",
@@ -417,6 +427,25 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         total_size = sum(r.total_size for r in results)
         apps_with_files = sum(1 for r in results if r.files_found > 0)
         return {"total_files": total_files, "total_size": total_size, "apps_with_media": apps_with_files}
+
+    if step_type == "app_download":
+        from .recovery import mine_app_media, recover_files
+        app_ids = config.get("app_ids")
+        destination = config.get("destination", str(Path.home() / "Desktop" / "GML_Recovery" / "Apps"))
+        results = mine_app_media(app_ids=app_ids, progress_fn=progress_fn)
+        all_paths = []
+        for r in results:
+            all_paths.extend(f["path"] for f in r.files)
+        if all_paths:
+            rec = recover_files(all_paths, destination)
+            return {"downloaded": rec["recovered"], "total_size": rec["total_size"], "destination": destination, "errors": len(rec["errors"])}
+        return {"downloaded": 0, "total_size": 0, "destination": destination, "errors": 0}
+
+    if step_type == "signal_decrypt":
+        from .recovery import decrypt_signal_attachments
+        destination = config.get("destination", str(Path.home() / "Desktop" / "GML_Recovery" / "Signal"))
+        result = decrypt_signal_attachments(destination=destination, progress_fn=progress_fn)
+        return {"decrypted": result["decrypted"], "total_size": result["total_size"], "destination": destination, "errors": len(result["errors"])}
 
     if step_type == "integrity_check":
         from .recovery import check_integrity

@@ -683,6 +683,8 @@ const translations = {
     "scenario.step_quarantine_cleanup": "Úklid karantény",
     "scenario.step_photorec": "PhotoRec recovery",
     "scenario.step_app_mine": "Těžba z aplikací",
+    "scenario.step_app_download": "Stažení médií z aplikací",
+    "scenario.step_signal_decrypt": "Dešifrování Signal médií",
   },
 };
 
