@@ -21,6 +21,7 @@ import * as recovery from "./pages/recovery.js";
 import * as scenarios from "./pages/scenarios.js";
 import * as reorganize from "./pages/reorganize.js";
 import * as gallery from "./pages/gallery.js";
+import * as people from "./pages/people.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -35,6 +36,7 @@ const pages = {
   recovery,
   scenarios,
   reorganize,
+  people,
 };
 
 let _currentPage = null;

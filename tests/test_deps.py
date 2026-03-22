@@ -27,7 +27,7 @@ def test_check_exiftool_found():
 
 
 def test_check_exiftool_not_found():
-    with patch("godmode_media_library.deps.shutil.which", return_value=None):
+    with patch("godmode_media_library.deps._which", return_value=None):
         status = check_exiftool()
     assert status.available is False
     assert status.install_hint is not None
@@ -45,7 +45,7 @@ def test_check_ffprobe_found():
 
 
 def test_check_ffprobe_not_found():
-    with patch("godmode_media_library.deps.shutil.which", return_value=None):
+    with patch("godmode_media_library.deps._which", return_value=None):
         status = check_ffprobe()
     assert status.available is False
     assert "ffmpeg" in status.install_hint.lower()
@@ -58,13 +58,13 @@ def test_check_ffmpeg_found():
 
 
 def test_check_ffmpeg_not_found():
-    with patch("godmode_media_library.deps.shutil.which", return_value=None):
+    with patch("godmode_media_library.deps._which", return_value=None):
         status = check_ffmpeg()
     assert status.available is False
 
 
 def test_check_rclone_not_found():
-    with patch("godmode_media_library.deps.shutil.which", return_value=None):
+    with patch("godmode_media_library.deps._which", return_value=None):
         status = check_rclone()
     assert status.available is False
     assert "rclone.org" in status.install_hint
@@ -78,7 +78,7 @@ def test_check_pillow():
 
 
 def test_check_all_returns_list():
-    with patch("godmode_media_library.deps.shutil.which", return_value=None):
+    with patch("godmode_media_library.deps._which", return_value=None):
         statuses = check_all()
     assert isinstance(statuses, list)
     assert len(statuses) == 8

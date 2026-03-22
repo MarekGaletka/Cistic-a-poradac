@@ -14,7 +14,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -121,6 +121,40 @@ CREATE TABLE IF NOT EXISTS file_notes (
 CREATE TABLE IF NOT EXISTS file_ratings (
     file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
     rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5)
+);
+
+CREATE TABLE IF NOT EXISTS persons (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL DEFAULT '',
+    sample_face_id INTEGER,
+    face_count  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT    NOT NULL,
+    updated_at  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS faces (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    face_index  INTEGER NOT NULL DEFAULT 0,
+    person_id   INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+    bbox_top    INTEGER NOT NULL,
+    bbox_right  INTEGER NOT NULL,
+    bbox_bottom INTEGER NOT NULL,
+    bbox_left   INTEGER NOT NULL,
+    encoding    BLOB,
+    cluster_id  INTEGER DEFAULT -1,
+    confidence  REAL,
+    created_at  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_faces_file ON faces(file_id);
+CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);
+CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id);
+
+CREATE TABLE IF NOT EXISTS face_privacy (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    key   TEXT NOT NULL UNIQUE,
+    value TEXT NOT NULL
 );
 """
 
@@ -291,6 +325,45 @@ class Catalog:
                 CREATE TABLE IF NOT EXISTS file_ratings (
                     file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
                     rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5)
+                )
+            """)
+            self._conn.commit()
+        if from_version < 6:
+            logger.info("Migrating catalog schema v%d -> v6: adding persons, faces, face_privacy tables", from_version)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS persons (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name        TEXT    NOT NULL DEFAULT '',
+                    sample_face_id INTEGER,
+                    face_count  INTEGER NOT NULL DEFAULT 0,
+                    created_at  TEXT    NOT NULL,
+                    updated_at  TEXT    NOT NULL
+                )
+            """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS faces (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    face_index  INTEGER NOT NULL DEFAULT 0,
+                    person_id   INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+                    bbox_top    INTEGER NOT NULL,
+                    bbox_right  INTEGER NOT NULL,
+                    bbox_bottom INTEGER NOT NULL,
+                    bbox_left   INTEGER NOT NULL,
+                    encoding    BLOB,
+                    cluster_id  INTEGER DEFAULT -1,
+                    confidence  REAL,
+                    created_at  TEXT    NOT NULL
+                )
+            """)
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_file ON faces(file_id)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id)")
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS face_privacy (
+                    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key   TEXT NOT NULL UNIQUE,
+                    value TEXT NOT NULL
                 )
             """)
             self._conn.commit()
@@ -787,6 +860,249 @@ class Catalog:
                 result[row[0]] = row[1]
         return result
 
+    # ── Face / Person operations ────────────────────────────────────
+
+    def insert_face(
+        self,
+        file_id: int,
+        face_index: int,
+        bbox: tuple[int, int, int, int],
+        encoding_blob: bytes | None = None,
+        cluster_id: int = -1,
+        confidence: float | None = None,
+    ) -> int:
+        """Insert a detected face. bbox = (top, right, bottom, left). Returns face id."""
+        now = utc_stamp()
+        cur = self.conn.execute(
+            """INSERT INTO faces
+               (file_id, face_index, bbox_top, bbox_right, bbox_bottom, bbox_left,
+                encoding, cluster_id, confidence, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (file_id, face_index, bbox[0], bbox[1], bbox[2], bbox[3],
+             encoding_blob, cluster_id, confidence, now),
+        )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_faces_for_file(self, file_id: int) -> list[dict]:
+        cur = self.conn.execute(
+            """SELECT f.id, f.face_index, f.person_id, f.bbox_top, f.bbox_right,
+                      f.bbox_bottom, f.bbox_left, f.cluster_id, f.confidence,
+                      p.name as person_name
+               FROM faces f LEFT JOIN persons p ON f.person_id = p.id
+               WHERE f.file_id = ? ORDER BY f.face_index""",
+            (file_id,),
+        )
+        return [
+            {
+                "id": r[0], "face_index": r[1], "person_id": r[2],
+                "bbox": {"top": r[3], "right": r[4], "bottom": r[5], "left": r[6]},
+                "cluster_id": r[7], "confidence": r[8], "person_name": r[9] or "",
+            }
+            for r in cur.fetchall()
+        ]
+
+    def get_faces_for_person(self, person_id: int, limit: int = 100, offset: int = 0) -> list[dict]:
+        cur = self.conn.execute(
+            """SELECT f.id, f.file_id, f.face_index, f.bbox_top, f.bbox_right,
+                      f.bbox_bottom, f.bbox_left, f.confidence, fi.path
+               FROM faces f JOIN files fi ON f.file_id = fi.id
+               WHERE f.person_id = ? ORDER BY f.id LIMIT ? OFFSET ?""",
+            (person_id, limit, offset),
+        )
+        return [
+            {
+                "id": r[0], "file_id": r[1], "face_index": r[2],
+                "bbox": {"top": r[3], "right": r[4], "bottom": r[5], "left": r[6]},
+                "confidence": r[7], "path": r[8],
+            }
+            for r in cur.fetchall()
+        ]
+
+    def get_unidentified_faces(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        cur = self.conn.execute(
+            """SELECT f.id, f.file_id, f.face_index, f.bbox_top, f.bbox_right,
+                      f.bbox_bottom, f.bbox_left, f.confidence, f.cluster_id, fi.path
+               FROM faces f JOIN files fi ON f.file_id = fi.id
+               WHERE f.person_id IS NULL ORDER BY f.cluster_id, f.id LIMIT ? OFFSET ?""",
+            (limit, offset),
+        )
+        return [
+            {
+                "id": r[0], "file_id": r[1], "face_index": r[2],
+                "bbox": {"top": r[3], "right": r[4], "bottom": r[5], "left": r[6]},
+                "confidence": r[7], "cluster_id": r[8], "path": r[9],
+            }
+            for r in cur.fetchall()
+        ]
+
+    def get_all_encodings(self) -> list[tuple[int, bytes]]:
+        """Return all (face_id, encoding_blob) pairs where encoding is not NULL."""
+        cur = self.conn.execute("SELECT id, encoding FROM faces WHERE encoding IS NOT NULL")
+        return [(r[0], r[1]) for r in cur.fetchall()]
+
+    def get_face_by_id(self, face_id: int) -> dict | None:
+        cur = self.conn.execute(
+            """SELECT f.id, f.file_id, f.face_index, f.person_id,
+                      f.bbox_top, f.bbox_right, f.bbox_bottom, f.bbox_left,
+                      f.confidence, fi.path, p.name as person_name
+               FROM faces f
+               JOIN files fi ON f.file_id = fi.id
+               LEFT JOIN persons p ON f.person_id = p.id
+               WHERE f.id = ?""",
+            (face_id,),
+        )
+        r = cur.fetchone()
+        if r is None:
+            return None
+        return {
+            "id": r[0], "file_id": r[1], "face_index": r[2], "person_id": r[3],
+            "bbox": {"top": r[4], "right": r[5], "bottom": r[6], "left": r[7]},
+            "confidence": r[8], "path": r[9], "person_name": r[10] or "",
+        }
+
+    def assign_face_to_person(self, face_id: int, person_id: int) -> None:
+        self.conn.execute("UPDATE faces SET person_id = ? WHERE id = ?", (person_id, face_id))
+        self._refresh_person_counts([person_id])
+
+    def set_face_cluster(self, face_id: int, cluster_id: int) -> None:
+        self.conn.execute("UPDATE faces SET cluster_id = ? WHERE id = ?", (cluster_id, face_id))
+
+    def files_without_faces(self, exts: set[str] | None = None) -> list[tuple[int, str]]:
+        """Return (file_id, path) for image files that have no faces detected yet."""
+        if exts is None:
+            exts = {"jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "heic", "heif"}
+        placeholders = ",".join("?" for _ in exts)
+        cur = self.conn.execute(
+            f"SELECT f.id, f.path FROM files f "  # noqa: S608
+            f"LEFT JOIN faces fa ON f.id = fa.file_id "
+            f"WHERE f.ext IN ({placeholders}) AND fa.id IS NULL ORDER BY f.path",
+            list(exts),
+        )
+        return [(r[0], r[1]) for r in cur.fetchall()]
+
+    # ── Person CRUD ──
+
+    def upsert_person(self, name: str, sample_face_id: int | None = None) -> int:
+        """Create a new named person. Returns person id."""
+        now = utc_stamp()
+        cur = self.conn.execute(
+            "INSERT INTO persons (name, sample_face_id, face_count, created_at, updated_at) VALUES (?, ?, 0, ?, ?)",
+            (name, sample_face_id, now, now),
+        )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_all_persons(self) -> list[dict]:
+        cur = self.conn.execute(
+            """SELECT p.id, p.name, p.sample_face_id, p.face_count, p.created_at, p.updated_at
+               FROM persons p ORDER BY p.face_count DESC, p.name"""
+        )
+        return [
+            {"id": r[0], "name": r[1], "sample_face_id": r[2],
+             "face_count": r[3], "created_at": r[4], "updated_at": r[5]}
+            for r in cur.fetchall()
+        ]
+
+    def get_person(self, person_id: int) -> dict | None:
+        cur = self.conn.execute(
+            "SELECT id, name, sample_face_id, face_count, created_at, updated_at FROM persons WHERE id = ?",
+            (person_id,),
+        )
+        r = cur.fetchone()
+        if r is None:
+            return None
+        return {"id": r[0], "name": r[1], "sample_face_id": r[2],
+                "face_count": r[3], "created_at": r[4], "updated_at": r[5]}
+
+    def update_person_name(self, person_id: int, name: str) -> None:
+        self.conn.execute(
+            "UPDATE persons SET name = ?, updated_at = ? WHERE id = ?",
+            (name, utc_stamp(), person_id),
+        )
+
+    def merge_persons(self, keep_id: int, merge_ids: list[int]) -> int:
+        """Merge other persons into keep_id. Returns number of faces reassigned."""
+        if not merge_ids:
+            return 0
+        placeholders = ",".join("?" for _ in merge_ids)
+        cur = self.conn.execute(
+            f"UPDATE faces SET person_id = ? WHERE person_id IN ({placeholders})",  # noqa: S608
+            [keep_id, *merge_ids],
+        )
+        reassigned = cur.rowcount
+        self.conn.execute(
+            f"DELETE FROM persons WHERE id IN ({placeholders})",  # noqa: S608
+            merge_ids,
+        )
+        self._refresh_person_counts([keep_id])
+        return reassigned
+
+    def delete_person(self, person_id: int) -> None:
+        """Delete a person. Faces become unidentified."""
+        self.conn.execute("UPDATE faces SET person_id = NULL WHERE person_id = ?", (person_id,))
+        self.conn.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+
+    def _refresh_person_counts(self, person_ids: list[int] | None = None) -> None:
+        """Recalculate face_count for given persons (or all)."""
+        if person_ids:
+            for pid in person_ids:
+                cnt = self.conn.execute(
+                    "SELECT COUNT(*) FROM faces WHERE person_id = ?", (pid,)
+                ).fetchone()[0]
+                self.conn.execute("UPDATE persons SET face_count = ? WHERE id = ?", (cnt, pid))
+                # Update sample face if needed
+                sample = self.conn.execute(
+                    "SELECT id FROM faces WHERE person_id = ? LIMIT 1", (pid,)
+                ).fetchone()
+                if sample:
+                    self.conn.execute(
+                        "UPDATE persons SET sample_face_id = ? WHERE id = ? "
+                        "AND (sample_face_id IS NULL "
+                        "OR sample_face_id NOT IN (SELECT id FROM faces WHERE person_id = ?))",
+                        (sample[0], pid, pid),
+                    )
+        else:
+            self.conn.execute("""
+                UPDATE persons SET face_count = (
+                    SELECT COUNT(*) FROM faces WHERE faces.person_id = persons.id
+                )
+            """)
+
+    def face_stats(self) -> dict:
+        """Face/person counts for dashboard."""
+        conn = self.conn
+        total_faces = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
+        total_persons = conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0]
+        identified = conn.execute("SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL").fetchone()[0]
+        unidentified = total_faces - identified
+        named_persons = conn.execute("SELECT COUNT(*) FROM persons WHERE name != ''").fetchone()[0]
+        return {
+            "total_faces": total_faces,
+            "total_persons": total_persons,
+            "identified_faces": identified,
+            "unidentified_faces": unidentified,
+            "named_persons": named_persons,
+        }
+
+    # ── Face privacy ──
+
+    def set_privacy_flag(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO face_privacy (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
+
+    def get_privacy_flag(self, key: str) -> str | None:
+        cur = self.conn.execute("SELECT value FROM face_privacy WHERE key = ?", (key,))
+        r = cur.fetchone()
+        return r[0] if r else None
+
+    def wipe_face_encodings(self) -> int:
+        """NULL out all face encodings for privacy. Returns count affected."""
+        cur = self.conn.execute("UPDATE faces SET encoding = NULL WHERE encoding IS NOT NULL")
+        self.conn.commit()
+        return cur.rowcount
+
     # ── Query operations ─────────────────────────────────────────────
 
     def query_files(
@@ -933,6 +1249,14 @@ class Catalog:
         last_scan_root_row = conn.execute("SELECT root FROM scans ORDER BY id DESC LIMIT 1").fetchone()
         last_scan_root = last_scan_root_row[0] if last_scan_root_row else ""
 
+        # Face stats (safe — tables may not exist in older catalogs)
+        try:
+            total_faces = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
+            total_persons = conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0]
+        except Exception:
+            total_faces = 0
+            total_persons = 0
+
         return {
             "total_files": total_files,
             "total_size_bytes": total_size,
@@ -948,6 +1272,8 @@ class Catalog:
             "last_scan_root": last_scan_root,
             "top_extensions": ext_counts,
             "top_cameras": camera_counts,
+            "total_faces": total_faces,
+            "total_persons": total_persons,
         }
 
     def all_paths(self) -> set[str]:

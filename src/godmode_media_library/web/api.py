@@ -2591,3 +2591,364 @@ async def gallery_slideshow(
         random.shuffle(files)
 
     return {"collection": collection, "count": len(files), "files": files}
+
+
+# ── Face / Person API ──────────────────────────────────────────────
+
+
+class PersonRenameRequest(BaseModel):
+    name: str
+
+
+class PersonMergeRequest(BaseModel):
+    merge_ids: list[int]
+
+
+class FaceAssignRequest(BaseModel):
+    person_id: int
+
+
+class FaceDetectRequest(BaseModel):
+    model: str = "hog"
+    max_dimension: int = 1600
+
+
+class FaceClusterRequest(BaseModel):
+    eps: float = 0.5
+    min_samples: int = 2
+
+
+@router.get("/persons")
+def list_persons(request: Request):
+    """List all persons with face counts."""
+    cat = _open_catalog(request)
+    try:
+        persons = cat.get_all_persons()
+        return {"persons": persons, "total": len(persons)}
+    finally:
+        cat.close()
+
+
+@router.get("/persons/{person_id}")
+def get_person(request: Request, person_id: int):
+    cat = _open_catalog(request)
+    try:
+        person = cat.get_person(person_id)
+        if person is None:
+            raise HTTPException(404, "Person not found")
+        return person
+    finally:
+        cat.close()
+
+
+@router.put("/persons/{person_id}/name")
+def rename_person(request: Request, person_id: int, body: PersonRenameRequest):
+    """Rename a person."""
+    cat = _open_catalog(request)
+    try:
+        person = cat.get_person(person_id)
+        if person is None:
+            raise HTTPException(404, "Person not found")
+        cat.update_person_name(person_id, body.name)
+        # Sync labels table for files containing this person
+        _sync_person_labels(cat, person_id)
+        cat.commit()
+        return {"status": "ok", "person_id": person_id, "name": body.name}
+    finally:
+        cat.close()
+
+
+@router.post("/persons/{person_id}/merge")
+def merge_persons(request: Request, person_id: int, body: PersonMergeRequest):
+    """Merge other persons into this one."""
+    cat = _open_catalog(request)
+    try:
+        person = cat.get_person(person_id)
+        if person is None:
+            raise HTTPException(404, "Person not found")
+        reassigned = cat.merge_persons(person_id, body.merge_ids)
+        _sync_person_labels(cat, person_id)
+        cat.commit()
+        return {"status": "ok", "reassigned_faces": reassigned}
+    finally:
+        cat.close()
+
+
+@router.delete("/persons/{person_id}")
+def delete_person(request: Request, person_id: int):
+    cat = _open_catalog(request)
+    try:
+        person = cat.get_person(person_id)
+        if person is None:
+            raise HTTPException(404, "Person not found")
+        cat.delete_person(person_id)
+        cat.commit()
+        return {"status": "ok"}
+    finally:
+        cat.close()
+
+
+@router.get("/persons/{person_id}/faces")
+def get_person_faces(
+    request: Request,
+    person_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    cat = _open_catalog(request)
+    try:
+        faces = cat.get_faces_for_person(person_id, limit=limit, offset=offset)
+        return {"faces": faces, "count": len(faces), "person_id": person_id}
+    finally:
+        cat.close()
+
+
+@router.get("/faces")
+def list_faces(
+    request: Request,
+    person_id: int | None = Query(None),
+    unidentified: bool = Query(False),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """List faces, optionally filtered by person or unidentified status."""
+    cat = _open_catalog(request)
+    try:
+        if unidentified:
+            faces = cat.get_unidentified_faces(limit=limit, offset=offset)
+        elif person_id is not None:
+            faces = cat.get_faces_for_person(person_id, limit=limit, offset=offset)
+        else:
+            # All faces
+            cur = cat.conn.execute(
+                """SELECT f.id, f.file_id, f.face_index, f.person_id,
+                          f.bbox_top, f.bbox_right, f.bbox_bottom, f.bbox_left,
+                          f.confidence, f.cluster_id, fi.path, p.name as person_name
+                   FROM faces f
+                   JOIN files fi ON f.file_id = fi.id
+                   LEFT JOIN persons p ON f.person_id = p.id
+                   ORDER BY f.person_id NULLS LAST, f.id LIMIT ? OFFSET ?""",
+                (limit, offset),
+            )
+            faces = [
+                {
+                    "id": r[0], "file_id": r[1], "face_index": r[2], "person_id": r[3],
+                    "bbox": {"top": r[4], "right": r[5], "bottom": r[6], "left": r[7]},
+                    "confidence": r[8], "cluster_id": r[9], "path": r[10],
+                    "person_name": r[11] or "",
+                }
+                for r in cur.fetchall()
+            ]
+        return {"faces": faces, "count": len(faces)}
+    finally:
+        cat.close()
+
+
+@router.get("/faces/stats")
+def face_stats(request: Request):
+    cat = _open_catalog(request)
+    try:
+        return cat.face_stats()
+    finally:
+        cat.close()
+
+
+@router.get("/faces/{face_id}/thumbnail")
+def get_face_thumbnail(request: Request, face_id: int, size: int = Query(150, ge=32, le=512)):
+    """Return a cropped face thumbnail as JPEG."""
+    from godmode_media_library.face_detect import crop_face_thumbnail
+
+    cat = _open_catalog(request)
+    try:
+        face = cat.get_face_by_id(face_id)
+        if face is None:
+            raise HTTPException(404, "Face not found")
+
+        # Check thumbnail cache
+        cache_key = f"face_{face_id}_{size}"
+        cached = _thumb_cache_get(cache_key, size)
+        if cached:
+            return StreamingResponse(io.BytesIO(cached), media_type="image/jpeg")
+
+        data = crop_face_thumbnail(face["path"], face["bbox"], size=size)
+        if data is None:
+            raise HTTPException(404, "Cannot generate face thumbnail")
+
+        _thumb_cache_put(cache_key, size, data)
+        return StreamingResponse(io.BytesIO(data), media_type="image/jpeg")
+    finally:
+        cat.close()
+
+
+@router.put("/faces/{face_id}/person")
+def assign_face_to_person(request: Request, face_id: int, body: FaceAssignRequest):
+    """Assign a face to a person."""
+    cat = _open_catalog(request)
+    try:
+        face = cat.get_face_by_id(face_id)
+        if face is None:
+            raise HTTPException(404, "Face not found")
+        person = cat.get_person(body.person_id)
+        if person is None:
+            raise HTTPException(404, "Person not found")
+        cat.assign_face_to_person(face_id, body.person_id)
+        _sync_person_labels(cat, body.person_id)
+        cat.commit()
+        return {"status": "ok", "face_id": face_id, "person_id": body.person_id}
+    finally:
+        cat.close()
+
+
+@router.get("/faces/by-file")
+def get_file_faces(request: Request, path: str = Query(...)):
+    """Get all detected faces in a specific file."""
+    cat = _open_catalog(request)
+    try:
+        file_row = cat.get_file_by_path(path)
+        if file_row is None:
+            raise HTTPException(404, "File not found")
+        faces = cat.get_faces_for_file(file_row.id)
+        return {"faces": faces, "file_path": path}
+    finally:
+        cat.close()
+
+
+@router.post("/faces/detect")
+def trigger_face_detection(request: Request, background: BackgroundTasks, body: FaceDetectRequest):
+    """Start background face detection for all unscanned images."""
+    task = _create_task("face_detect")
+
+    def _run():
+        try:
+            from godmode_media_library.face_crypto import get_encrypt_fn
+            from godmode_media_library.face_detect import scan_new_faces
+
+            cat = _open_catalog(request)
+            encrypt_fn = get_encrypt_fn(enabled=True)
+
+            def on_progress(done, total):
+                task.progress = {"done": done, "total": total}
+                _notify_ws(task.id, _task_to_msg(task))
+
+            try:
+                result = scan_new_faces(
+                    cat,
+                    model=body.model,
+                    max_dimension=body.max_dimension,
+                    encrypt_fn=encrypt_fn,
+                    progress_fn=on_progress,
+                )
+                task.result = {
+                    "files_processed": result.files_processed,
+                    "faces_detected": result.faces_detected,
+                    "errors": result.errors,
+                }
+                task.status = "completed"
+            finally:
+                cat.close()
+        except Exception as exc:
+            task.status = "failed"
+            task.error = str(exc)
+            logger.exception("Face detection task failed")
+        task.finished_at = datetime.now(timezone.utc).isoformat()
+        _notify_ws(task.id, _task_to_msg(task))
+
+    background.add_task(_run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/faces/cluster")
+def trigger_face_clustering(request: Request, background: BackgroundTasks, body: FaceClusterRequest):
+    """Start background face clustering."""
+    task = _create_task("face_cluster")
+
+    def _run():
+        try:
+            from godmode_media_library.face_crypto import get_decrypt_fn
+            from godmode_media_library.face_detect import cluster_faces
+
+            cat = _open_catalog(request)
+            decrypt_fn = get_decrypt_fn(enabled=True)
+            try:
+                clusters = cluster_faces(
+                    cat, eps=body.eps, min_samples=body.min_samples, decrypt_fn=decrypt_fn,
+                )
+                task.result = {
+                    "clusters": len(clusters),
+                    "total_faces_clustered": sum(len(v) for v in clusters.values()),
+                }
+                task.status = "completed"
+            finally:
+                cat.close()
+        except Exception as exc:
+            task.status = "failed"
+            task.error = str(exc)
+            logger.exception("Face clustering task failed")
+        task.finished_at = datetime.now(timezone.utc).isoformat()
+        _notify_ws(task.id, _task_to_msg(task))
+
+    background.add_task(_run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/faces/privacy/consent")
+def record_privacy_consent(request: Request):
+    """Record that the user has consented to face encoding storage."""
+    cat = _open_catalog(request)
+    try:
+        cat.set_privacy_flag("consent_given", datetime.now(timezone.utc).isoformat())
+        return {"status": "ok", "consent_given": True}
+    finally:
+        cat.close()
+
+
+@router.get("/faces/privacy")
+def get_privacy_status(request: Request):
+    """Check if privacy consent was given and encryption status."""
+    cat = _open_catalog(request)
+    try:
+        consent = cat.get_privacy_flag("consent_given")
+        return {
+            "consent_given": consent is not None,
+            "consent_timestamp": consent,
+            "encryption_enabled": True,
+        }
+    finally:
+        cat.close()
+
+
+@router.delete("/faces/privacy/encodings")
+def wipe_face_encodings(request: Request):
+    """Delete all stored face encodings for privacy. Face records remain but without biometric data."""
+    cat = _open_catalog(request)
+    try:
+        count = cat.wipe_face_encodings()
+        return {"status": "ok", "encodings_wiped": count}
+    finally:
+        cat.close()
+
+
+@router.post("/persons/create")
+def create_person(request: Request, body: PersonRenameRequest):
+    """Create a new named person."""
+    cat = _open_catalog(request)
+    try:
+        person_id = cat.upsert_person(body.name)
+        cat.commit()
+        return {"status": "ok", "person_id": person_id, "name": body.name}
+    finally:
+        cat.close()
+
+
+def _sync_person_labels(cat: "Catalog", person_id: int) -> None:
+    """Sync labels table when person name changes — update people column for all files with this person's faces."""
+    faces = cat.get_faces_for_person(person_id, limit=100000)
+    file_ids = {f["file_id"] for f in faces}
+    for fid in file_ids:
+        all_faces = cat.get_faces_for_file(fid)
+        names = sorted({
+            f["person_name"] for f in all_faces
+            if f.get("person_name")
+        })
+        people_str = ";".join(names)
+        cat.upsert_label(fid, people=people_str)
