@@ -14,7 +14,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -156,6 +156,20 @@ CREATE TABLE IF NOT EXISTS face_privacy (
     key   TEXT NOT NULL UNIQUE,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS shares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL DEFAULT '',
+    password_hash TEXT,
+    expires_at TEXT,
+    max_downloads INTEGER,
+    download_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
+CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id);
 """
 
 
@@ -366,6 +380,24 @@ class Catalog:
                     value TEXT NOT NULL
                 )
             """)
+            self._conn.commit()
+        if from_version < 7:
+            logger.info("Migrating catalog schema v%d -> v7: adding shares table", from_version)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS shares (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    token TEXT NOT NULL UNIQUE,
+                    label TEXT NOT NULL DEFAULT '',
+                    password_hash TEXT,
+                    expires_at TEXT,
+                    max_downloads INTEGER,
+                    download_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)")
             self._conn.commit()
 
     def close(self) -> None:
@@ -751,6 +783,182 @@ class Catalog:
             (tag_id, limit, offset),
         )
         return [self._row_to_catalog_file(row) for row in cur.fetchall()]
+
+    # ── Share operations ─────────────────────────────────────────────
+
+    def create_share(
+        self,
+        path: str,
+        label: str = "",
+        password: str | None = None,
+        expires_hours: float | None = None,
+        max_downloads: int | None = None,
+    ) -> dict:
+        """Create a share link for a file. Returns share dict with token."""
+        import datetime as dt
+        import hashlib as _hl
+        import secrets
+
+        cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"File not found in catalog: {path}")
+        file_id = row[0]
+
+        token = secrets.token_hex(16)
+        password_hash = None
+        if password:
+            password_hash = _hl.sha256(password.encode("utf-8")).hexdigest()
+
+        expires_at = None
+        if expires_hours is not None and expires_hours > 0:
+            expires_at = (
+                dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=expires_hours)
+            ).isoformat()
+
+        now = utc_stamp()
+        cur = self.conn.execute(
+            """INSERT INTO shares (file_id, token, label, password_hash, expires_at, max_downloads, download_count, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
+            (file_id, token, label, password_hash, expires_at, max_downloads, now),
+        )
+        self.conn.commit()
+        return {
+            "id": cur.lastrowid,
+            "file_id": file_id,
+            "path": path,
+            "token": token,
+            "label": label,
+            "has_password": password_hash is not None,
+            "expires_at": expires_at,
+            "max_downloads": max_downloads,
+            "download_count": 0,
+            "created_at": now,
+        }
+
+    def get_share_by_token(self, token: str) -> dict | None:
+        """Look up a share by its token. Returns share info with file path, or None."""
+        import datetime as dt
+
+        cur = self.conn.execute(
+            "SELECT s.id, s.file_id, s.token, s.label, s.password_hash, "
+            "s.expires_at, s.max_downloads, s.download_count, s.created_at, f.path "
+            "FROM shares s JOIN files f ON s.file_id = f.id WHERE s.token = ?",
+            (token,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+
+        share = {
+            "id": row[0],
+            "file_id": row[1],
+            "token": row[2],
+            "label": row[3],
+            "password_hash": row[4],
+            "has_password": row[4] is not None,
+            "expires_at": row[5],
+            "max_downloads": row[6],
+            "download_count": row[7],
+            "created_at": row[8],
+            "path": row[9],
+        }
+
+        # Check expiry
+        if share["expires_at"]:
+            try:
+                exp = dt.datetime.fromisoformat(share["expires_at"])
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=dt.timezone.utc)
+                if dt.datetime.now(dt.timezone.utc) > exp:
+                    share["expired"] = True
+            except (ValueError, TypeError):
+                pass
+
+        # Check max downloads
+        if share["max_downloads"] is not None and share["download_count"] >= share["max_downloads"]:
+            share["max_downloads_reached"] = True
+
+        return share
+
+    def get_shares_for_file(self, path: str) -> list[dict]:
+        """Return all shares for a specific file."""
+        cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
+        row = cur.fetchone()
+        if row is None:
+            return []
+        file_id = row[0]
+        cur = self.conn.execute(
+            "SELECT id, file_id, token, label, password_hash, expires_at, "
+            "max_downloads, download_count, created_at "
+            "FROM shares WHERE file_id = ? ORDER BY created_at DESC",
+            (file_id,),
+        )
+        return [
+            {
+                "id": r[0],
+                "file_id": r[1],
+                "token": r[2],
+                "label": r[3],
+                "has_password": r[4] is not None,
+                "expires_at": r[5],
+                "max_downloads": r[6],
+                "download_count": r[7],
+                "created_at": r[8],
+                "path": path,
+            }
+            for r in cur.fetchall()
+        ]
+
+    def get_all_shares(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Return all shares with file info."""
+        cur = self.conn.execute(
+            "SELECT s.id, s.file_id, s.token, s.label, s.password_hash, "
+            "s.expires_at, s.max_downloads, s.download_count, s.created_at, f.path "
+            "FROM shares s JOIN files f ON s.file_id = f.id "
+            "ORDER BY s.created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        return [
+            {
+                "id": r[0],
+                "file_id": r[1],
+                "token": r[2],
+                "label": r[3],
+                "has_password": r[4] is not None,
+                "expires_at": r[5],
+                "max_downloads": r[6],
+                "download_count": r[7],
+                "created_at": r[8],
+                "path": r[9],
+            }
+            for r in cur.fetchall()
+        ]
+
+    def delete_share(self, share_id: int) -> None:
+        """Delete a share link."""
+        self.conn.execute("DELETE FROM shares WHERE id = ?", (share_id,))
+        self.conn.commit()
+
+    def increment_download(self, share_id: int) -> None:
+        """Increment the download counter for a share."""
+        self.conn.execute(
+            "UPDATE shares SET download_count = download_count + 1 WHERE id = ?",
+            (share_id,),
+        )
+        self.conn.commit()
+
+    def cleanup_expired_shares(self) -> int:
+        """Delete expired shares. Returns count deleted."""
+        import datetime as dt
+
+        now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+        cur = self.conn.execute(
+            "DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < ?",
+            (now_iso,),
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     # ── Note operations ──────────────────────────────────────────────
 

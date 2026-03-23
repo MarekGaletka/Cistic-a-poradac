@@ -8,6 +8,7 @@ import { openLightbox } from "../lightbox.js";
 import { openQuickLook, isQuickLookOpen } from "../quicklook.js";
 import { toggleSelect, selectAll, deselectAll, isSelected, getSelectedPaths, getSelectedCount } from "../selection.js";
 import { renderTagDots, loadTags, getAllTags, openTagPicker } from "../tags.js";
+import { openShareModal } from "../share.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
 
@@ -613,6 +614,9 @@ function renderGridItem(f) {
   // Tag dots
   html += renderTagDots(f.tags);
 
+  // Share button overlay
+  html += `<button class="thumb-share-btn" data-share-path="${escapeHtml(f.path)}" title="${t("share.title")}">&#128279;</button>`;
+
   html += `</div>`;
 
   // Always-visible file info
@@ -761,6 +765,17 @@ function bindFileEvents(el) {
     // Video hover preview (grid only)
     if (_viewMode === "grid") _bindVideoHover(row);
   });
+
+  // Share button clicks
+  el.querySelectorAll(".thumb-share-btn").forEach(btn => {
+    if (btn._boundShare) return;
+    btn._boundShare = true;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      openShareModal(btn.dataset.sharePath);
+    });
+  });
 }
 
 function bindNewItems(el, newFiles) {
@@ -812,6 +827,17 @@ function bindNewItems(el, newFiles) {
 
     // Video hover preview (grid only)
     if (_viewMode === "grid") _bindVideoHover(row);
+  });
+
+  // Share button clicks for new items
+  el.querySelectorAll(".thumb-share-btn").forEach(btn => {
+    if (btn._boundShare) return;
+    btn._boundShare = true;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      openShareModal(btn.dataset.sharePath);
+    });
   });
 }
 

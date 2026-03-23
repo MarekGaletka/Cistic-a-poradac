@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import mimetypes
 import os
 import time
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router as api_router
@@ -30,7 +32,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         catalog_path: Path to SQLite catalog database.
                      If None, uses default (~/.config/gml/catalog.db).
     """
-    from ..catalog import default_catalog_path
+    from ..catalog import Catalog, default_catalog_path
 
     api_token = os.environ.get("GML_API_TOKEN", "")
 
@@ -64,6 +66,9 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             return await call_next(request)
 
         path = request.url.path
+        # Allow public share routes without auth
+        if path.startswith("/shared/"):
+            return await call_next(request)
         # Allow static files, docs, and openapi schema without auth
         if not path.startswith("/api/"):
             return await call_next(request)
@@ -133,6 +138,101 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         if path.endswith((".js", ".css", ".html")):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
+
+    # ── Public share endpoints (bypass auth) ────────────────────────
+
+    def _open_share_catalog() -> Catalog:
+        cat = Catalog(app.state.catalog_path)
+        cat.open()
+        return cat
+
+    @app.get("/shared/{token}/info")
+    async def shared_file_info(token: str):
+        """Return metadata about a shared file without downloading."""
+        cat = _open_share_catalog()
+        try:
+            share = cat.get_share_by_token(token)
+            if share is None:
+                return JSONResponse(status_code=404, content={"detail": "Share not found"})
+            if share.get("expired"):
+                return JSONResponse(status_code=410, content={"detail": "Share expired"})
+            if share.get("max_downloads_reached"):
+                return JSONResponse(status_code=410, content={"detail": "Max downloads reached"})
+
+            file_path = Path(share["path"])
+            if not file_path.exists():
+                return JSONResponse(status_code=404, content={"detail": "File no longer exists"})
+
+            mime, _ = mimetypes.guess_type(str(file_path))
+            return {
+                "name": file_path.name,
+                "size": file_path.stat().st_size,
+                "type": mime or "application/octet-stream",
+                "has_password": share["has_password"],
+                "label": share.get("label", ""),
+            }
+        finally:
+            cat.close()
+
+    @app.get("/shared/{token}")
+    async def shared_file_download(
+        token: str,
+        password: str = Query(default=None),
+        request: Request = None,
+    ):
+        """Download a shared file."""
+        cat = _open_share_catalog()
+        try:
+            share = cat.get_share_by_token(token)
+            if share is None:
+                return JSONResponse(status_code=404, content={"detail": "Share not found"})
+            if share.get("expired"):
+                return JSONResponse(status_code=410, content={"detail": "Share expired"})
+            if share.get("max_downloads_reached"):
+                return JSONResponse(status_code=410, content={"detail": "Max downloads reached"})
+
+            # Password check
+            if share["has_password"]:
+                provided_pw = password
+                if not provided_pw and request:
+                    provided_pw = request.headers.get("x-share-password", "")
+                if not provided_pw:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Password required"},
+                    )
+                pw_hash = hashlib.sha256(provided_pw.encode("utf-8")).hexdigest()
+                if pw_hash != share["password_hash"]:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Invalid password"},
+                    )
+
+            file_path = Path(share["path"])
+            if not file_path.exists():
+                return JSONResponse(status_code=404, content={"detail": "File no longer exists"})
+
+            # Increment download count
+            cat.increment_download(share["id"])
+
+            mime, _ = mimetypes.guess_type(str(file_path))
+            content_type = mime or "application/octet-stream"
+
+            def file_streamer():
+                with open(file_path, "rb") as f:
+                    while chunk := f.read(1024 * 1024):
+                        yield chunk
+
+            return StreamingResponse(
+                file_streamer(),
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{file_path.name}"',
+                    "Content-Length": str(file_path.stat().st_size),
+                },
+            )
+        finally:
+            cat.close()
 
     app.include_router(api_router, prefix="/api")
 

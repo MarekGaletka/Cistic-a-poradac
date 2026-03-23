@@ -112,6 +112,14 @@ class TagFilesRequest(BaseModel):
     tag_id: int
 
 
+class CreateShareRequest(BaseModel):
+    path: str
+    label: str = ""
+    password: str | None = None
+    expires_hours: float | None = None
+    max_downloads: int | None = None
+
+
 class ReorganizeConfigRequest(BaseModel):
     sources: list[str]
     destination: str
@@ -1768,6 +1776,135 @@ def untag_files(request: Request, body: TagFilesRequest) -> dict:
     try:
         count = cat.bulk_untag(body.paths, body.tag_id)
         return {"untagged": count}
+    finally:
+        cat.close()
+
+
+# ── Shares ─────────────────────────────────────────────────────────
+
+
+@router.post("/shares")
+def create_share(request: Request, body: CreateShareRequest) -> dict:
+    """Create a share link for a file."""
+    cat = _open_catalog(request)
+    try:
+        share = cat.create_share(
+            path=body.path,
+            label=body.label,
+            password=body.password,
+            expires_hours=body.expires_hours,
+            max_downloads=body.max_downloads,
+        )
+        return share
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    finally:
+        cat.close()
+
+
+@router.get("/shares")
+def list_shares(request: Request, limit: int = 100, offset: int = 0) -> dict:
+    """List all shares."""
+    cat = _open_catalog(request)
+    try:
+        shares = cat.get_all_shares(limit=limit, offset=offset)
+        return {"shares": shares}
+    finally:
+        cat.close()
+
+
+@router.get("/shares/file")
+def shares_for_file(request: Request, path: str = Query(...)) -> dict:
+    """List shares for a specific file."""
+    cat = _open_catalog(request)
+    try:
+        shares = cat.get_shares_for_file(path)
+        return {"shares": shares}
+    finally:
+        cat.close()
+
+
+@router.delete("/shares/{share_id}")
+def revoke_share(request: Request, share_id: int) -> dict:
+    """Revoke/delete a share link."""
+    cat = _open_catalog(request)
+    try:
+        cat.delete_share(share_id)
+        return {"deleted": True}
+    finally:
+        cat.close()
+
+
+# ── Tag suggestions ────────────────────────────────────────────────
+
+
+@router.get("/tags/suggest")
+def suggest_tags(request: Request, path: str = Query(...)) -> dict:
+    """Suggest tags based on file metadata."""
+    cat = _open_catalog(request)
+    try:
+        file_row = cat.get_file_by_path(path)
+        if file_row is None:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        suggestions: list[dict] = []
+        ext = (file_row.ext or "").lower()
+
+        # Camera model
+        if file_row.camera_model:
+            cam = file_row.camera_model.strip()
+            if file_row.camera_make:
+                cam = f"{file_row.camera_make.strip()} {cam}"
+            suggestions.append({"name": cam, "color": "#58a6ff", "reason": "Fotoaparat"})
+
+        # Year from date_original
+        if file_row.date_original:
+            year = file_row.date_original[:4]
+            if year.isdigit() and 1900 <= int(year) <= 2100:
+                suggestions.append({"name": year, "color": "#d29922", "reason": "Rok porizeni"})
+
+        # File type category
+        image_exts = {"jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "heic", "heif", "svg", "raw", "cr2", "nef", "arw", "dng"}
+        video_exts = {"mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp"}
+        doc_exts = {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "epub"}
+        if ext in image_exts:
+            suggestions.append({"name": "Fotky", "color": "#3fb950", "reason": "Typ souboru"})
+        elif ext in video_exts:
+            suggestions.append({"name": "Videa", "color": "#f0883e", "reason": "Typ souboru"})
+        elif ext in doc_exts:
+            suggestions.append({"name": "Dokumenty", "color": "#bc8cff", "reason": "Typ souboru"})
+
+        # GPS
+        if file_row.gps_latitude and file_row.gps_longitude:
+            suggestions.append({"name": "S GPS", "color": "#58a6ff", "reason": "GPS souradnice"})
+
+        # Check for faces
+        faces = cat.get_faces_for_file_by_path(path) if hasattr(cat, "get_faces_for_file_by_path") else []
+        if not faces:
+            # Try alternative method
+            fr = cat.get_file_by_path(path)
+            if fr:
+                faces_cur = cat.conn.execute(
+                    "SELECT COUNT(*) FROM faces WHERE file_id = ?", (fr.id,)
+                )
+                face_count = faces_cur.fetchone()[0]
+                if face_count > 0:
+                    suggestions.append({"name": "Portrety", "color": "#f85149", "reason": "Detekce obliceju"})
+
+        # Rating
+        rating_row = cat.conn.execute(
+            "SELECT fr.rating FROM file_ratings fr JOIN files f ON fr.file_id = f.id WHERE f.path = ?",
+            (path,),
+        ).fetchone()
+        if rating_row and rating_row[0] >= 4:
+            suggestions.append({"name": "Oblibene", "color": "#d29922", "reason": "Vysoke hodnoceni"})
+
+        # Filter out tags that already exist on the file
+        existing_tags = cat.get_file_tags(path)
+        existing_names = {t["name"].lower() for t in existing_tags}
+        suggestions = [s for s in suggestions if s["name"].lower() not in existing_names]
+
+        return {"suggestions": suggestions}
     finally:
         cat.close()
 

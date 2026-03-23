@@ -364,14 +364,15 @@ def test_schema_v5_to_v6_migration(tmp_path):
     cat = Catalog(db)
     cat.open()
 
-    # Verify v6 tables exist
+    # Verify v6+ tables exist
     tables = {r[0] for r in cat.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     assert "persons" in tables
     assert "faces" in tables
     assert "face_privacy" in tables
+    assert "shares" in tables  # v7
 
-    # Verify version updated
+    # Verify version updated to latest
     ver = cat.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert ver == "6"
+    assert ver == "7"
 
     cat.close()

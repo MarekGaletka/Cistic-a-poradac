@@ -3,6 +3,7 @@
 import { api } from "./api.js";
 import { $, escapeHtml, fileName, formatBytes, IMAGE_EXTS } from "./utils.js";
 import { t } from "./i18n.js";
+import { openShareModal } from "./share.js";
 
 // ── Generic modal ───────────────────────────────────
 
@@ -105,11 +106,20 @@ export async function showFileDetail(filePath) {
           ${richnessHtml ? `<div style="margin-bottom:12px">${richnessHtml}</div>` : ""}
           ${infoRows.map(([l, v]) => `<div class="meta-row"><span class="meta-label">${escapeHtml(l)}</span><span>${escapeHtml(v)}</span></div>`).join("")}
           ${gpsHtml}
+          <div class="modal-actions" style="margin-top:12px;display:flex;gap:8px">
+            <button class="btn-icon btn-share-file" data-share-path="${escapeHtml(f.path)}" title="${t("share.title")}">&#128279; ${t("share.title")}</button>
+          </div>
         </div>
       </div>
       ${metaHtml}
     `;
     modalEl.querySelector(".modal-close").addEventListener("click", closeAllModals);
+    const shareBtn = modalEl.querySelector(".btn-share-file");
+    if (shareBtn) {
+      shareBtn.addEventListener("click", () => {
+        openShareModal(shareBtn.dataset.sharePath);
+      });
+    }
   } catch (e) {
     const modalEl = overlay.querySelector(".modal");
     modalEl.innerHTML = `<button class="modal-close" aria-label="${t("general.close")}">&times;</button><div class="empty">${t("detail.error", { message: e.message })}</div>`;

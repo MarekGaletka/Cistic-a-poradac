@@ -13,6 +13,17 @@ const TAG_COLORS = [
   { name: "Oran\u017eov\u00e1", hex: "#f0883e" },
 ];
 
+// Finder-style color presets (macOS-inspired)
+const FINDER_PRESETS = [
+  { name: "tags.color_red", color: "#f85149" },
+  { name: "tags.color_orange", color: "#f0883e" },
+  { name: "tags.color_yellow", color: "#d29922" },
+  { name: "tags.color_green", color: "#3fb950" },
+  { name: "tags.color_blue", color: "#58a6ff" },
+  { name: "tags.color_purple", color: "#bc8cff" },
+  { name: "tags.color_gray", color: "#8b949e" },
+];
+
 let _allTags = [];
 
 // ── Load tags ─────────────────────────────────────────
@@ -112,6 +123,15 @@ async function _renderPickerContent(picker, paths, onDone) {
 
   let html = `<div class="tag-picker-header" style="font-size:13px;font-weight:600;margin-bottom:8px">${t("tags.add_to_file")}</div>`;
 
+  // Finder-style color presets
+  html += `<div class="tag-presets-section" style="margin-bottom:8px">
+    <div class="tag-presets-label" style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${t("tags.presets")}</div>
+    <div class="tag-presets">`;
+  for (const preset of FINDER_PRESETS) {
+    html += `<span class="tag-preset" data-preset-color="${preset.color}" data-preset-name="${t(preset.name)}" style="background:${preset.color}" title="${t(preset.name)}"></span>`;
+  }
+  html += `</div></div>`;
+
   if (_allTags.length === 0) {
     html += `<div style="font-size:12px;color:var(--text-muted);padding:8px 0">${t("tags.no_tags")}</div>`;
   } else {
@@ -126,6 +146,12 @@ async function _renderPickerContent(picker, paths, onDone) {
     html += `</div>`;
   }
 
+  // Auto-suggestions placeholder
+  html += `<div class="tag-suggestions" id="tag-suggestions" style="display:none">
+    <div class="tag-presets-label" style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${t("tags.suggested")}</div>
+    <div class="tag-suggestions-list" id="tag-suggestions-list"></div>
+  </div>`;
+
   // Inline create
   html += `<div class="tag-create-row">
     <input class="tag-create-input" type="text" placeholder="${t("tags.create_placeholder")}" maxlength="50">
@@ -136,6 +162,33 @@ async function _renderPickerContent(picker, paths, onDone) {
   html += `</div></div>`;
 
   picker.innerHTML = html;
+
+  // Fetch auto-suggestions if single file
+  if (paths.length === 1) {
+    _loadSuggestions(picker, paths[0], paths, onDone);
+  }
+
+  // Bind Finder preset clicks — create tag with color name and apply it
+  picker.querySelectorAll(".tag-preset").forEach(preset => {
+    preset.addEventListener("click", async () => {
+      const name = preset.dataset.presetName;
+      const color = preset.dataset.presetColor;
+      try {
+        // Create tag if it doesn't exist, then apply
+        let tag = _allTags.find(t => t.name === name);
+        if (!tag) {
+          tag = await apiPost("/tags", { name, color });
+          await loadTags();
+        }
+        await apiPost("/files/tag", { paths, tag_id: tag.id });
+        showToast(t("tags.tagged"), "success");
+        if (onDone) onDone();
+        closeTagPicker();
+      } catch (e) {
+        showToast(t("general.error", { message: e.message }), "error");
+      }
+    });
+  });
 
   // Bind tag toggle
   picker.querySelectorAll(".tag-picker-item").forEach(item => {
@@ -290,4 +343,48 @@ function _renderManagerColors(overlay) {
     html += `<span class="tag-color-preset${c.hex === '#58a6ff' ? ' active' : ''}" data-color="${c.hex}" style="background:${c.hex}" title="${c.name}"></span>`;
   }
   colorsEl.innerHTML = html;
+}
+
+// ── Auto-tag suggestions ─────────────────────────────
+
+async function _loadSuggestions(picker, filePath, paths, onDone) {
+  try {
+    const data = await api(`/tags/suggest?path=${encodeURIComponent(filePath)}`);
+    const suggestions = data.suggestions || [];
+    if (suggestions.length === 0) return;
+
+    const container = picker.querySelector("#tag-suggestions");
+    const list = picker.querySelector("#tag-suggestions-list");
+    if (!container || !list) return;
+
+    container.style.display = "block";
+    let html = "";
+    for (const s of suggestions) {
+      html += `<span class="tag-suggestion" data-suggest-name="${escapeHtml(s.name)}" data-suggest-color="${s.color}" style="background:${s.color}22;color:${s.color};border:1px solid ${s.color}44" title="${escapeHtml(s.reason)}">+ ${escapeHtml(s.name)}</span>`;
+    }
+    list.innerHTML = html;
+
+    // Bind suggestion clicks — create tag and apply
+    list.querySelectorAll(".tag-suggestion").forEach(el => {
+      el.addEventListener("click", async () => {
+        const name = el.dataset.suggestName;
+        const color = el.dataset.suggestColor;
+        try {
+          let tag = _allTags.find(t => t.name === name);
+          if (!tag) {
+            tag = await apiPost("/tags", { name, color });
+            await loadTags();
+          }
+          await apiPost("/files/tag", { paths, tag_id: tag.id });
+          showToast(t("tags.tagged"), "success");
+          if (onDone) onDone();
+          closeTagPicker();
+        } catch (e) {
+          showToast(t("general.error", { message: e.message }), "error");
+        }
+      });
+    });
+  } catch {
+    // Silently ignore suggestion errors
+  }
 }
