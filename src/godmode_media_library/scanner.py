@@ -293,6 +293,9 @@ def incremental_scan(
     if extract_exiftool:
         _run_exiftool_extraction(catalog, exiftool_bin)
 
+    # Backfill date_original from filesystem dates for files that still lack it
+    _backfill_dates_from_filesystem(catalog)
+
     catalog.commit()
     catalog.finish_scan(scan_id, stats)
 
@@ -325,12 +328,127 @@ def _run_exiftool_extraction(catalog: Catalog, exiftool_bin: str = "exiftool") -
         richness = compute_richness(meta)
         catalog.upsert_file_metadata(str(path), json.dumps(meta))
         catalog.update_metadata_richness(str(path), richness.total)
+        # Backfill date_original and GPS from ExifTool when missing in files table
+        _backfill_from_exiftool(catalog, str(path), meta)
         extracted += 1
 
     if extracted:
         catalog.commit()
         logger.info("ExifTool metadata extracted for %d files", extracted)
     return extracted
+
+
+# Keys to try for date_original (priority order)
+_DATE_KEYS = [
+    "EXIF:DateTimeOriginal", "DateTimeOriginal",
+    "EXIF:CreateDate", "CreateDate",
+    "XMP:DateTimeOriginal", "XMP:CreateDate",
+    "QuickTime:CreateDate", "QuickTime:MediaCreateDate",
+    "Composite:SubSecDateTimeOriginal",
+    "H264:DateTimeOriginal",
+]
+
+# Keys to try for GPS latitude/longitude
+_GPS_LAT_KEYS = [
+    "Composite:GPSLatitude", "EXIF:GPSLatitude",
+    "GPSLatitude", "XMP:GPSLatitude",
+]
+_GPS_LON_KEYS = [
+    "Composite:GPSLongitude", "EXIF:GPSLongitude",
+    "GPSLongitude", "XMP:GPSLongitude",
+]
+
+
+def _backfill_from_exiftool(catalog: Catalog, path_str: str, meta: dict) -> None:
+    """Fill in date_original and GPS in the files table from ExifTool metadata."""
+    row = catalog.get_file_by_path(path_str)
+    if row is None:
+        return
+
+    updates: dict[str, object] = {}
+
+    # Backfill date_original
+    if not row.date_original:
+        for key in _DATE_KEYS:
+            val = meta.get(key)
+            if val and isinstance(val, str) and len(val) >= 10:
+                # Normalize to YYYY:MM:DD HH:MM:SS format
+                updates["date_original"] = val.strip()
+                break
+
+    # Backfill GPS
+    if not row.gps_latitude:
+        lat = _extract_gps_float(meta, _GPS_LAT_KEYS)
+        lon = _extract_gps_float(meta, _GPS_LON_KEYS)
+        if lat is not None and lon is not None:
+            updates["gps_latitude"] = lat
+            updates["gps_longitude"] = lon
+
+    if updates:
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        catalog.conn.execute(
+            f"UPDATE files SET {set_clause} WHERE path=?",  # noqa: S608
+            [*updates.values(), path_str],
+        )
+
+
+def _extract_gps_float(meta: dict, keys: list[str]) -> float | None:
+    """Extract GPS coordinate as float from ExifTool metadata."""
+    for key in keys:
+        val = meta.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, str):
+            # Handle "49.1234 N" or "49 deg 7' 25.08\" N" formats
+            import re
+            # Try simple float
+            try:
+                return float(val)
+            except ValueError:
+                pass
+            # Try DMS format
+            m = re.match(r"([+-]?\d+(?:\.\d+)?)", val.replace(",", "."))
+            if m:
+                try:
+                    return float(m.group(1))
+                except ValueError:
+                    pass
+    return None
+
+
+def _backfill_dates_from_filesystem(catalog: Catalog) -> int:
+    """Fill date_original from birthtime/mtime for files that still lack it."""
+    from datetime import datetime, timezone
+
+    count = catalog.conn.execute(
+        "SELECT COUNT(*) FROM files "
+        "WHERE date_original IS NULL AND (birthtime IS NOT NULL OR mtime IS NOT NULL)"
+    ).fetchone()[0]
+
+    if count == 0:
+        return 0
+
+    logger.info("Backfilling date_original from filesystem dates for %d files", count)
+
+    rows = catalog.conn.execute(
+        "SELECT id, birthtime, mtime FROM files "
+        "WHERE date_original IS NULL AND (birthtime IS NOT NULL OR mtime IS NOT NULL)"
+    ).fetchall()
+
+    for row_id, birthtime, mtime in rows:
+        ts = birthtime if birthtime else mtime
+        if ts:
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            date_str = dt.strftime("%Y:%m:%d %H:%M:%S")
+            catalog.conn.execute(
+                "UPDATE files SET date_original=? WHERE id=?",
+                (date_str, row_id),
+            )
+
+    logger.info("Backfilled %d files with filesystem dates", count)
+    return count
 
 
 def _update_duplicate_groups(catalog: Catalog) -> int:

@@ -194,7 +194,18 @@ export async function render(container) {
 
   try {
     const data = await api("/files?limit=5000");
-    const files = data.files.filter(f => f.date_original);
+    // Use date_original, fallback to birthtime/mtime (converted to date string)
+    const files = data.files.filter(f => {
+      if (f.date_original) return true;
+      // Convert numeric timestamps to date string
+      const ts = f.birthtime || f.mtime;
+      if (ts) {
+        const d = new Date(ts * 1000);
+        f.date_original = `${d.getFullYear()}:${String(d.getMonth()+1).padStart(2,"0")}:${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+        return true;
+      }
+      return false;
+    });
 
     if (!files.length) {
       container.innerHTML = `
