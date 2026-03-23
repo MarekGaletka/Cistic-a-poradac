@@ -293,6 +293,9 @@ const translations = {
     "share.revoked": "Sd\u00edlen\u00ed zru\u0161eno",
     "share.label": "Popisek (voliteln\u00fd)",
     "share.existing": "Existuj\u00edc\u00ed sd\u00edlen\u00ed",
+    "share.native": "Sd\u00edlet do aplikace",
+    "share.shared": "Sd\u00edleno",
+    "share.share_failed": "Sd\u00edlen\u00ed se nezda\u0159ilo",
     "action.select_all": "Vybrat v\u0161e",
     "action.deselect_all": "Zrušit výběr",
 

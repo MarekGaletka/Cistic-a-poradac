@@ -4,6 +4,7 @@ import { api, apiPost, apiPut, apiDelete } from "./api.js";
 import { escapeHtml, fileName, formatBytes, IMAGE_EXTS, showToast } from "./utils.js";
 import { t } from "./i18n.js";
 import { renderFileTagsWithRemove, openTagPicker } from "./tags.js";
+import { openShareModal } from "./share.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
 
@@ -213,9 +214,17 @@ function renderCurrent() {
       </div>
     </div>
     <button class="lightbox-info-toggle" id="lightbox-info-toggle" aria-label="${t("lightbox.info")}" title="${t("lightbox.info")}">&#9432;</button>
-    <button class="lightbox-fav-btn ${_favoritesSet.has(path) ? "is-favorite" : ""}" id="lightbox-fav-btn" aria-label="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}" title="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}">
-      ${_favoritesSet.has(path) ? "\u2605" : "\u2606"} ${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}
-    </button>
+    <div class="lightbox-toolbar">
+      <button class="lightbox-fav-btn ${_favoritesSet.has(path) ? "is-favorite" : ""}" id="lightbox-fav-btn" aria-label="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}" title="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}">
+        ${_favoritesSet.has(path) ? "\u2605" : "\u2606"} ${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}
+      </button>
+      <button class="lightbox-share-btn" id="lightbox-share-btn" aria-label="${t("share.title")}" title="${t("share.title")}">
+        &#128279; ${t("share.title")}
+      </button>
+      ${navigator.share ? `<button class="lightbox-native-share-btn" id="lightbox-native-share-btn" aria-label="${t("share.native")}" title="${t("share.native")}">
+        &#x1F4E4; ${t("share.native")}
+      </button>` : ""}
+    </div>
   `;
 
   // Bind internal events
@@ -246,6 +255,46 @@ function renderCurrent() {
         _updateFavButton();
       } catch (e) {
         showToast(t("general.error", { message: e.message }), "error");
+      }
+    });
+  }
+
+  // Share button (link-based)
+  const shareBtn = contentEl.querySelector("#lightbox-share-btn");
+  if (shareBtn) {
+    shareBtn.addEventListener("click", () => {
+      openShareModal(_paths[_index]);
+    });
+  }
+
+  // Native share (Web Share API — mail, messengers, social networks)
+  const nativeShareBtn = contentEl.querySelector("#lightbox-native-share-btn");
+  if (nativeShareBtn) {
+    nativeShareBtn.addEventListener("click", async () => {
+      const currentPath = _paths[_index];
+      const name = fileName(currentPath);
+      try {
+        // Fetch the file as blob for native sharing
+        const response = await fetch(`/api/thumbnail${encodeURI(currentPath)}?size=800`);
+        const blob = await response.blob();
+        const file = new File([blob], name, { type: blob.type });
+        await navigator.share({
+          title: name,
+          files: [file],
+        });
+        showToast(t("share.shared"), "success");
+      } catch (e) {
+        if (e.name !== "AbortError") {
+          // Fallback: share without file (just text)
+          try {
+            await navigator.share({
+              title: name,
+              text: `${name} — GOD MODE Media Library`,
+            });
+          } catch {
+            showToast(t("share.share_failed"), "error");
+          }
+        }
       }
     });
   }
