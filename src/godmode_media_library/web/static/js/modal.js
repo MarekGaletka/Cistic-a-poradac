@@ -106,15 +106,38 @@ export async function showFileDetail(filePath) {
           ${richnessHtml ? `<div style="margin-bottom:12px">${richnessHtml}</div>` : ""}
           ${infoRows.map(([l, v]) => `<div class="meta-row"><span class="meta-label">${escapeHtml(l)}</span><span>${escapeHtml(v)}</span></div>`).join("")}
           ${gpsHtml}
-          <div class="modal-actions" style="margin-top:12px;display:flex;gap:8px">
-            <button class="btn-icon btn-share-file" data-share-path="${escapeHtml(f.path)}" title="${t("share.title")}">&#128279; ${t("share.title")}</button>
+          <div class="modal-actions" style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <button class="btn-icon btn-fav-detail" data-path="${escapeHtml(f.path)}" title="${t("action.favorite")}">&#9734;</button>
+            <button class="btn-icon btn-share-detail" data-share-path="${escapeHtml(f.path)}" title="${t("share.title")}">&#128279;</button>
           </div>
         </div>
       </div>
       ${metaHtml}
     `;
     modalEl.querySelector(".modal-close").addEventListener("click", closeAllModals);
-    const shareBtn = modalEl.querySelector(".btn-share-file");
+
+    // Favorite button
+    const favBtn = modalEl.querySelector(".btn-fav-detail");
+    if (favBtn) {
+      // Load current state
+      api("/files/favorites").then(res => {
+        const favPaths = new Set((res.favorites || []).map(fav => fav.path || fav));
+        if (favPaths.has(f.path)) {
+          favBtn.textContent = "\u2605";
+          favBtn.classList.add("active");
+        }
+      }).catch(() => {});
+      favBtn.addEventListener("click", async () => {
+        try {
+          await api("/files/favorite", { method: "POST", body: { path: favBtn.dataset.path } });
+          const isNow = favBtn.classList.toggle("active");
+          favBtn.textContent = isNow ? "\u2605" : "\u2734";
+        } catch {}
+      });
+    }
+
+    // Share button
+    const shareBtn = modalEl.querySelector(".btn-share-detail");
     if (shareBtn) {
       shareBtn.addEventListener("click", () => {
         openShareModal(shareBtn.dataset.sharePath);

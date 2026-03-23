@@ -245,6 +245,8 @@ const translations = {
     "action.rename": "Přejmenovat",
     "action.move": "Přesunout",
     "action.tag": "Tagovat",
+    "action.favorite": "Oblíbené",
+    "action.share": "Sdílet",
 
     // Tags
     "tags.title": "Tagy",

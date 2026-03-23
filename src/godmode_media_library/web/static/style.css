@@ -7326,6 +7326,16 @@ button:focus-visible, a:focus-visible {
 
 /* ── Share modal ────────────────────────────────────── */
 
+/* Detail modal action buttons */
+.btn-fav-detail, .btn-share-detail {
+  font-size: 20px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.btn-fav-detail:hover, .btn-share-detail:hover { transform: scale(1.2); }
+.btn-fav-detail.active { color: #f0c040; }
+
 .share-modal { max-width: 520px; }
 .share-form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .share-form-row label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
