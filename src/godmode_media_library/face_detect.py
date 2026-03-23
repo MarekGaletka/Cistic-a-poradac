@@ -82,7 +82,10 @@ def detect_faces_in_file(
 
     image, scale = _resize_if_needed(image, max_dimension, np, Image)
 
-    locations = face_recognition.face_locations(image, model=model)
+    # Use upsample=2 for better detection on high-res / downscaled images
+    locations = face_recognition.face_locations(
+        image, number_of_times_to_upsample=2, model=model,
+    )
     if not locations:
         return 0
 

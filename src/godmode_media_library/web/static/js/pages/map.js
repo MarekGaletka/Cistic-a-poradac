@@ -1,12 +1,15 @@
-/* GOD MODE Media Library — Map page (upgraded with clustering) */
+/* GOD MODE Media Library — Map page (Apple Photos style with thumbnail markers) */
 
 import { api } from "../api.js";
 import { escapeHtml, fileName, IMAGE_EXTS } from "../utils.js";
 import { t } from "../i18n.js";
 import { showFileDetail } from "../modal.js";
+import { openLightbox } from "../lightbox.js";
 
 let _leafletMap = null;
 let _clusterGroup = null;
+
+const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v"]);
 
 export function cleanup() {
   if (_leafletMap) {
@@ -16,39 +19,55 @@ export function cleanup() {
   _clusterGroup = null;
 }
 
-const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v"]);
-
-function _cameraIcon() {
+function _thumbIcon(f) {
+  const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
+  const isVideo = VIDEO_EXTS.has((f.ext || "").toLowerCase());
+  if (isImage) {
+    const url = `/api/thumbnail${encodeURI(f.path)}?size=80`;
+    return L.divIcon({
+      html: `<div class="map-thumb-marker"><img src="${url}" onerror="this.parentElement.innerHTML='&#128247;'"></div>`,
+      className: "map-thumb-icon",
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
+    });
+  }
+  if (isVideo) {
+    return L.divIcon({
+      html: `<div class="map-thumb-marker map-thumb-video">▶</div>`,
+      className: "map-thumb-icon",
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
+    });
+  }
   return L.divIcon({
-    html: '<span style="font-size:18px">&#128247;</span>',
-    className: "map-custom-icon",
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
-  });
-}
-
-function _videoIcon() {
-  return L.divIcon({
-    html: '<span style="font-size:18px">&#127910;</span>',
-    className: "map-custom-icon",
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    html: `<div class="map-thumb-marker map-thumb-file">${escapeHtml(f.ext || "?")}</div>`,
+    className: "map-thumb-icon",
+    iconSize: [48, 48],
+    iconAnchor: [24, 24],
   });
 }
 
 function _clusterIcon(cluster) {
-  const count = cluster.getChildCount();
-  let color = "#3b82f6"; // blue
-  let size = 36;
-  if (count >= 50) {
-    color = "#ef4444"; // red
-    size = 46;
-  } else if (count >= 10) {
-    color = "#eab308"; // yellow
-    size = 40;
+  const children = cluster.getAllChildMarkers();
+  const count = children.length;
+
+  // Find first image child for a preview thumbnail
+  let thumbHtml = "";
+  for (const m of children) {
+    const f = m._gmlFile;
+    if (f && IMAGE_EXTS.has((f.ext || "").toLowerCase())) {
+      const url = `/api/thumbnail${encodeURI(f.path)}?size=80`;
+      thumbHtml = `<img src="${url}" onerror="this.style.display='none'">`;
+      break;
+    }
   }
+
+  const size = count >= 100 ? 64 : count >= 20 ? 56 : 48;
   return L.divIcon({
-    html: `<div style="background:${color};color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,0.3)">${count}</div>`,
+    html: `<div class="map-cluster-thumb" style="width:${size}px;height:${size}px">
+      ${thumbHtml}
+      <span class="map-cluster-count">${count}</span>
+    </div>`,
     className: "map-cluster-icon",
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
@@ -61,7 +80,7 @@ export async function render(container) {
     <div id="map-container"></div>`;
 
   try {
-    const data = await api("/files?has_gps=true&limit=5000");
+    const data = await api("/files?has_gps=true&limit=10000");
     const files = data.files.filter(f => f.gps_latitude && f.gps_longitude);
 
     if (!files.length) {
@@ -71,19 +90,10 @@ export async function render(container) {
           <div class="empty-state-icon">&#127758;</div>
           <h3 class="empty-state-title">${t("map.empty_title")}</h3>
           <p class="empty-state-subtitle">${t("map.empty_hint")}</p>
-          <button class="empty-state-action-btn" id="btn-map-empty-pipeline">${t("map.empty_action")}</button>
         </div>`;
-      const pipelineBtn = container.querySelector("#btn-map-empty-pipeline");
-      if (pipelineBtn) {
-        pipelineBtn.addEventListener("click", () => {
-          const settingsBtn = document.querySelector("#btn-settings");
-          if (settingsBtn) settingsBtn.click();
-        });
-      }
       return;
     }
 
-    // Update header with file count
     container.innerHTML = `
       <div class="page-header"><h2>${t("map.title")} <span class="header-count">${t("map.files_on_map", { count: files.length })}</span></h2></div>
       <div id="map-container"></div>`;
@@ -101,15 +111,21 @@ export async function render(container) {
       maxZoom: 19,
     }).addTo(_leafletMap);
 
-    // Use marker clustering if available, otherwise fall back to plain markers
+    // Collect all lightbox-eligible paths for navigation
+    const lightboxPaths = files.filter(f => {
+      const ext = (f.ext || "").toLowerCase();
+      return IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
+    }).map(f => f.path);
+
     const useCluster = typeof L.markerClusterGroup === "function";
     if (useCluster) {
       _clusterGroup = L.markerClusterGroup({
         iconCreateFunction: _clusterIcon,
-        maxClusterRadius: 60,
+        maxClusterRadius: 50,
         spiderfyOnMaxZoom: true,
         showCoverageOnHover: false,
         zoomToBoundsOnClick: true,
+        disableClusteringAtZoom: 18,
       });
     }
 
@@ -119,24 +135,25 @@ export async function render(container) {
       const lng = f.gps_longitude;
       bounds.push([lat, lng]);
 
-      const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
-      const isVideo = VIDEO_EXTS.has((f.ext || "").toLowerCase());
-      const thumbUrl = isImage ? `/api/thumbnail${encodeURI(f.path)}?size=150` : "";
-      const thumbHtml = isImage ? `<img src="${thumbUrl}" style="width:120px;height:80px;object-fit:cover;border-radius:4px;margin-bottom:4px;display:block" onerror="this.style.display='none'" alt="">` : "";
-      const typeLabel = isVideo ? t("map.video") : isImage ? t("map.photo") : (f.ext || "").toUpperCase();
+      const icon = _thumbIcon(f);
+      const marker = L.marker([lat, lng], { icon });
+      marker._gmlFile = f; // store reference for cluster icon
 
-      const popup = `<div style="font-size:12px;max-width:160px">
-        ${thumbHtml}
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
-          <span style="font-size:10px;background:var(--surface,#f0f0f0);padding:1px 6px;border-radius:3px">${escapeHtml(typeLabel)}</span>
-        </div>
-        <strong>${escapeHtml(fileName(f.path))}</strong><br>
-        <span style="color:#666">${escapeHtml(f.date_original || "")}</span><br>
-        <a href="#" class="map-detail-link" data-path="${escapeHtml(f.path)}">${t("map.details")}</a>
-      </div>`;
-
-      const icon = isVideo ? _videoIcon() : _cameraIcon();
-      const marker = L.marker([lat, lng], { icon }).bindPopup(popup);
+      // Click marker → open lightbox directly (like Apple Photos)
+      marker.on("click", () => {
+        const ext = (f.ext || "").toLowerCase();
+        const isMedia = IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
+        if (isMedia) {
+          const idx = lightboxPaths.indexOf(f.path);
+          if (idx >= 0) {
+            openLightbox(lightboxPaths, idx);
+          } else {
+            showFileDetail(f.path);
+          }
+        } else {
+          showFileDetail(f.path);
+        }
+      });
 
       if (useCluster) {
         _clusterGroup.addLayer(marker);
@@ -149,20 +166,8 @@ export async function render(container) {
       _leafletMap.addLayer(_clusterGroup);
     }
 
-    // Bind popup detail links via event delegation
-    _leafletMap.on("popupopen", (e) => {
-      const link = e.popup.getElement().querySelector(".map-detail-link");
-      if (link) {
-        link.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          _leafletMap.closePopup();
-          showFileDetail(link.dataset.path);
-        });
-      }
-    });
-
     if (bounds.length) {
-      _leafletMap.fitBounds(bounds, { padding: [20, 20] });
+      _leafletMap.fitBounds(bounds, { padding: [30, 30] });
     }
 
     setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
