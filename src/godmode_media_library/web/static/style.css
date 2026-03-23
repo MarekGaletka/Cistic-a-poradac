@@ -1512,27 +1512,147 @@ details[open] > .diff-toggle::before { content: "v "; }
   overflow: hidden;
 }
 
-/* ── Timeline ──────────────────────────────────────── */
+/* ── Timeline (drill-down) ─────────────────────────── */
 
-.timeline-month { margin-bottom: 24px; }
+/* Breadcrumb */
+.tl-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
 
-.timeline-header {
-  font-size: 16px;
+.tl-bread-item {
+  cursor: pointer;
+  color: var(--accent);
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.tl-bread-item:hover {
+  background: var(--surface-hover);
+}
+
+.tl-bread-active {
+  color: var(--text);
+  cursor: default;
   font-weight: 600;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
 }
 
-.timeline-count { color: var(--text-muted); font-weight: 400; font-size: 13px; }
+.tl-bread-active:hover {
+  background: transparent;
+}
 
-.timeline-grid {
+.tl-bread-sep {
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+/* Card grids */
+.tl-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
+  gap: 12px;
 }
 
-.timeline-item {
+.tl-grid-years {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.tl-grid-months {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.tl-grid-weeks {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.tl-grid-files {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+
+/* Cards (year/month/week) */
+.tl-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+
+.tl-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.tl-card-previews {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.tl-card-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.tl-card-empty-thumb {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  color: var(--text-muted);
+}
+
+.tl-card-info {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tl-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.tl-card-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Day view */
+.tl-day-section {
+  margin-bottom: 24px;
+}
+
+.tl-day-header {
+  font-size: 14px;
+  font-weight: 600;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  text-transform: capitalize;
+}
+
+.tl-day-count {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 13px;
+}
+
+/* File items */
+.tl-file {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1541,18 +1661,20 @@ details[open] > .diff-toggle::before { content: "v "; }
   transition: border-color 0.15s;
 }
 
-.timeline-item:hover { border-color: var(--accent); }
+.tl-file:hover {
+  border-color: var(--accent);
+}
 
-.timeline-item img {
+.tl-file img {
   width: 100%;
-  height: 100px;
+  height: 120px;
   object-fit: cover;
   display: block;
 }
 
-.timeline-icon {
+.tl-file-icon {
   width: 100%;
-  height: 100px;
+  height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1563,8 +1685,12 @@ details[open] > .diff-toggle::before { content: "v "; }
   text-transform: uppercase;
 }
 
-.timeline-name {
-  padding: 4px 6px;
+.tl-file-video {
+  font-size: 28px;
+}
+
+.tl-file-name {
+  padding: 4px 8px;
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
@@ -1572,16 +1698,9 @@ details[open] > .diff-toggle::before { content: "v "; }
   text-overflow: ellipsis;
 }
 
+/* Legacy compat for scrubber references */
 .timeline-more {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 13px;
-  min-height: 120px;
+  display: none;
 }
 
 /* ── Config form ───────────────────────────────────── */

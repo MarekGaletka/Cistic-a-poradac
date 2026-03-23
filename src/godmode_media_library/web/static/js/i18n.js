@@ -161,15 +161,13 @@ const translations = {
 
     // Timeline
     "timeline.title": "Časová osa",
-    "timeline.dated_files": "{count} souborů s datem",
-    "timeline.more": "+{count} dalších",
+    "timeline.dated_files": "{count} souborů",
+    "timeline.file_count": "{count} souborů",
+    "timeline.all_years": "Všechny roky",
+    "timeline.week": "Týden",
     "timeline.empty_title": "Žádné soubory s datem nenalezeny",
-    "timeline.empty_hint": "Soubory potřebují metadata date_original (z EXIF nebo ExifTool extrakce). Spusťte pipeline pro extrakci.",
-    "timeline.empty_action": "Spustit pipeline",
-    "timeline.show_all": "Zobrazit vše ({count})",
-    "timeline.collapse": "Sbalit",
+    "timeline.empty_hint": "Naskenujte soubory pro zobrazení časové osy.",
     "timeline.year": "Rok {year}",
-    "timeline.no_date": "Bez data",
 
     // Map
     "map.title": "Mapa",
