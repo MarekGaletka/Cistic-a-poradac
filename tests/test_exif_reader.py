@@ -21,9 +21,16 @@ def test_can_read_exif_jpeg():
 
 
 def test_can_read_exif_not_supported():
-    assert not can_read_exif("heic")
     assert not can_read_exif("mp4")
-    assert not can_read_exif("cr2")
+    assert not can_read_exif("mov")
+    assert not can_read_exif("pdf")
+
+
+def test_can_read_exif_heic_raw():
+    assert can_read_exif("heic")
+    assert can_read_exif("heif")
+    assert can_read_exif("cr2")
+    assert can_read_exif("dng")
 
 
 def test_dms_to_decimal_north():

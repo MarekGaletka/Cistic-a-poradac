@@ -418,6 +418,67 @@ def _extract_gps_float(meta: dict, keys: list[str]) -> float | None:
     return None
 
 
+def backfill_metadata_from_stored(catalog: Catalog) -> dict:
+    """Backfill date_original and GPS from already-stored ExifTool metadata.
+
+    Reads file_metadata.raw_json for files missing date or GPS,
+    without re-running ExifTool.
+    Returns {"dates_filled": int, "gps_filled": int}.
+    """
+    import json as _json
+
+    # Files missing date_original but having ExifTool metadata
+    cur = catalog.conn.execute(
+        "SELECT f.path, fm.raw_json FROM files f "
+        "JOIN file_metadata fm ON fm.file_id = f.id "
+        "WHERE f.date_original IS NULL OR f.gps_latitude IS NULL"
+    )
+
+    dates_filled = 0
+    gps_filled = 0
+
+    for path_str, raw in cur.fetchall():
+        try:
+            meta = _json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+
+        row = catalog.get_file_by_path(path_str)
+        if row is None:
+            continue
+
+        updates: dict[str, object] = {}
+
+        if not row.date_original:
+            for key in _DATE_KEYS:
+                val = meta.get(key)
+                if val and isinstance(val, str) and len(val) >= 10:
+                    updates["date_original"] = val.strip()
+                    dates_filled += 1
+                    break
+
+        if not row.gps_latitude:
+            lat = _extract_gps_float(meta, _GPS_LAT_KEYS)
+            lon = _extract_gps_float(meta, _GPS_LON_KEYS)
+            if lat is not None and lon is not None:
+                updates["gps_latitude"] = lat
+                updates["gps_longitude"] = lon
+                gps_filled += 1
+
+        if updates:
+            set_clause = ", ".join(f"{k}=?" for k in updates)
+            catalog.conn.execute(
+                f"UPDATE files SET {set_clause} WHERE path=?",  # noqa: S608
+                [*updates.values(), path_str],
+            )
+
+    if dates_filled or gps_filled:
+        catalog.commit()
+        logger.info("Backfilled from stored metadata: %d dates, %d GPS", dates_filled, gps_filled)
+
+    return {"dates_filled": dates_filled, "gps_filled": gps_filled}
+
+
 def _backfill_dates_from_filesystem(catalog: Catalog) -> int:
     """Fill date_original from birthtime/mtime for files that still lack it."""
     from datetime import datetime, timezone

@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 _EXIF_EXTS = {
     "jpg", "jpeg", "tiff", "tif", "png", "webp",
+    "heic", "heif", "avif", "dng", "cr2", "nef", "arw",
 }
 
 # Standard EXIF tag IDs
@@ -65,6 +66,16 @@ def read_exif(path: Path) -> ExifMeta | None:
     except ImportError:
         logger.debug("Pillow not installed, cannot read EXIF")
         return None
+
+    # Register HEIC/HEIF support if available
+    ext = path.suffix.lower().lstrip(".")
+    if ext in ("heic", "heif", "avif"):
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except ImportError:
+            logger.debug("pillow-heif not installed, cannot read %s EXIF", ext)
+            return None
 
     meta = ExifMeta()
 

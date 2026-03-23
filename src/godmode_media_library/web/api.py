@@ -937,6 +937,21 @@ def start_scan(
     return {"task_id": task.id, "status": "started"}
 
 
+@router.post("/backfill-metadata")
+def backfill_metadata(request: Request):
+    """Backfill date_original and GPS from already-stored ExifTool metadata + filesystem dates."""
+    from ..scanner import backfill_metadata_from_stored, _backfill_dates_from_filesystem
+
+    cat = _open_catalog(request)
+    try:
+        result = backfill_metadata_from_stored(cat)
+        fs_dates = _backfill_dates_from_filesystem(cat)
+        result["fs_dates_filled"] = fs_dates
+        return result
+    finally:
+        cat.close()
+
+
 @router.post("/pipeline")
 def start_pipeline(
     request: Request,
