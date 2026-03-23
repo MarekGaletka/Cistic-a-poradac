@@ -345,7 +345,7 @@ export async function render(container) {
   _container = container;
 
   try {
-    const data = await api("/files?limit=50000");
+    const data = await api("/files?limit=10000");
     // Ensure every file has a parseable date
     _allFiles = data.files.filter(f => {
       if (f.date_original) return true;
