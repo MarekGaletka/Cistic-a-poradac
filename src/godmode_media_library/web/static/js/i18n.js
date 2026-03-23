@@ -318,6 +318,8 @@ const translations = {
     "lightbox.no_preview": "Náhled není k dispozici",
     "lightbox.video": "Video",
     "lightbox.download": "Stáhnout",
+    "lightbox.rotate_left": "Otočit doleva",
+    "lightbox.rotate_right": "Otočit doprava",
 
     // Quick Look
     "quicklook.title": "Náhled",

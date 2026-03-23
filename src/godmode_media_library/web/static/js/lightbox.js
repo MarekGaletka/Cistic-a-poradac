@@ -13,6 +13,7 @@ let _index = 0;
 let _overlay = null;
 let _infoOpen = false;
 let _zoom = 1;
+let _rotation = 0;
 let _zoomOriginX = 50;
 let _zoomOriginY = 50;
 let _preloaded = {};
@@ -29,6 +30,7 @@ export function openLightbox(paths, startIndex = 0, sourceEl = null) {
   _paths = paths;
   _index = Math.max(0, Math.min(startIndex, paths.length - 1));
   _zoom = 1;
+  _rotation = 0;
   _infoOpen = false;
   _preloaded = {};
   _fileDetailsCache = {};
@@ -137,6 +139,7 @@ function goNext() {
   if (_index < _paths.length - 1) {
     _index++;
     _zoom = 1;
+    _rotation = 0;
     renderCurrent();
     preloadAdjacent();
   }
@@ -146,6 +149,7 @@ function goPrev() {
   if (_index > 0) {
     _index--;
     _zoom = 1;
+    _rotation = 0;
     renderCurrent();
     preloadAdjacent();
   }
@@ -215,6 +219,9 @@ function renderCurrent() {
     </div>
     <button class="lightbox-info-toggle" id="lightbox-info-toggle" aria-label="${t("lightbox.info")}" title="${t("lightbox.info")}">&#9432;</button>
     <div class="lightbox-toolbar">
+      <button class="lightbox-toolbar-btn" id="lightbox-rotate-left" aria-label="${t("lightbox.rotate_left")}" title="${t("lightbox.rotate_left")}">&#x21BA;</button>
+      <button class="lightbox-toolbar-btn" id="lightbox-rotate-right" aria-label="${t("lightbox.rotate_right")}" title="${t("lightbox.rotate_right")}">&#x21BB;</button>
+      <span class="lightbox-toolbar-sep"></span>
       <button class="lightbox-fav-btn ${_favoritesSet.has(path) ? "is-favorite" : ""}" id="lightbox-fav-btn" aria-label="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}" title="${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}">
         ${_favoritesSet.has(path) ? "\u2605" : "\u2606"} ${_favoritesSet.has(path) ? t("files.unfavorite") : t("files.favorite")}
       </button>
@@ -256,6 +263,24 @@ function renderCurrent() {
       } catch (e) {
         showToast(t("general.error", { message: e.message }), "error");
       }
+    });
+  }
+
+  // Rotate buttons
+  const rotLeftBtn = contentEl.querySelector("#lightbox-rotate-left");
+  const rotRightBtn = contentEl.querySelector("#lightbox-rotate-right");
+  if (rotLeftBtn) {
+    rotLeftBtn.addEventListener("click", () => {
+      _rotation = (_rotation - 90) % 360;
+      const mw = document.getElementById("lightbox-media-wrap");
+      if (mw) applyTransform(mw);
+    });
+  }
+  if (rotRightBtn) {
+    rotRightBtn.addEventListener("click", () => {
+      _rotation = (_rotation + 90) % 360;
+      const mw = document.getElementById("lightbox-media-wrap");
+      if (mw) applyTransform(mw);
     });
   }
 
@@ -320,17 +345,18 @@ function renderCurrent() {
 }
 
 function applyZoom(mediaWrap) {
+  applyTransform(mediaWrap);
+}
+
+function applyTransform(mediaWrap) {
   const media = mediaWrap?.querySelector("#lightbox-media");
   if (!media) return;
-  if (_zoom === 1) {
-    media.style.transform = "";
-    media.style.transformOrigin = "";
-    media.style.cursor = "zoom-in";
-  } else {
-    media.style.transform = `scale(${_zoom})`;
-    media.style.transformOrigin = `${_zoomOriginX}% ${_zoomOriginY}%`;
-    media.style.cursor = "zoom-out";
-  }
+  const parts = [];
+  if (_zoom !== 1) parts.push(`scale(${_zoom})`);
+  if (_rotation !== 0) parts.push(`rotate(${_rotation}deg)`);
+  media.style.transform = parts.length ? parts.join(" ") : "";
+  media.style.transformOrigin = _zoom !== 1 ? `${_zoomOriginX}% ${_zoomOriginY}%` : "";
+  media.style.cursor = _zoom > 1 ? "zoom-out" : "zoom-in";
 }
 
 function updateZoomOrigin(e, mediaWrap) {
@@ -684,6 +710,22 @@ function bindEvents() {
           e.preventDefault();
           const fb = document.getElementById("lightbox-fav-btn");
           if (fb) fb.click();
+        }
+        break;
+      case "r":
+        if (!e.target.matches("input, textarea, select")) {
+          e.preventDefault();
+          _rotation = (_rotation + 90) % 360;
+          const mwr = document.getElementById("lightbox-media-wrap");
+          if (mwr) applyTransform(mwr);
+        }
+        break;
+      case "R":
+        if (!e.target.matches("input, textarea, select")) {
+          e.preventDefault();
+          _rotation = (_rotation - 90) % 360;
+          const mwl = document.getElementById("lightbox-media-wrap");
+          if (mwl) applyTransform(mwl);
         }
         break;
       case "1": case "2": case "3": case "4": case "5":

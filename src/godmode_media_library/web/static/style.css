@@ -3445,6 +3445,13 @@ button:focus-visible, a:focus-visible {
   align-items: center;
 }
 
+.lightbox-toolbar-sep {
+  width: 1px;
+  height: 24px;
+  background: rgba(255,255,255,0.2);
+}
+
+.lightbox-toolbar-btn,
 .lightbox-fav-btn,
 .lightbox-share-btn,
 .lightbox-native-share-btn {
@@ -3473,6 +3480,10 @@ button:focus-visible, a:focus-visible {
 .lightbox-native-share-btn:hover {
   color: var(--green);
   border-color: var(--green);
+}
+.lightbox-toolbar-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .lightbox-fav-btn.is-favorite {
