@@ -186,19 +186,42 @@ function renderNativePaths(paths) {
     <div class="cloud-section">
       <h3>${t("cloud.native_paths")}</h3>
       <div class="cloud-native-list">
-        ${paths.map(p => `
-          <div class="cloud-native-item">
-            <span class="cloud-source-icon">${p.icon}</span>
-            <div class="cloud-source-info">
-              <span class="cloud-source-name">${p.name}</span>
-              <span class="cloud-source-path">${p.path}</span>
-            </div>
-            <button class="btn btn-small btn-scan-native" data-path="${p.path}">${t("cloud.scan")}</button>
-          </div>
-        `).join("")}
+        ${paths.map(p => {
+          // Grouped entry (e.g. iCloud Apps with sub-paths)
+          if (p.apps && p.apps.length) {
+            return `
+              <div class="cloud-native-item cloud-native-group">
+                <span class="cloud-source-icon">${p.icon}</span>
+                <div class="cloud-source-info">
+                  <span class="cloud-source-name">${p.name}</span>
+                  <span class="cloud-source-path">${p.app_count} ${t("cloud.apps_synced")}</span>
+                </div>
+                <button class="btn btn-small btn-scan-native" data-path="${p.path}">${t("cloud.scan")}</button>
+                <button class="btn btn-small btn-expand-group" aria-expanded="false" title="${t("cloud.show_details")}">&#9660;</button>
+              </div>
+              <div class="cloud-native-sublist hidden">
+                ${p.apps.map(a => `
+                  <div class="cloud-native-subitem">
+                    <span class="cloud-sub-name">${a.name}</span>
+                    <span class="cloud-sub-path">${a.path}</span>
+                  </div>
+                `).join("")}
+              </div>`;
+          }
+          return `
+            <div class="cloud-native-item">
+              <span class="cloud-source-icon">${p.icon}</span>
+              <div class="cloud-source-info">
+                <span class="cloud-source-name">${p.name}</span>
+                <span class="cloud-source-path">${p.path}</span>
+              </div>
+              <button class="btn btn-small btn-scan-native" data-path="${p.path}">${t("cloud.scan")}</button>
+            </div>`;
+        }).join("")}
       </div>
     </div>`;
 
+  // Scan buttons
   el.querySelectorAll(".btn-scan-native").forEach(btn => {
     btn.addEventListener("click", async () => {
       const path = btn.dataset.path;
@@ -210,6 +233,18 @@ function renderNativePaths(paths) {
         showToast(e.message, "error");
       }
       btn.disabled = false;
+    });
+  });
+
+  // Expand/collapse grouped entries
+  el.querySelectorAll(".btn-expand-group").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const sublist = btn.closest(".cloud-native-group").nextElementSibling;
+      if (sublist && sublist.classList.contains("cloud-native-sublist")) {
+        const expanded = sublist.classList.toggle("hidden");
+        btn.innerHTML = expanded ? "&#9660;" : "&#9650;";
+        btn.setAttribute("aria-expanded", String(!expanded));
+      }
     });
   });
 }

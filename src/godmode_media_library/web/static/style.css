@@ -7206,6 +7206,59 @@ button:focus-visible, a:focus-visible {
   margin-top: 0;
 }
 
+.cloud-native-group {
+  flex-wrap: wrap;
+}
+
+.cloud-native-sublist {
+  margin-left: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cloud-native-sublist.hidden {
+  display: none;
+}
+
+.cloud-native-subitem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--surface-hover);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.cloud-sub-name {
+  font-weight: 500;
+  min-width: 120px;
+}
+
+.cloud-sub-path {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-expand-group {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.btn-expand-group:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
 /* Provider cards */
 
 .cloud-providers-grid {

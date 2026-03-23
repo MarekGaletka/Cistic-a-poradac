@@ -800,6 +800,8 @@ const translations = {
     "cloud.up": "Nahoru",
     "cloud.empty_folder": "Prázdná složka",
     "cloud.sync_this": "Stáhnout tuto složku",
+    "cloud.apps_synced": "synchronizovaných aplikací",
+    "cloud.show_details": "Zobrazit podrobnosti",
   },
 };
 

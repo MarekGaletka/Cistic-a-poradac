@@ -428,19 +428,29 @@ def detect_icloud_paths() -> list[dict]:
                 "icon": "\U0001f4f7",
             })
 
-    # iCloud Downloads from other apps
+    # iCloud app data — grouped into a single entry with sub-paths
     icloud_apps = Path.home() / "Library" / "Mobile Documents"
     if icloud_apps.exists():
-        for app_dir in icloud_apps.iterdir():
-            if app_dir.is_dir() and "Documents" in str(app_dir):
-                docs = app_dir / "Documents"
-                if docs.exists():
-                    paths.append({
-                        "name": f"iCloud: {app_dir.name.split('~')[-1]}",
-                        "path": str(docs),
-                        "type": "icloud_app",
-                        "icon": "\U0001f34e",
-                    })
+        sub_paths = []
+        for app_dir in sorted(icloud_apps.iterdir()):
+            if not app_dir.is_dir():
+                continue
+            docs = app_dir / "Documents"
+            if docs.exists():
+                app_name = app_dir.name.split("~")[-1]
+                sub_paths.append({
+                    "name": app_name,
+                    "path": str(docs),
+                })
+        if sub_paths:
+            paths.append({
+                "name": "iCloud Apps",
+                "path": str(icloud_apps),
+                "type": "icloud_apps",
+                "icon": "\U0001f34e",
+                "app_count": len(sub_paths),
+                "apps": sub_paths,
+            })
 
     return paths
 
@@ -603,8 +613,10 @@ def get_cloud_status() -> dict:
             "available": mounted or synced,
         })
 
-    # Add native paths
+    # Add native paths (skip grouped entries like icloud_apps — shown in /cloud/native)
     for np in native_paths:
+        if np.get("type") == "icloud_apps":
+            continue
         sources.append({
             "name": np["name"],
             "provider": np["name"],
