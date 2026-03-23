@@ -7350,6 +7350,82 @@ button:focus-visible, a:focus-visible {
   font-size: 13px;
 }
 
+/* Connect modal */
+
+.cloud-connect-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cloud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cloud-field label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.cloud-field input,
+.cloud-field select {
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.cloud-field input:focus,
+.cloud-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cloud-oauth-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+.cloud-connect-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cloud-connect-status {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.cloud-connect-status.status-success {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--green);
+}
+
+.cloud-connect-status.status-error {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--red);
+}
+
+.btn-disconnect {
+  color: var(--red) !important;
+  border-color: var(--red) !important;
+}
+
+.btn-disconnect:hover {
+  background: rgba(248, 81, 73, 0.15) !important;
+}
+
 /* Browse modal */
 
 .cloud-browse-list {

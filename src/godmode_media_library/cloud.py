@@ -29,6 +29,11 @@ PROVIDERS = {
         "setup": "rclone config create mega mega user YOUR_EMAIL pass YOUR_PASSWORD",
         "media_paths": ["", "Camera Uploads", "Photos"],
         "icon": "\U0001f4e6",
+        "auth": "credentials",
+        "fields": [
+            {"key": "user", "label": "E-mail", "type": "email", "required": True},
+            {"key": "pass", "label": "Heslo", "type": "password", "required": True},
+        ],
     },
     "pcloud": {
         "label": "pCloud",
@@ -36,6 +41,8 @@ PROVIDERS = {
         "setup": "rclone config create pcloud pcloud  # (otevře OAuth prohlížeč)",
         "media_paths": ["", "My Pictures", "My Videos"],
         "icon": "\u2601\ufe0f",
+        "auth": "oauth",
+        "fields": [],
     },
     "drive": {
         "label": "Google Drive",
@@ -43,6 +50,8 @@ PROVIDERS = {
         "setup": "rclone config create gdrive drive  # (otevře OAuth prohlížeč)",
         "media_paths": ["", "Photos", "My Drive/Photos"],
         "icon": "\U0001f4be",
+        "auth": "oauth",
+        "fields": [],
     },
     "google photos": {
         "label": "Google Photos",
@@ -50,6 +59,8 @@ PROVIDERS = {
         "setup": "rclone config create gphotos \"google photos\"  # (OAuth + read-only)",
         "media_paths": ["media/all", "media/by-year"],
         "icon": "\U0001f4f7",
+        "auth": "oauth",
+        "fields": [],
     },
     "onedrive": {
         "label": "OneDrive",
@@ -57,6 +68,8 @@ PROVIDERS = {
         "setup": "rclone config create onedrive onedrive  # (OAuth prohlížeč)",
         "media_paths": ["", "Pictures", "Photos"],
         "icon": "\U0001f4c1",
+        "auth": "oauth",
+        "fields": [],
     },
     "dropbox": {
         "label": "Dropbox",
@@ -64,6 +77,8 @@ PROVIDERS = {
         "setup": "rclone config create dropbox dropbox  # (OAuth prohlížeč)",
         "media_paths": ["", "Camera Uploads", "Photos"],
         "icon": "\U0001f4e5",
+        "auth": "oauth",
+        "fields": [],
     },
     "s3": {
         "label": "Amazon S3",
@@ -71,6 +86,15 @@ PROVIDERS = {
         "setup": "rclone config create s3 s3 provider AWS access_key_id KEY secret_access_key SECRET",
         "media_paths": [""],
         "icon": "\u2601\ufe0f",
+        "auth": "credentials",
+        "fields": [
+            {"key": "provider", "label": "Provider", "type": "select", "required": True,
+             "options": ["AWS", "Cloudflare", "DigitalOcean", "Wasabi", "Other"]},
+            {"key": "access_key_id", "label": "Access Key ID", "type": "text", "required": True},
+            {"key": "secret_access_key", "label": "Secret Access Key", "type": "password", "required": True},
+            {"key": "region", "label": "Region", "type": "text", "required": False},
+            {"key": "endpoint", "label": "Endpoint URL", "type": "text", "required": False},
+        ],
     },
 }
 
@@ -118,6 +142,196 @@ class SyncResult:
     bytes_transferred: int = 0
     errors: int = 0
     elapsed_seconds: float = 0
+
+
+# ── Active OAuth processes ──
+_oauth_processes: dict[str, subprocess.Popen] = {}
+
+
+def create_remote(
+    provider_key: str,
+    name: str,
+    credentials: dict[str, str] | None = None,
+) -> dict:
+    """Create an rclone remote programmatically.
+
+    For credential-based providers (MEGA, S3): pass credentials dict.
+    For OAuth providers: this starts the OAuth flow (opens browser).
+    Returns {"success": True/False, "message": str, "oauth": bool}.
+    """
+    if not check_rclone():
+        return {"success": False, "message": "rclone is not installed"}
+
+    info = PROVIDERS.get(provider_key)
+    if not info:
+        return {"success": False, "message": f"Unknown provider: {provider_key}"}
+
+    rclone_type = info["rclone_type"]
+
+    # Check if remote already exists
+    existing = [r.name for r in list_remotes()]
+    if name in existing:
+        return {"success": False, "message": f"Remote '{name}' already exists"}
+
+    if info.get("auth") == "oauth":
+        return _start_oauth_flow(provider_key, name, rclone_type)
+
+    # Credential-based: build rclone config create command
+    cmd = ["rclone", "config", "create", name, rclone_type]
+    for field in info.get("fields", []):
+        key = field["key"]
+        value = (credentials or {}).get(key, "")
+        if value:
+            cmd.extend([key, value])
+        elif field.get("required"):
+            return {"success": False, "message": f"Missing required field: {field['label']}"}
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return {"success": False, "message": result.stderr.strip() or "Config creation failed"}
+        logger.info("Created remote '%s' (type=%s)", name, rclone_type)
+        return {"success": True, "message": f"Remote '{name}' created", "oauth": False}
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return {"success": False, "message": str(exc)}
+
+
+def _start_oauth_flow(provider_key: str, name: str, rclone_type: str) -> dict:
+    """Start OAuth authorization flow for a provider.
+
+    Runs `rclone authorize <type>` which opens a browser for the user to log in.
+    The process runs in the background; check status with `get_oauth_status()`.
+    """
+    global _oauth_processes
+
+    # Kill any existing OAuth process for this name
+    if name in _oauth_processes:
+        with contextlib.suppress(Exception):
+            _oauth_processes[name].kill()
+
+    try:
+        proc = subprocess.Popen(
+            ["rclone", "authorize", rclone_type],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        _oauth_processes[name] = proc
+        logger.info("Started OAuth flow for '%s' (type=%s, pid=%d)", name, rclone_type, proc.pid)
+        return {
+            "success": True,
+            "message": "OAuth flow started — complete authorization in the browser window",
+            "oauth": True,
+            "provider_key": provider_key,
+            "remote_name": name,
+        }
+    except OSError as exc:
+        return {"success": False, "message": str(exc)}
+
+
+def get_oauth_status(name: str) -> dict:
+    """Check if an OAuth flow has completed. Returns token if done."""
+    proc = _oauth_processes.get(name)
+    if not proc:
+        return {"status": "not_found"}
+
+    poll = proc.poll()
+    if poll is None:
+        return {"status": "pending"}
+
+    # Process finished — capture output
+    stdout, stderr = proc.communicate(timeout=1)
+    del _oauth_processes[name]
+
+    if poll != 0:
+        return {"status": "error", "message": stderr.strip() or "OAuth failed"}
+
+    # Extract token JSON from stdout — rclone prints it between braces
+    token = _extract_oauth_token(stdout)
+    if not token:
+        return {"status": "error", "message": "Could not extract OAuth token"}
+
+    return {"status": "completed", "token": token}
+
+
+def _extract_oauth_token(output: str) -> str | None:
+    """Extract the OAuth token JSON from rclone authorize output."""
+    # rclone prints: Paste the following into your remote machine --->
+    # {"access_token":"...","token_type":"Bearer",...}
+    # <---End paste
+    lines = output.strip().splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("{") and "access_token" in stripped:
+            return stripped
+        # Sometimes it's on the line after "--->""
+        if "--->" in line and i + 1 < len(lines):
+            next_line = lines[i + 1].strip()
+            if next_line.startswith("{"):
+                return next_line
+    return None
+
+
+def finalize_oauth(
+    provider_key: str,
+    name: str,
+    token: str,
+) -> dict:
+    """Create an rclone remote using an OAuth token."""
+    if not check_rclone():
+        return {"success": False, "message": "rclone is not installed"}
+
+    info = PROVIDERS.get(provider_key)
+    if not info:
+        return {"success": False, "message": f"Unknown provider: {provider_key}"}
+
+    rclone_type = info["rclone_type"]
+
+    cmd = ["rclone", "config", "create", name, rclone_type, f"token={token}"]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return {"success": False, "message": result.stderr.strip() or "Config creation failed"}
+        logger.info("Created OAuth remote '%s' (type=%s)", name, rclone_type)
+        return {"success": True, "message": f"Remote '{name}' connected"}
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return {"success": False, "message": str(exc)}
+
+
+def delete_remote(name: str) -> dict:
+    """Delete an rclone remote configuration."""
+    if not check_rclone():
+        return {"success": False, "message": "rclone is not installed"}
+    try:
+        result = subprocess.run(
+            ["rclone", "config", "delete", name],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return {"success": False, "message": result.stderr.strip()}
+        logger.info("Deleted remote '%s'", name)
+        return {"success": True, "message": f"Remote '{name}' removed"}
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return {"success": False, "message": str(exc)}
+
+
+def test_remote(name: str) -> dict:
+    """Test if a remote is accessible by listing its root."""
+    if not check_rclone():
+        return {"success": False, "message": "rclone is not installed"}
+    try:
+        result = subprocess.run(
+            ["rclone", "lsd", f"{name}:", "--max-depth", "1"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return {"success": True, "message": "Connection OK"}
+        return {"success": False, "message": result.stderr.strip() or "Connection failed"}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": "Connection timed out"}
+    except OSError as exc:
+        return {"success": False, "message": str(exc)}
 
 
 def check_rclone() -> bool:

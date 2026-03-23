@@ -3217,6 +3217,74 @@ def cloud_unmount_remote(body: CloudMountRequest):
     return {"mount_point": mount_point, "success": success}
 
 
+class CloudConnectRequest(BaseModel):
+    provider_key: str
+    name: str
+    credentials: dict[str, str] = {}
+
+
+@router.get("/cloud/provider-fields/{provider_key}")
+def cloud_provider_fields(provider_key: str):
+    """Return the credential fields needed for a provider."""
+    from godmode_media_library.cloud import PROVIDERS
+    info = PROVIDERS.get(provider_key)
+    if not info:
+        raise HTTPException(404, f"Unknown provider: {provider_key}")
+    return {
+        "provider": info["label"],
+        "icon": info["icon"],
+        "auth": info.get("auth", "credentials"),
+        "fields": info.get("fields", []),
+    }
+
+
+@router.post("/cloud/connect")
+def cloud_connect(body: CloudConnectRequest):
+    """Create a new rclone remote (credential or start OAuth)."""
+    from godmode_media_library.cloud import create_remote
+    result = create_remote(body.provider_key, body.name, body.credentials)
+    if not result["success"]:
+        raise HTTPException(400, result["message"])
+    return result
+
+
+@router.get("/cloud/oauth/status/{name}")
+def cloud_oauth_status(name: str):
+    """Check OAuth flow status for a remote being configured."""
+    from godmode_media_library.cloud import get_oauth_status
+    return get_oauth_status(name)
+
+
+@router.post("/cloud/oauth/finalize")
+def cloud_oauth_finalize(body: CloudConnectRequest):
+    """Finalize an OAuth remote with the captured token."""
+    from godmode_media_library.cloud import finalize_oauth
+    token = body.credentials.get("token", "")
+    if not token:
+        raise HTTPException(400, "Missing OAuth token")
+    result = finalize_oauth(body.provider_key, body.name, token)
+    if not result["success"]:
+        raise HTTPException(400, result["message"])
+    return result
+
+
+@router.delete("/cloud/remote/{name}")
+def cloud_delete_remote(name: str):
+    """Remove an rclone remote configuration."""
+    from godmode_media_library.cloud import delete_remote
+    result = delete_remote(name)
+    if not result["success"]:
+        raise HTTPException(400, result["message"])
+    return result
+
+
+@router.post("/cloud/test/{name}")
+def cloud_test_remote(name: str):
+    """Test connection to a remote."""
+    from godmode_media_library.cloud import test_remote
+    return test_remote(name)
+
+
 def _sync_person_labels(cat: Catalog, person_id: int) -> None:
     """Sync labels table when person name changes — update people column for all files with this person's faces."""
     faces = cat.get_faces_for_person(person_id, limit=100000)

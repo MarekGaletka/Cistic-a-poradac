@@ -2,7 +2,7 @@
 
 import { t } from "../i18n.js";
 import { $, showToast, formatBytes } from "../utils.js";
-import { api, apiPost } from "../api.js";
+import { api, apiPost, apiDelete } from "../api.js";
 
 let _container = null;
 
@@ -107,6 +107,7 @@ function renderSources(sources) {
               ` : ""}
               ${s.source_type === "rclone" ? `
                 <button class="btn btn-small btn-browse" data-remote="${s.name}">${t("cloud.browse")}</button>
+                <button class="btn btn-small btn-disconnect" data-remote="${s.name}">${t("cloud.disconnect")}</button>
               ` : ""}
             </div>
             ${s.mounted ? `<div class="cloud-source-path">${t("cloud.mounted_at")}: ${s.mount_path}</div>` : ""}
@@ -173,6 +174,25 @@ function renderSources(sources) {
   // Browse buttons
   el.querySelectorAll(".btn-browse").forEach(btn => {
     btn.addEventListener("click", () => browseRemote(btn.dataset.remote));
+  });
+
+  // Disconnect buttons
+  el.querySelectorAll(".btn-disconnect").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const remote = btn.dataset.remote;
+      if (!confirm(t("cloud.disconnect_confirm", { name: remote }))) return;
+      btn.disabled = true;
+      try {
+        const result = await apiDelete(`/cloud/remote/${remote}`);
+        if (result.success) {
+          showToast(t("cloud.disconnected", { name: remote }), "success");
+          await loadStatus();
+        }
+      } catch (e) {
+        showToast(e.message, "error");
+      }
+      btn.disabled = false;
+    });
   });
 }
 
@@ -269,43 +289,146 @@ function renderProviders(status) {
     </div>`;
 
   el.querySelectorAll(".cloud-provider-card").forEach(card => {
-    card.addEventListener("click", () => showProviderGuide(card.dataset.provider));
+    card.addEventListener("click", () => showConnectModal(card.dataset.provider));
   });
 }
 
-async function showProviderGuide(providerKey) {
+async function showConnectModal(providerKey) {
   try {
-    const guide = await api(`/cloud/providers/${providerKey}`);
+    const info = await api(`/cloud/provider-fields/${providerKey}`);
+    const isOAuth = info.auth === "oauth";
+    const defaultName = providerKey.replace(/\s+/g, "");
+
     const overlay = document.createElement("div");
     overlay.className = "shortcuts-overlay";
     overlay.innerHTML = `
-      <div class="shortcuts-modal" style="max-width:600px">
-        <h3>${guide.icon} ${guide.provider} — ${t("cloud.setup_guide")}</h3>
-        <div class="cloud-guide-steps">
-          ${guide.steps.map(s => `
-            <div class="cloud-guide-step">
-              <span class="cloud-guide-step-num">${s.step}</span>
-              <div class="cloud-guide-step-content">
-                <strong>${s.title}</strong>
-                <code class="cloud-guide-command">${s.command}</code>
-              </div>
+      <div class="shortcuts-modal" style="max-width:500px">
+        <h3>${info.icon} ${t("cloud.connect_to")} ${info.provider}</h3>
+        <form id="cloud-connect-form" class="cloud-connect-form">
+          <div class="cloud-field">
+            <label>${t("cloud.remote_name")}</label>
+            <input type="text" name="name" value="${defaultName}" required
+                   placeholder="${t("cloud.remote_name_hint")}" />
+          </div>
+          ${isOAuth ? `
+            <p class="cloud-oauth-hint">${t("cloud.oauth_hint")}</p>
+          ` : info.fields.map(f => `
+            <div class="cloud-field">
+              <label>${f.label}${f.required ? " *" : ""}</label>
+              ${f.type === "select" ? `
+                <select name="${f.key}" ${f.required ? "required" : ""}>
+                  <option value="">-- ${t("cloud.select")} --</option>
+                  ${f.options.map(o => `<option value="${o}">${o}</option>`).join("")}
+                </select>
+              ` : `
+                <input type="${f.type}" name="${f.key}" ${f.required ? "required" : ""}
+                       placeholder="${f.label}" />
+              `}
             </div>
           `).join("")}
-        </div>
-        ${guide.media_paths?.length ? `
-          <div class="cloud-guide-paths">
-            <strong>${t("cloud.media_paths")}:</strong>
-            <span>${guide.media_paths.filter(Boolean).join(", ") || "/"}</span>
+          <div class="cloud-connect-actions">
+            <button type="submit" class="btn btn-primary" id="btn-connect">
+              ${isOAuth ? t("cloud.authorize") : t("cloud.connect")}
+            </button>
+            <button type="button" class="btn" id="btn-cancel-connect">${t("general.close")}</button>
           </div>
-        ` : ""}
-        <button class="btn" style="margin-top:16px" id="btn-close-guide">${t("general.close")}</button>
+          <div id="cloud-connect-status" class="cloud-connect-status hidden"></div>
+        </form>
       </div>`;
+
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
     document.body.appendChild(overlay);
-    overlay.querySelector("#btn-close-guide")?.addEventListener("click", () => overlay.remove());
+
+    overlay.querySelector("#btn-cancel-connect")?.addEventListener("click", () => overlay.remove());
+
+    overlay.querySelector("#cloud-connect-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const formData = new FormData(form);
+      const name = formData.get("name").trim();
+      if (!name) return;
+
+      const statusEl = overlay.querySelector("#cloud-connect-status");
+      const btn = overlay.querySelector("#btn-connect");
+      btn.disabled = true;
+      statusEl.classList.remove("hidden");
+      statusEl.className = "cloud-connect-status";
+      statusEl.textContent = isOAuth ? t("cloud.oauth_waiting") : t("cloud.connecting");
+
+      const credentials = {};
+      for (const [k, v] of formData.entries()) {
+        if (k !== "name" && v) credentials[k] = v;
+      }
+
+      try {
+        const result = await apiPost("/cloud/connect", {
+          provider_key: providerKey,
+          name,
+          credentials,
+        });
+
+        if (result.oauth) {
+          // OAuth flow — poll for completion
+          statusEl.textContent = t("cloud.oauth_browser");
+          await _pollOAuth(providerKey, name, statusEl, overlay);
+        } else {
+          // Credential-based — test connection
+          statusEl.textContent = t("cloud.testing");
+          const test = await apiPost(`/cloud/test/${name}`);
+          if (test.success) {
+            statusEl.className = "cloud-connect-status status-success";
+            statusEl.textContent = t("cloud.connected_ok");
+            showToast(t("cloud.connect_success", { name }), "success");
+            setTimeout(() => { overlay.remove(); loadStatus(); }, 1500);
+          } else {
+            statusEl.className = "cloud-connect-status status-error";
+            statusEl.textContent = t("cloud.connect_test_failed", { message: test.message });
+            btn.disabled = false;
+          }
+        }
+      } catch (err) {
+        statusEl.className = "cloud-connect-status status-error";
+        statusEl.textContent = err.message;
+        btn.disabled = false;
+      }
+    });
   } catch (e) {
     showToast(e.message, "error");
   }
+}
+
+async function _pollOAuth(providerKey, name, statusEl, overlay) {
+  const maxAttempts = 120;  // 2 minutes
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const status = await api(`/cloud/oauth/status/${name}`);
+      if (status.status === "completed") {
+        statusEl.textContent = t("cloud.oauth_finalizing");
+        const result = await apiPost("/cloud/oauth/finalize", {
+          provider_key: providerKey,
+          name,
+          credentials: { token: status.token },
+        });
+        if (result.success) {
+          statusEl.className = "cloud-connect-status status-success";
+          statusEl.textContent = t("cloud.connected_ok");
+          showToast(t("cloud.connect_success", { name }), "success");
+          setTimeout(() => { overlay.remove(); loadStatus(); }, 1500);
+        } else {
+          statusEl.className = "cloud-connect-status status-error";
+          statusEl.textContent = result.message;
+        }
+        return;
+      } else if (status.status === "error") {
+        statusEl.className = "cloud-connect-status status-error";
+        statusEl.textContent = status.message;
+        return;
+      }
+    } catch { /* keep polling */ }
+  }
+  statusEl.className = "cloud-connect-status status-error";
+  statusEl.textContent = t("cloud.oauth_timeout");
 }
 
 async function browseRemote(remoteName, path = "") {
