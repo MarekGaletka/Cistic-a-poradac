@@ -2622,6 +2622,8 @@ def run_scenario(scenario_id: str, request: Request, background_tasks: Backgroun
 class BackupTargetUpdate(BaseModel):
     enabled: bool | None = None
     priority: int | None = None
+    total_bytes: int | None = None
+    free_bytes: int | None = None
 
 
 class BackupExecuteRequest(BaseModel):
@@ -2713,6 +2715,22 @@ def update_backup_target(remote_name: str, body: BackupTargetUpdate, request: Re
             set_target_enabled(cat, remote_name, body.enabled)
         if body.priority is not None:
             set_target_priority(cat, remote_name, body.priority)
+        if body.total_bytes is not None or body.free_bytes is not None:
+            updates = []
+            params: list = []
+            if body.total_bytes is not None:
+                updates.append("total_bytes = ?")
+                params.append(body.total_bytes)
+            if body.free_bytes is not None:
+                updates.append("free_bytes = ?")
+                params.append(body.free_bytes)
+            if updates:
+                params.append(remote_name)
+                cat.conn.execute(
+                    f"UPDATE backup_targets SET {', '.join(updates)} WHERE remote_name = ?",  # noqa: S608
+                    params,
+                )
+                cat.conn.commit()
         return {"status": "ok"}
     finally:
         cat.close()

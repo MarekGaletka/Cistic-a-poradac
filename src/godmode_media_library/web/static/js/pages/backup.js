@@ -150,66 +150,103 @@ async function loadTargets() {
     }
 
     el.innerHTML = targets.map(tgt => {
-      const used = tgt.used ?? 0;
-      const total = tgt.total ?? 1;
+      const name = tgt.remote_name || tgt.name || "";
+      const used = tgt.used_bytes ?? tgt.used ?? 0;
+      const total = tgt.total_bytes ?? tgt.total ?? 0;
+      const free = tgt.free_bytes ?? tgt.free ?? 0;
+      const avail = tgt.available_bytes ?? 0;
       const usedPct = total > 0 ? Math.min((used / total) * 100, 100) : 0;
-      const barColor = usedPct > 90 ? "var(--color-error)" : usedPct > 70 ? "var(--color-warning)" : "var(--color-success)";
+      const barClass = usedPct > 90 ? "bar-danger" : usedPct > 70 ? "bar-warning" : "";
       const enabled = tgt.enabled !== false;
       const priority = tgt.priority ?? 3;
       const backedFiles = tgt.backed_up_files ?? 0;
-      const icon = tgt.icon || "\u2601\uFE0F";
+
+      const capacityUnknown = total === 0;
+      const capacityRow = capacityUnknown
+        ? `<div class="backup-capacity-manual">
+             <span style="color:var(--text-secondary);font-size:0.85rem">Kapacita nezjistitelna (Shared Drive)</span>
+             <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.25rem">
+               <select class="backup-capacity-preset" data-target="${name}">
+                 <option value="">— nastavit rucne —</option>
+                 <option value="107374182400">100 GB</option>
+                 <option value="214748364800">200 GB</option>
+                 <option value="536870912000">500 GB</option>
+                 <option value="1099511627776">1 TB</option>
+                 <option value="2199023255552">2 TB</option>
+                 <option value="5497558138880">5 TB</option>
+                 <option value="6597069766656">6 TB</option>
+                 <option value="10995116277760">10 TB</option>
+               </select>
+               <button class="btn btn-small btn-set-capacity" data-target="${name}">Nastavit</button>
+             </div>
+           </div>`
+        : `<div class="storage-bar">
+             <div class="storage-bar-fill ${barClass}" style="width: ${usedPct.toFixed(1)}%"></div>
+             <span class="storage-bar-label">${formatBytes(used)} / ${formatBytes(total)} (volno: ${formatBytes(avail)})</span>
+           </div>`;
 
       return `
-        <div class="cloud-source-card ${enabled ? "cloud-source-online" : "cloud-source-offline"}" data-target="${tgt.name}">
-          <div class="cloud-source-header">
-            <span class="cloud-source-icon">${icon}</span>
-            <div class="cloud-source-info">
-              <span class="cloud-source-name">${tgt.name}</span>
-              <span class="cloud-source-provider">${tgt.provider || tgt.remote_type || ""}</span>
-            </div>
-            <span class="backup-files-badge" title="Z\u00e1lohovan\u00fdch soubor\u016f na tomto \u00falo\u017ei\u0161ti">${backedFiles.toLocaleString("cs-CZ")} soubor\u016f</span>
+        <div class="backup-target-card ${enabled ? "target-enabled" : "target-disabled"}" data-target="${name}">
+          <div class="backup-target-header">
+            <span class="backup-target-name">\u2601\uFE0F ${name}</span>
+            <span class="backup-target-badge">${backedFiles.toLocaleString("cs-CZ")} souboru</span>
           </div>
 
-          <div class="storage-bar-container">
-            <div class="storage-bar">
-              <div class="storage-bar-fill" style="width: ${usedPct.toFixed(1)}%; background: ${barColor}"></div>
-              <span class="storage-bar-label">${formatBytes(used)} / ${formatBytes(total)}</span>
-            </div>
-            <span class="storage-bar-pct">${usedPct.toFixed(0)}%</span>
-          </div>
+          ${capacityRow}
 
-          <div class="backup-target-controls">
-            <label class="backup-toggle-label">
-              <input type="checkbox" class="backup-toggle" data-target="${tgt.name}" ${enabled ? "checked" : ""} />
-              <span>${enabled ? "Aktivn\u00ed" : "Neaktivn\u00ed"}</span>
+          <div class="backup-target-actions">
+            <label class="backup-toggle-label" style="display:flex;align-items:center;gap:0.4rem;cursor:pointer">
+              <button class="backup-toggle ${enabled ? "active" : ""}" data-target="${name}"></button>
+              <span style="font-size:0.85rem">${enabled ? "Aktivni" : "Neaktivni"}</span>
             </label>
 
-            <div class="backup-priority-select">
-              <label>Priorita:</label>
-              <select class="backup-priority" data-target="${tgt.name}">
+            <div style="display:flex;align-items:center;gap:0.3rem;margin-left:auto">
+              <span style="font-size:0.8rem;color:var(--text-secondary)">Priorita:</span>
+              <select class="backup-priority" data-target="${name}">
                 ${[1, 2, 3, 4, 5].map(p => `<option value="${p}" ${p === priority ? "selected" : ""}>${p}</option>`).join("")}
               </select>
             </div>
 
-            <button class="btn btn-small btn-probe-single" data-target="${tgt.name}">\uD83D\uDD0D Prozkoumat</button>
+            <button class="btn btn-small btn-probe-single" data-target="${name}">\uD83D\uDD0D</button>
           </div>
         </div>`;
     }).join("");
 
     // Bind toggle switches
     el.querySelectorAll(".backup-toggle").forEach(toggle => {
-      toggle.addEventListener("change", async () => {
+      toggle.addEventListener("click", async () => {
         const name = toggle.dataset.target;
-        const enabled = toggle.checked;
+        const nowActive = !toggle.classList.contains("active");
         try {
-          await apiPut(`/backup/targets/${encodeURIComponent(name)}`, { enabled });
-          showToast(`${name}: ${enabled ? "aktivov\u00e1no" : "deaktivov\u00e1no"}`, "success");
-          toggle.closest(".cloud-source-card").classList.toggle("cloud-source-online", enabled);
-          toggle.closest(".cloud-source-card").classList.toggle("cloud-source-offline", !enabled);
-          toggle.nextElementSibling.textContent = enabled ? "Aktivn\u00ed" : "Neaktivn\u00ed";
+          await apiPut(`/backup/targets/${encodeURIComponent(name)}`, { enabled: nowActive });
+          toggle.classList.toggle("active", nowActive);
+          const label = toggle.nextElementSibling;
+          if (label) label.textContent = nowActive ? "Aktivni" : "Neaktivni";
+          const card = toggle.closest(".backup-target-card");
+          if (card) {
+            card.classList.toggle("target-enabled", nowActive);
+            card.classList.toggle("target-disabled", !nowActive);
+          }
+          showToast(`${name}: ${nowActive ? "aktivovano" : "deaktivovano"}`, "success");
         } catch (e) {
           showToast(`Chyba: ${e.message}`, "error");
-          toggle.checked = !enabled; // revert
+        }
+      });
+    });
+
+    // Bind capacity preset buttons (for Shared Drives)
+    el.querySelectorAll(".btn-set-capacity").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const name = btn.dataset.target;
+        const sel = el.querySelector(`.backup-capacity-preset[data-target="${name}"]`);
+        const bytes = parseInt(sel?.value, 10);
+        if (!bytes) { showToast("Vyberte kapacitu", "warning"); return; }
+        try {
+          await apiPut(`/backup/targets/${encodeURIComponent(name)}`, { total_bytes: bytes, free_bytes: bytes });
+          showToast(`${name}: kapacita nastavena na ${formatBytes(bytes)}`, "success");
+          await loadTargets();
+        } catch (e) {
+          showToast(`Chyba: ${e.message}`, "error");
         }
       });
     });
