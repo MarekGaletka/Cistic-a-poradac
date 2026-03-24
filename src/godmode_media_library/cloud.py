@@ -594,6 +594,19 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
     if _is_mount_active(mount_point):
         return mount_point, True
 
+    # Pre-check: is FUSE available on macOS?
+    if platform.system() == "Darwin":
+        fuse_available = (
+            Path("/Library/Filesystems/macfuse.fs").exists()
+            or Path("/Library/Filesystems/osxfuse.fs").exists()
+        )
+        if not fuse_available:
+            raise RuntimeError(
+                "macFUSE není nainstalovaný. Nainstalujte: brew install macfuse "
+                "nebo stáhněte z https://osxfuse.github.io/. "
+                "Alternativně použijte 'Stáhnout lokálně'."
+            )
+
     cmd = [
         "rclone", "mount", f"{remote}:", mount_point,
         "--daemon",
@@ -608,9 +621,11 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
             return mount_point, True
         stderr = result.stderr or ""
         logger.warning("Failed to mount %s: %s", remote, stderr)
-        if "cannot find FUSE" in stderr or "macfuse" in stderr.lower():
+        # Detect FUSE-related errors (various rclone error messages)
+        fuse_keywords = ("cannot find FUSE", "macfuse", "fuse", "daemon timed out", "daemon exited")
+        if any(kw in stderr.lower() for kw in fuse_keywords):
             raise RuntimeError(
-                "macFUSE není nainstalovaný. Nainstalujte: brew install macfuse "
+                "macFUSE není nainstalovaný nebo nefunguje. Nainstalujte: brew install macfuse "
                 "nebo stáhněte z https://osxfuse.github.io/. "
                 "Alternativně použijte 'Stáhnout lokálně'."
             )
