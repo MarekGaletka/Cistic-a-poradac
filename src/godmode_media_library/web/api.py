@@ -3118,6 +3118,23 @@ def cloud_status(request: Request):
     from godmode_media_library.cloud import get_cloud_status
     status = get_cloud_status()
 
+    def _safe_disk_count(root: str, max_seconds: float = 3.0) -> int:
+        """Count files on disk, skipping hidden dirs and respecting timeout."""
+        import os
+        import time
+        count = 0
+        deadline = time.monotonic() + max_seconds
+        try:
+            for dirpath, dirnames, filenames in os.walk(root):
+                # Skip hidden directories (.Trash, .DS_Store dirs, etc.)
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                count += len(filenames)
+                if time.monotonic() > deadline:
+                    break  # Return partial count rather than hang
+        except Exception:
+            pass
+        return count
+
     # Enrich each source with scan/file info from catalog + disk file count
     cat = _open_catalog(request)
     try:
@@ -3142,12 +3159,8 @@ def cloud_status(request: Request):
             ).fetchone()
             src["last_scan"] = scan_row[0] if scan_row and scan_row[0] else None
             src["scanned"] = src["file_count"] > 0
-            # Count actual files on disk (quick, non-recursive for perf)
-            try:
-                p = Path(path)
-                src["disk_count"] = sum(1 for _ in p.rglob("*") if _.is_file()) if p.is_dir() else 0
-            except Exception:
-                src["disk_count"] = 0
+            # Count actual files on disk (safe, skips hidden dirs, 3s timeout)
+            src["disk_count"] = _safe_disk_count(path) if Path(path).is_dir() else 0
     finally:
         cat.close()
 
@@ -3173,6 +3186,19 @@ def cloud_native_paths(request: Request):
     from godmode_media_library.cloud import detect_native_cloud_paths
     paths = detect_native_cloud_paths()
 
+    def _safe_count(root: str) -> int:
+        import os, time
+        count, deadline = 0, time.monotonic() + 3.0
+        try:
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                count += len(filenames)
+                if time.monotonic() > deadline:
+                    break
+        except Exception:
+            pass
+        return count
+
     # Enrich with scan info + disk count
     cat = _open_catalog(request)
     try:
@@ -3189,11 +3215,7 @@ def cloud_native_paths(request: Request):
             ).fetchone()
             p["file_count"] = count_row[0] if count_row else 0
             p["scanned"] = p["file_count"] > 0
-            try:
-                pp = Path(path)
-                p["disk_count"] = sum(1 for _ in pp.rglob("*") if _.is_file()) if pp.is_dir() else 0
-            except Exception:
-                p["disk_count"] = 0
+            p["disk_count"] = _safe_count(path) if Path(path).is_dir() else 0
     finally:
         cat.close()
 
