@@ -68,6 +68,11 @@ function renderStatusBar(status) {
     </div>`;
 }
 
+function _statusBadge(done) {
+  if (done) return `<span class="cloud-badge cloud-badge-ok" title="Hotovo">✓</span>`;
+  return `<span class="cloud-badge cloud-badge-none" title="Neprovedeno">●</span>`;
+}
+
 function renderSources(sources) {
   const el = $("#cloud-sources");
   if (!el) return;
@@ -85,44 +90,92 @@ function renderSources(sources) {
     <div class="cloud-section">
       <h3>${t("cloud.connected")}</h3>
       <div class="cloud-sources-grid">
-        ${sources.map(s => `
-          <div class="cloud-source-card ${s.available ? "cloud-source-online" : "cloud-source-offline"}">
+        ${sources.map(s => {
+          const isRclone = s.source_type === "rclone";
+          const connected = s.available;
+          const path = s.mount_path || s.sync_path;
+
+          // Build action buttons based on state
+          let actions = "";
+
+          if (isRclone) {
+            if (!connected) {
+              // Not connected — show Mount button
+              actions += `<button class="btn btn-small btn-mount" data-remote="${s.name}">
+                ${_statusBadge(false)} ${t("cloud.mount")}
+              </button>`;
+            }
+            // Sync (download locally) — show with status
+            actions += `<button class="btn btn-small btn-sync" data-remote="${s.name}">
+              ${_statusBadge(s.synced)} ${t("cloud.sync")}
+            </button>`;
+          }
+
+          // Scan — only when available (has local path)
+          if (connected) {
+            actions += `<button class="btn btn-small btn-scan" data-path="${path}">
+              ${_statusBadge(s.scanned)} ${t("cloud.scan")}
+            </button>`;
+          }
+
+          if (isRclone) {
+            // Browse → Otevřít
+            actions += `<button class="btn btn-small btn-browse" data-remote="${s.name}">
+              ${t("cloud.browse")}
+            </button>`;
+            // Disconnect — only when connected
+            if (connected) {
+              actions += `<button class="btn btn-small btn-disconnect" data-remote="${s.name}">
+                ${t("cloud.disconnect")}
+              </button>`;
+            }
+          }
+
+          // Info line
+          let infoLine = "";
+          if (s.mounted) infoLine += `<div class="cloud-source-path">${t("cloud.mounted_at")}: ${s.mount_path}</div>`;
+          if (s.synced) infoLine += `<div class="cloud-source-path">${t("cloud.synced_to")}: ${s.sync_path}</div>`;
+          if (s.scanned && s.file_count) infoLine += `<div class="cloud-source-path">${s.file_count} souborů indexováno</div>`;
+
+          return `
+          <div class="cloud-source-card ${connected ? "cloud-source-online" : "cloud-source-offline"}">
             <div class="cloud-source-header">
               <span class="cloud-source-icon">${s.icon}</span>
               <div class="cloud-source-info">
                 <span class="cloud-source-name">${s.name}</span>
                 <span class="cloud-source-provider">${s.provider} (${s.remote_type})</span>
               </div>
-              <span class="status-dot ${s.available ? "status-online" : "status-offline"}"></span>
+              <span class="status-dot ${connected ? "status-online" : "status-offline"}"></span>
             </div>
-            <div class="cloud-source-actions">
-              ${s.source_type === "rclone" && !s.mounted ? `
-                <button class="btn btn-small btn-mount" data-remote="${s.name}">${t("cloud.mount")}</button>
-              ` : ""}
-              ${s.source_type === "rclone" ? `
-                <button class="btn btn-small btn-sync" data-remote="${s.name}">${t("cloud.sync")}</button>
-              ` : ""}
-              ${s.available ? `
-                <button class="btn btn-small btn-scan" data-path="${s.mount_path || s.sync_path}">${t("cloud.scan")}</button>
-              ` : ""}
-              ${s.source_type === "rclone" ? `
-                <button class="btn btn-small btn-browse" data-remote="${s.name}">${t("cloud.browse")}</button>
-                <button class="btn btn-small btn-disconnect" data-remote="${s.name}">${t("cloud.disconnect")}</button>
-              ` : ""}
-            </div>
-            ${s.mounted ? `<div class="cloud-source-path">${t("cloud.mounted_at")}: ${s.mount_path}</div>` : ""}
-            ${s.synced ? `<div class="cloud-source-path">${t("cloud.synced_to")}: ${s.sync_path}</div>` : ""}
-          </div>
-        `).join("")}
+            <div class="cloud-source-actions">${actions}</div>
+            ${infoLine}
+          </div>`;
+        }).join("")}
       </div>
     </div>`;
+
+  // Helper: set button to spinner state
+  function _btnSpinner(btn) {
+    btn.disabled = true;
+    btn._origHtml = btn.innerHTML;
+    btn.innerHTML = `<span class="cloud-badge cloud-badge-spin"></span> ${btn.textContent.trim()}`;
+  }
+  // Helper: set button to done state (green check)
+  function _btnDone(btn) {
+    btn.innerHTML = `<span class="cloud-badge cloud-badge-ok">✓</span> ${btn.textContent.trim()}`;
+    btn.disabled = false;
+  }
+  // Helper: restore button
+  function _btnRestore(btn) {
+    btn.innerHTML = btn._origHtml || btn.innerHTML;
+    btn.disabled = false;
+  }
 
   // Mount buttons
   el.querySelectorAll(".btn-mount").forEach(btn => {
     btn.addEventListener("click", async () => {
       const remote = btn.dataset.remote;
-      btn.disabled = true;
-      btn.textContent = "...";
+      _btnSpinner(btn);
       try {
         const result = await apiPost("/cloud/mount", { remote });
         if (result.success) {
@@ -130,12 +183,12 @@ function renderSources(sources) {
           await loadStatus();
         } else {
           showToast(t("cloud.mount_failed"), "error");
+          _btnRestore(btn);
         }
       } catch (e) {
         showToast(e.message, "error");
+        _btnRestore(btn);
       }
-      btn.disabled = false;
-      btn.textContent = t("cloud.mount");
     });
   });
 
@@ -143,16 +196,15 @@ function renderSources(sources) {
   el.querySelectorAll(".btn-sync").forEach(btn => {
     btn.addEventListener("click", async () => {
       const remote = btn.dataset.remote;
-      btn.disabled = true;
-      btn.textContent = "...";
+      _btnSpinner(btn);
       try {
         const result = await apiPost("/cloud/sync", { remote });
         showToast(t("cloud.sync_started", { name: remote, task_id: result.task_id }), "success");
+        _btnDone(btn);
       } catch (e) {
         showToast(e.message, "error");
+        _btnRestore(btn);
       }
-      btn.disabled = false;
-      btn.textContent = t("cloud.sync");
     });
   });
 
@@ -160,14 +212,15 @@ function renderSources(sources) {
   el.querySelectorAll(".btn-scan").forEach(btn => {
     btn.addEventListener("click", async () => {
       const path = btn.dataset.path;
-      btn.disabled = true;
+      _btnSpinner(btn);
       try {
         await apiPost("/scan", { roots: [path], workers: 4, extract_exiftool: true });
         showToast(t("cloud.scan_started"), "success");
+        _btnDone(btn);
       } catch (e) {
         showToast(e.message, "error");
+        _btnRestore(btn);
       }
-      btn.disabled = false;
     });
   });
 
@@ -181,7 +234,7 @@ function renderSources(sources) {
     btn.addEventListener("click", async () => {
       const remote = btn.dataset.remote;
       if (!confirm(t("cloud.disconnect_confirm", { name: remote }))) return;
-      btn.disabled = true;
+      _btnSpinner(btn);
       try {
         const result = await apiDelete(`/cloud/remote/${remote}`);
         if (result.success) {
@@ -190,8 +243,8 @@ function renderSources(sources) {
         }
       } catch (e) {
         showToast(e.message, "error");
+        _btnRestore(btn);
       }
-      btn.disabled = false;
     });
   });
 }
@@ -216,7 +269,9 @@ function renderNativePaths(paths) {
                   <span class="cloud-source-name">${p.name}</span>
                   <span class="cloud-source-path">${p.app_count} ${t("cloud.apps_synced")}</span>
                 </div>
-                <button class="btn btn-small btn-scan-native" data-path="${p.path}">${t("cloud.scan")}</button>
+                <button class="btn btn-small btn-scan-native" data-path="${p.path}">
+                  ${_statusBadge(p.scanned)} ${t("cloud.scan")}
+                </button>
                 <button class="btn btn-small btn-expand-group" aria-expanded="false" title="${t("cloud.show_details")}">&#9660;</button>
               </div>
               <div class="cloud-native-sublist hidden">
@@ -235,7 +290,9 @@ function renderNativePaths(paths) {
                 <span class="cloud-source-name">${p.name}</span>
                 <span class="cloud-source-path">${p.path}</span>
               </div>
-              <button class="btn btn-small btn-scan-native" data-path="${p.path}">${t("cloud.scan")}</button>
+              <button class="btn btn-small btn-scan-native" data-path="${p.path}">
+                ${_statusBadge(p.scanned)} ${t("cloud.scan")}
+              </button>
             </div>`;
         }).join("")}
       </div>

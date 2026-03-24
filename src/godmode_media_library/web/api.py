@@ -3113,10 +3113,38 @@ class CloudMountRequest(BaseModel):
 
 
 @router.get("/cloud/status")
-def cloud_status():
-    """Get cloud storage status — rclone remotes + native paths."""
+def cloud_status(request: Request):
+    """Get cloud storage status — rclone remotes + native paths, enriched with scan info."""
     from godmode_media_library.cloud import get_cloud_status
-    return get_cloud_status()
+    status = get_cloud_status()
+
+    # Enrich each source with scan/file info from catalog
+    cat = _open_catalog(request)
+    try:
+        for src in status.get("sources", []):
+            path = src.get("mount_path") or src.get("sync_path") or ""
+            if not path:
+                src["scanned"] = False
+                src["last_scan"] = None
+                src["file_count"] = 0
+                continue
+            # Count indexed files under this path
+            count_row = cat.conn.execute(
+                "SELECT COUNT(*) FROM files WHERE path LIKE ? || '%'",
+                (path.rstrip("/"),),
+            ).fetchone()
+            src["file_count"] = count_row[0] if count_row else 0
+            # Last scan time
+            scan_row = cat.conn.execute(
+                "SELECT MAX(finished_at) FROM scans WHERE root LIKE '%' || ? || '%'",
+                (path.rstrip("/"),),
+            ).fetchone()
+            src["last_scan"] = scan_row[0] if scan_row and scan_row[0] else None
+            src["scanned"] = src["file_count"] > 0
+    finally:
+        cat.close()
+
+    return status
 
 
 @router.get("/cloud/remotes")
@@ -3133,10 +3161,27 @@ def cloud_remotes():
 
 
 @router.get("/cloud/native")
-def cloud_native_paths():
+def cloud_native_paths(request: Request):
     """Detect natively synced cloud storage paths (iCloud, MEGA, pCloud, etc.)."""
     from godmode_media_library.cloud import detect_native_cloud_paths
     paths = detect_native_cloud_paths()
+
+    # Enrich with scan info
+    cat = _open_catalog(request)
+    try:
+        for p in paths:
+            path = p.get("path", "")
+            if not path:
+                p["scanned"] = False
+                continue
+            count_row = cat.conn.execute(
+                "SELECT COUNT(*) FROM files WHERE path LIKE ? || '%'",
+                (path.rstrip("/"),),
+            ).fetchone()
+            p["scanned"] = (count_row[0] if count_row else 0) > 0
+    finally:
+        cat.close()
+
     return {"paths": paths, "count": len(paths)}
 
 
