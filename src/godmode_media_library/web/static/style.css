@@ -8038,6 +8038,297 @@ button:focus-visible, a:focus-visible {
   }
 }
 
+/* ── Distributed Backup ── */
+
+.backup-page {
+  padding: 1.5rem;
+}
+
+.backup-header h2 {
+  margin: 0 0 0.25rem;
+}
+
+.backup-subtitle {
+  color: var(--text-secondary);
+  margin: 0 0 1.5rem;
+  font-size: 0.95rem;
+}
+
+.backup-stats-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.backup-stat-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.backup-stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.backup-stat-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+.backup-stat-card.stat-coverage .backup-stat-value { color: #3fb950; }
+.backup-stat-card.stat-warning .backup-stat-value { color: #d29922; }
+.backup-stat-card.stat-danger .backup-stat-value { color: #f85149; }
+
+.backup-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.backup-section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+}
+
+.backup-section h3 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+.backup-actions-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.backup-targets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
+
+.backup-target-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  transition: border-color 0.2s;
+}
+
+.backup-target-card.target-enabled {
+  border-left: 3px solid #3fb950;
+}
+
+.backup-target-card.target-disabled {
+  opacity: 0.6;
+  border-left: 3px solid var(--text-secondary);
+}
+
+.backup-target-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.backup-target-name {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.backup-target-badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.storage-bar {
+  position: relative;
+  height: 22px;
+  background: var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+
+.storage-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #3fb950, #58a6ff);
+  transition: width 0.4s ease;
+}
+
+.storage-bar-fill.bar-warning { background: linear-gradient(90deg, #d29922, #f0883e); }
+.storage-bar-fill.bar-danger { background: linear-gradient(90deg, #f85149, #da3633); }
+
+.storage-bar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.backup-target-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.backup-target-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  align-items: center;
+}
+
+.backup-target-actions select {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+}
+
+.backup-toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  background: var(--border);
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background 0.2s;
+  border: none;
+}
+
+.backup-toggle.active {
+  background: #3fb950;
+}
+
+.backup-toggle::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+}
+
+.backup-toggle.active::after {
+  transform: translateX(18px);
+}
+
+.backup-plan-summary {
+  min-height: 2rem;
+}
+
+.backup-plan-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.backup-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.backup-plan-item {
+  padding: 0.5rem;
+  background: var(--card);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.backup-plan-item strong {
+  display: block;
+  font-size: 1.1rem;
+  color: var(--accent);
+}
+
+.backup-overflow-warning {
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid #f85149;
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+  color: #f85149;
+  font-size: 0.9rem;
+}
+
+.backup-manifest-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.backup-manifest-table th,
+.backup-manifest-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.backup-manifest-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.backup-manifest-table tr:hover td {
+  background: var(--hover);
+}
+
+.backup-manifest-pager {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.verified-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3fb950;
+}
+
+.unverified-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
 /* ── Share modal ────────────────────────────────────── */
 
 /* Detail modal action buttons */

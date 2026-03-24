@@ -2616,6 +2616,246 @@ def run_scenario(scenario_id: str, request: Request, background_tasks: Backgroun
     return {"task_id": task.id, "status": "started", "scenario": sc["name"]}
 
 
+# ── Distributed Backup ───────────────────────────────────────────────
+
+
+class BackupTargetUpdate(BaseModel):
+    enabled: bool | None = None
+    priority: int | None = None
+
+
+class BackupExecuteRequest(BaseModel):
+    dry_run: bool = False
+
+
+@router.get("/backup/stats")
+def backup_stats(request: Request):
+    """Get overall backup health statistics."""
+    from ..distributed_backup import get_backup_stats, ensure_backup_tables
+    cat = _open_catalog(request)
+    try:
+        ensure_backup_tables(cat)
+        stats = get_backup_stats(cat)
+        return {
+            "total_files": stats.total_files_in_catalog,
+            "backed_up": stats.backed_up_files,
+            "not_backed_up": stats.not_backed_up,
+            "coverage_pct": stats.backup_coverage_pct,
+            "total_size": stats.total_backup_size,
+            "remotes_used": stats.remotes_used,
+            "remotes_healthy": stats.remotes_healthy,
+            "last_backup_at": stats.last_backup_at,
+            "files_by_remote": stats.files_by_remote,
+        }
+    finally:
+        cat.close()
+
+
+@router.get("/backup/targets")
+def backup_targets(request: Request):
+    """List all backup targets with capacity info."""
+    from ..distributed_backup import get_targets, ensure_backup_tables
+    cat = _open_catalog(request)
+    try:
+        ensure_backup_tables(cat)
+        targets = get_targets(cat)
+        return {
+            "targets": [
+                {
+                    "remote_name": t.remote_name,
+                    "remote_path": t.remote_path,
+                    "enabled": t.enabled,
+                    "priority": t.priority,
+                    "total_bytes": t.total_bytes,
+                    "used_bytes": t.used_bytes,
+                    "free_bytes": t.free_bytes,
+                    "available_bytes": t.available_bytes,
+                }
+                for t in targets
+            ]
+        }
+    finally:
+        cat.close()
+
+
+@router.post("/backup/probe")
+def backup_probe(request: Request):
+    """Probe all remotes for storage capacity."""
+    from ..distributed_backup import probe_targets
+    cat = _open_catalog(request)
+    try:
+        targets = probe_targets(cat)
+        return {
+            "probed": len(targets),
+            "targets": [
+                {
+                    "remote_name": t.remote_name,
+                    "total_bytes": t.total_bytes,
+                    "used_bytes": t.used_bytes,
+                    "free_bytes": t.free_bytes,
+                    "available_bytes": t.available_bytes,
+                }
+                for t in targets
+            ],
+        }
+    finally:
+        cat.close()
+
+
+@router.put("/backup/targets/{remote_name}")
+def update_backup_target(remote_name: str, body: BackupTargetUpdate, request: Request):
+    """Enable/disable a target or change its priority."""
+    from ..distributed_backup import set_target_enabled, set_target_priority, ensure_backup_tables
+    cat = _open_catalog(request)
+    try:
+        ensure_backup_tables(cat)
+        if body.enabled is not None:
+            set_target_enabled(cat, remote_name, body.enabled)
+        if body.priority is not None:
+            set_target_priority(cat, remote_name, body.priority)
+        return {"status": "ok"}
+    finally:
+        cat.close()
+
+
+@router.post("/backup/plan")
+def backup_plan(request: Request):
+    """Create a distribution plan for backing up files."""
+    from ..distributed_backup import create_backup_plan
+    cat = _open_catalog(request)
+    try:
+        plan = create_backup_plan(cat)
+        # Summarize by remote
+        by_remote: dict[str, dict] = {}
+        for e in plan.entries:
+            r = e["target_remote"]
+            if r not in by_remote:
+                by_remote[r] = {"files": 0, "bytes": 0}
+            by_remote[r]["files"] += 1
+            by_remote[r]["bytes"] += e["size"]
+        return {
+            "total_files": plan.total_files,
+            "total_bytes": plan.total_bytes,
+            "targets_used": plan.targets_used,
+            "overflow_files": plan.overflow_files,
+            "overflow_bytes": plan.overflow_bytes,
+            "by_remote": by_remote,
+            "entries": plan.entries[:200],  # First 200 for preview
+        }
+    finally:
+        cat.close()
+
+
+@router.post("/backup/execute")
+def backup_execute(request: Request, background_tasks: BackgroundTasks, body: BackupExecuteRequest):
+    """Execute the backup plan (background task)."""
+    from ..distributed_backup import create_backup_plan, execute_backup_plan
+
+    task = _create_task("backup:distribute")
+    catalog_path = str(request.app.state.catalog_path)
+
+    def run():
+        from ..catalog import Catalog
+        cat = Catalog(catalog_path)
+        cat.open()
+        try:
+            plan = create_backup_plan(cat)
+            result = execute_backup_plan(
+                cat, plan,
+                dry_run=body.dry_run,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("Backup execution failed")
+            _finish_task(task.id, error=str(e))
+        finally:
+            cat.close()
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started", "dry_run": body.dry_run}
+
+
+@router.post("/backup/verify")
+def backup_verify(request: Request, background_tasks: BackgroundTasks):
+    """Verify backed up files exist on remotes (background task)."""
+    from ..distributed_backup import verify_backups
+
+    task = _create_task("backup:verify")
+    catalog_path = str(request.app.state.catalog_path)
+
+    def run():
+        from ..catalog import Catalog
+        cat = Catalog(catalog_path)
+        cat.open()
+        try:
+            result = verify_backups(
+                cat,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("Backup verification failed")
+            _finish_task(task.id, error=str(e))
+        finally:
+            cat.close()
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.get("/backup/manifest")
+def backup_manifest(request: Request, page: int = 1, limit: int = 50, search: str = ""):
+    """Get paginated backup manifest."""
+    from ..distributed_backup import ensure_backup_tables
+    cat = _open_catalog(request)
+    try:
+        ensure_backup_tables(cat)
+        offset = (page - 1) * limit
+
+        where = ""
+        params: list = []
+        if search:
+            where = "WHERE bm.path LIKE ?"
+            params.append(f"%{search}%")
+
+        total = cat.conn.execute(
+            f"SELECT COUNT(*) FROM backup_manifest bm {where}", params,
+        ).fetchone()[0]
+
+        rows = cat.conn.execute(f"""
+            SELECT bm.path, bm.size, bm.remote_name, bm.remote_path,
+                   bm.backed_up_at, bm.verified, bm.verified_at
+            FROM backup_manifest bm
+            {where}
+            ORDER BY bm.backed_up_at DESC
+            LIMIT ? OFFSET ?
+        """, [*params, limit, offset]).fetchall()
+
+        entries = [
+            {
+                "path": r[0],
+                "filename": os.path.basename(r[0]),
+                "size": r[1],
+                "remote_name": r[2],
+                "remote_path": r[3],
+                "backed_up_at": r[4],
+                "verified": bool(r[5]),
+                "verified_at": r[6],
+            }
+            for r in rows
+        ]
+
+        return {
+            "entries": entries,
+            "total": total,
+            "page": page,
+            "pages": max(1, (total + limit - 1) // limit),
+        }
+    finally:
+        cat.close()
+
+
 # ── Signal decryption ─────────────────────────────────────────────────
 
 

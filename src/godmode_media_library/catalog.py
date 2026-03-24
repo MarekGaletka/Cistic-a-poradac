@@ -14,7 +14,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -407,6 +407,39 @@ class Catalog:
             for col_name, col_type in [("quality_blur", "REAL"), ("quality_brightness", "REAL"), ("quality_category", "TEXT")]:
                 with contextlib.suppress(Exception):
                     self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
+            self._conn.commit()
+        if from_version < 9:
+            logger.info("Migrating catalog schema v%d -> v9: adding distributed backup tables", from_version)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS backup_targets (
+                    remote_name TEXT PRIMARY KEY,
+                    remote_path TEXT DEFAULT 'GML-Backup',
+                    enabled INTEGER DEFAULT 1,
+                    priority INTEGER DEFAULT 0,
+                    total_bytes INTEGER DEFAULT 0,
+                    used_bytes INTEGER DEFAULT 0,
+                    free_bytes INTEGER DEFAULT 0,
+                    last_probed_at TEXT
+                )
+            """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS backup_manifest (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER NOT NULL,
+                    path TEXT NOT NULL,
+                    sha256 TEXT,
+                    size INTEGER NOT NULL,
+                    remote_name TEXT NOT NULL,
+                    remote_path TEXT NOT NULL,
+                    backed_up_at TEXT NOT NULL,
+                    verified INTEGER DEFAULT 0,
+                    verified_at TEXT,
+                    UNIQUE(file_id, remote_name)
+                )
+            """)
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_file ON backup_manifest(file_id)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256)")
             self._conn.commit()
 
     def close(self) -> None:

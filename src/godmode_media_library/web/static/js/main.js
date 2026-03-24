@@ -23,6 +23,7 @@ import * as reorganize from "./pages/reorganize.js";
 import * as gallery from "./pages/gallery.js";
 import * as people from "./pages/people.js";
 import * as cloud from "./pages/cloud.js";
+import * as backup from "./pages/backup.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -39,6 +40,7 @@ const pages = {
   reorganize,
   people,
   cloud,
+  backup,
 };
 
 let _currentPage = null;
