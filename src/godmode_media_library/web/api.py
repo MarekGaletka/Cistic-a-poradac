@@ -3461,20 +3461,28 @@ def get_timeline_gaps(request: Request) -> dict:
     cat = _open_catalog(request)
     try:
         # Fetch all year-month combos with counts
+        # date_original uses EXIF format "YYYY:MM:DD HH:MM:SS" — use substr
         cur = cat.conn.execute(
-            "SELECT strftime('%Y', date_original) AS y, strftime('%m', date_original) AS m, COUNT(*) AS cnt "
+            "SELECT SUBSTR(date_original, 1, 4) AS y, SUBSTR(date_original, 6, 2) AS m, COUNT(*) AS cnt "
             "FROM files WHERE date_original IS NOT NULL "
+            "AND LENGTH(date_original) >= 10 "
+            "AND SUBSTR(date_original, 1, 4) > '0000' "
             "GROUP BY y, m ORDER BY y, m"
         )
         rows = cur.fetchall()
         if not rows:
             return {"months": [], "gaps": [], "coverage": {"first_date": None, "last_date": None, "total_months": 0, "covered_months": 0, "coverage_pct": 0}}
 
-        # Build month list
+        # Build month list — skip rows with NULL year/month (bad date format)
         month_counts: dict[tuple[int, int], int] = {}
         for r in rows:
+            if r[0] is None or r[1] is None:
+                continue
             year, month = int(r[0]), int(r[1])
             month_counts[(year, month)] = r[2]
+
+        if not month_counts:
+            return {"months": [], "gaps": [], "coverage": {"first_date": None, "last_date": None, "total_months": 0, "covered_months": 0, "coverage_pct": 0}}
 
         first_ym = min(month_counts.keys())
         last_ym = max(month_counts.keys())
