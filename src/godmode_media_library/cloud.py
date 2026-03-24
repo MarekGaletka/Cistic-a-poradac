@@ -506,6 +506,77 @@ def rclone_copy(
         )
 
 
+def rclone_upload(
+    local_path: str,
+    remote: str,
+    remote_path: str = "",
+    *,
+    include_pattern: str = "",
+    dry_run: bool = False,
+) -> SyncResult:
+    """Upload (copy) local files to a remote.
+
+    Args:
+        local_path: local source directory
+        remote: rclone remote name
+        remote_path: destination path within remote (default: root)
+        include_pattern: glob pattern for files to include
+        dry_run: if True, only show what would be uploaded
+    """
+    if not check_rclone():
+        raise RuntimeError("rclone is not installed")
+
+    import time
+    start = time.monotonic()
+
+    destination = f"{remote}:{remote_path}" if remote_path else f"{remote}:"
+
+    cmd = [
+        "rclone", "copy", local_path, destination,
+        "--stats-one-line",
+        "--stats", "2s",
+        "-v",
+    ]
+    if include_pattern:
+        cmd.extend(["--include", include_pattern])
+    if dry_run:
+        cmd.append("--dry-run")
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=7200,
+        )
+        elapsed = time.monotonic() - start
+
+        files_transferred = 0
+        bytes_transferred = 0
+        errors = 0
+        for line in (result.stderr or "").splitlines():
+            if "Transferred:" in line and "Bytes" not in line:
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    with contextlib.suppress(ValueError, IndexError):
+                        files_transferred = int(parts[1].strip().split("/")[0].strip().split(",")[0].strip())
+            if "Errors:" in line:
+                with contextlib.suppress(ValueError, IndexError):
+                    errors = int(line.split(":")[1].strip())
+
+        return SyncResult(
+            remote=remote,
+            remote_path=remote_path,
+            local_path=local_path,
+            files_transferred=files_transferred,
+            bytes_transferred=bytes_transferred,
+            errors=errors,
+            elapsed_seconds=elapsed,
+        )
+    except subprocess.TimeoutExpired:
+        return SyncResult(
+            remote=remote, remote_path=remote_path, local_path=local_path,
+            errors=1, elapsed_seconds=time.monotonic() - start,
+        )
+
+
 def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool]:
     """Mount a remote as a local filesystem.
 

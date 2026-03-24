@@ -7742,6 +7742,60 @@ button:focus-visible, a:focus-visible {
   border-color: var(--red) !important;
 }
 
+/* Backup modal */
+.backup-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.backup-source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: border-color 0.15s;
+}
+
+.backup-source-item:hover {
+  border-color: var(--accent);
+}
+
+.backup-source-item input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.backup-source-item span:first-of-type {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-source-count {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.backup-dry-run {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 .btn-disconnect:hover {
   background: rgba(248, 81, 73, 0.15) !important;
 }

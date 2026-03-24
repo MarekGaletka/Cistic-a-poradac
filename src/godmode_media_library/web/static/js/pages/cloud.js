@@ -140,6 +140,10 @@ function renderSources(sources) {
           }
 
           if (isRclone) {
+            // Backup to this remote
+            actions += `<button class="btn btn-small btn-primary btn-backup" data-remote="${s.name}">
+              ${t("cloud.backup")}
+            </button>`;
             // Browse → Otevřít
             actions += `<button class="btn btn-small btn-browse" data-remote="${s.name}">
               ${t("cloud.browse")}
@@ -270,6 +274,11 @@ function renderSources(sources) {
         _btnRestore(btn);
       }
     });
+  });
+
+  // Backup buttons
+  el.querySelectorAll(".btn-backup").forEach(btn => {
+    btn.addEventListener("click", () => showBackupModal(btn.dataset.remote));
   });
 }
 
@@ -583,4 +592,112 @@ async function browseRemote(remoteName, path = "") {
   } catch (e) {
     showToast(e.message, "error");
   }
+}
+
+async function showBackupModal(remoteName) {
+  // Fetch scanned sources to let user pick what to back up
+  let sources = [];
+  try {
+    const stats = await api("/sources");
+    sources = (stats.sources || []).filter(s => s.file_count > 0);
+  } catch {
+    // Fallback: try catalog info
+    try {
+      const info = await api("/stats");
+      if (info.last_scan_root) {
+        for (const r of info.last_scan_root.split(";")) {
+          if (r.trim()) sources.push({ path: r.trim(), name: r.trim().split("/").pop(), file_count: "?" });
+        }
+      }
+    } catch { /* empty */ }
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "shortcuts-overlay";
+  overlay.innerHTML = `
+    <div class="shortcuts-modal" style="max-width:560px">
+      <h3>☁️ ${t("cloud.backup_title", { name: remoteName })}</h3>
+      <form id="backup-form" class="cloud-connect-form">
+        <div class="cloud-field">
+          <label>${t("cloud.backup_folder")}</label>
+          <input type="text" name="remote_path" value="GML-Backup" />
+        </div>
+        <div class="cloud-field">
+          <label>${t("cloud.backup_sources")}</label>
+          ${sources.length > 0 ? `
+            <div class="backup-source-list">
+              ${sources.map((s, i) => `
+                <label class="backup-source-item">
+                  <input type="checkbox" name="source_${i}" value="${s.path}" checked />
+                  <span>${s.name || s.path}</span>
+                  <span class="backup-source-count">${s.file_count} souborů</span>
+                </label>
+              `).join("")}
+            </div>
+          ` : `<p class="text-muted">${t("cloud.backup_no_sources")}</p>`}
+        </div>
+        <label class="backup-dry-run">
+          <input type="checkbox" name="dry_run" />
+          ${t("cloud.backup_dry")}
+        </label>
+        <div class="cloud-connect-actions">
+          <button type="submit" class="btn btn-primary" ${sources.length === 0 ? "disabled" : ""}>
+            ${t("cloud.backup_start")}
+          </button>
+          <button type="button" class="btn" id="btn-cancel-backup">${t("general.close")}</button>
+        </div>
+        <div id="backup-status" class="cloud-connect-status hidden"></div>
+      </form>
+    </div>`;
+
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  overlay.querySelector("#btn-cancel-backup")?.addEventListener("click", () => overlay.remove());
+
+  overlay.querySelector("#backup-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const remotePath = form.querySelector('[name="remote_path"]').value.trim();
+    const dryRun = form.querySelector('[name="dry_run"]').checked;
+    const statusEl = overlay.querySelector("#backup-status");
+
+    // Collect selected sources
+    const selectedPaths = [];
+    form.querySelectorAll('input[type="checkbox"][name^="source_"]').forEach(cb => {
+      if (cb.checked) selectedPaths.push(cb.value);
+    });
+
+    if (selectedPaths.length === 0) {
+      showToast(t("cloud.backup_no_sources"), "error");
+      return;
+    }
+
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `<span class="cloud-badge cloud-badge-spin"></span> Zálohuji...`;
+    statusEl.classList.remove("hidden");
+    statusEl.className = "cloud-connect-status";
+    statusEl.textContent = `Zálohuji ${selectedPaths.length} zdrojů na ${remoteName}:${remotePath}...`;
+
+    try {
+      const result = await apiPost("/cloud/backup", {
+        remote: remoteName,
+        remote_path: remotePath,
+        source_paths: selectedPaths,
+        dry_run: dryRun,
+      });
+      statusEl.className = "cloud-connect-status status-success";
+      statusEl.textContent = dryRun
+        ? `Zkušební běh dokončen (úloha ${result.task_id})`
+        : t("cloud.backup_started", { count: selectedPaths.length, name: remoteName });
+      showToast(t("cloud.backup_started", { count: selectedPaths.length, name: remoteName }), "success");
+      setTimeout(() => { overlay.remove(); loadStatus(); }, 3000);
+    } catch (err) {
+      statusEl.className = "cloud-connect-status status-error";
+      statusEl.textContent = err.message;
+      submitBtn.disabled = false;
+      submitBtn.textContent = t("cloud.backup_start");
+    }
+  });
 }

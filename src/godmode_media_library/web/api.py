@@ -3294,6 +3294,76 @@ def cloud_sync(request: Request, background: BackgroundTasks, body: CloudSyncReq
     return {"task_id": task.id, "status": "started"}
 
 
+class CloudBackupRequest(BaseModel):
+    remote: str  # target rclone remote name
+    remote_path: str = "GML-Backup"  # destination folder on remote
+    source_paths: list[str] = []  # local paths to back up (empty = all scanned roots)
+    include_pattern: str = "*.{jpg,jpeg,png,heic,heif,tiff,tif,webp,mp4,mov,avi,mkv,mp3,m4a,wav,flac}"
+    dry_run: bool = False
+
+
+@router.post("/cloud/backup")
+def cloud_backup(request: Request, background: BackgroundTasks, body: CloudBackupRequest):
+    """Start background backup (upload) from local sources to cloud remote."""
+    # Resolve source paths — use all scanned roots if none specified
+    source_paths = body.source_paths
+    if not source_paths:
+        cat = _open_catalog(request)
+        try:
+            rows = cat.conn.execute("SELECT DISTINCT root FROM scans WHERE finished_at IS NOT NULL").fetchall()
+            for row in rows:
+                for r in (row[0] or "").split(";"):
+                    r = r.strip()
+                    if r and Path(r).is_dir():
+                        source_paths.append(r)
+            source_paths = list(dict.fromkeys(source_paths))  # dedupe
+        finally:
+            cat.close()
+
+    if not source_paths:
+        raise HTTPException(400, "Žádné zdroje k zálohování — nejdřív naskenujte soubory")
+
+    task = _create_task("cloud_backup")
+
+    def _run():
+        try:
+            from godmode_media_library.cloud import rclone_upload
+
+            total_files = 0
+            total_errors = 0
+            for i, src in enumerate(source_paths):
+                src_name = Path(src).name or "root"
+                dest_path = f"{body.remote_path}/{src_name}" if body.remote_path else src_name
+                _update_progress(task.id, {
+                    "step": f"Zálohuji {src_name}",
+                    "source": src,
+                    "current": i + 1,
+                    "total": len(source_paths),
+                })
+                result = rclone_upload(
+                    src, body.remote, dest_path,
+                    include_pattern=body.include_pattern,
+                    dry_run=body.dry_run,
+                )
+                total_files += result.files_transferred
+                total_errors += result.errors
+
+            _finish_task(task.id, result={
+                "remote": body.remote,
+                "remote_path": body.remote_path,
+                "sources": len(source_paths),
+                "files_uploaded": total_files,
+                "errors": total_errors,
+                "dry_run": body.dry_run,
+            })
+        except Exception as exc:
+            _finish_task(task.id, error=str(exc))
+            logger.exception("Cloud backup task failed")
+
+    background.add_task(_run)
+    return {"task_id": task.id, "status": "started", "sources": source_paths}
+
+
 @router.post("/cloud/mount")
 def cloud_mount_remote(body: CloudMountRequest):
     """Mount a remote as a local filesystem."""
