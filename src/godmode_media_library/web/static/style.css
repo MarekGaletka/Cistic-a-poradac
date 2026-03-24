@@ -188,7 +188,6 @@ main {
   flex: 1;
   margin-left: 220px;
   padding: 24px 32px;
-  max-width: 1200px;
 }
 
 h2 {
@@ -6377,7 +6376,6 @@ button:focus-visible, a:focus-visible {
    ═══════════════════════════════════════════════════════════════════ */
 
 .gallery-page {
-  max-width: 1400px;
 }
 
 .gallery-header {
@@ -6960,8 +6958,6 @@ button:focus-visible, a:focus-visible {
 /* ── People / Face Recognition page ──────────────── */
 
 .people-page {
-  max-width: 1400px;
-  margin: 0 auto;
 }
 
 .people-header {
