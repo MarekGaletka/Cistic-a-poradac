@@ -14,7 +14,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -52,7 +52,10 @@ CREATE TABLE IF NOT EXISTS files (
     camera_model    TEXT,
     gps_latitude    REAL,
     gps_longitude   REAL,
-    metadata_richness REAL
+    metadata_richness REAL,
+    quality_blur REAL,
+    quality_brightness REAL,
+    quality_category TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_sha256    ON files(sha256);
@@ -398,6 +401,12 @@ class Catalog:
             """)
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)")
+            self._conn.commit()
+        if from_version < 8:
+            logger.info("Migrating catalog schema v%d -> v8: adding quality scoring columns", from_version)
+            for col_name, col_type in [("quality_blur", "REAL"), ("quality_brightness", "REAL"), ("quality_category", "TEXT")]:
+                with contextlib.suppress(Exception):
+                    self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
             self._conn.commit()
 
     def close(self) -> None:
@@ -1175,6 +1184,27 @@ class Catalog:
     def set_face_cluster(self, face_id: int, cluster_id: int) -> None:
         self.conn.execute("UPDATE faces SET cluster_id = ? WHERE id = ?", (cluster_id, face_id))
 
+    # ── Quality scoring ──
+
+    def update_quality(self, file_id: int, blur: float, brightness: float, category: str) -> None:
+        """Update quality scoring columns for a file."""
+        self.conn.execute(
+            "UPDATE files SET quality_blur = ?, quality_brightness = ?, quality_category = ? WHERE id = ?",
+            (blur, brightness, category, file_id),
+        )
+
+    def files_without_quality(self, exts: set[str] | None = None) -> list[tuple[int, str, int | None, int | None, int, str | None]]:
+        """Return (file_id, path, width, height, size, camera_make) for image files without quality analysis."""
+        if exts is None:
+            exts = {"jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "heic", "heif", "gif"}
+        placeholders = ",".join("?" for _ in exts)
+        cur = self.conn.execute(
+            f"SELECT id, path, width, height, size, camera_make FROM files "  # noqa: S608
+            f"WHERE ext IN ({placeholders}) AND quality_category IS NULL ORDER BY path",
+            list(exts),
+        )
+        return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in cur.fetchall()]
+
     def files_without_faces(self, exts: set[str] | None = None) -> list[tuple[int, str]]:
         """Return (file_id, path) for image files that have no faces detected yet."""
         if exts is None:
@@ -1329,6 +1359,7 @@ class Catalog:
         min_width: int | None = None,
         has_gps: bool | None = None,
         has_phash: bool | None = None,
+        quality_category: str | None = None,
         sort: str | None = None,
         order: str | None = None,
         limit: int = 10000,
@@ -1385,6 +1416,9 @@ class Catalog:
             conditions.append("phash IS NOT NULL")
         elif has_phash is False:
             conditions.append("phash IS NULL")
+        if quality_category is not None:
+            conditions.append("quality_category = ?")
+            params.append(quality_category)
 
         where = " AND ".join(conditions) if conditions else "1=1"
 

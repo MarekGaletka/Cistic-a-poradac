@@ -118,6 +118,43 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Apply merge plans? (y/N): ",
         "cs": "Provést sloučení metadat? (a/N): ",
     },
+    # ── Quality scoring ──────────────────────────────────────────────
+    "quality.title": {
+        "en": "File Quality",
+        "cs": "Kvalita souborů",
+    },
+    "quality.analyze": {
+        "en": "Analyze quality",
+        "cs": "Analyzovat kvalitu",
+    },
+    "quality.analyzing": {
+        "en": "Analyzing quality...",
+        "cs": "Analyzuji kvalitu...",
+    },
+    "quality.photo": {
+        "en": "Photos",
+        "cs": "Fotografie",
+    },
+    "quality.screenshot": {
+        "en": "Screenshots",
+        "cs": "Snímky obrazovky",
+    },
+    "quality.meme": {
+        "en": "Memes / internet images",
+        "cs": "Memy / obrázky z internetu",
+    },
+    "quality.blurry": {
+        "en": "Blurry",
+        "cs": "Rozmazané",
+    },
+    "quality.dark": {
+        "en": "Too dark",
+        "cs": "Příliš tmavé",
+    },
+    "quality.category_breakdown": {
+        "en": "Category breakdown",
+        "cs": "Rozdělení podle typu",
+    },
 }
 
 

@@ -329,6 +329,10 @@ async function renderDashboard(container, stats) {
           <span class="qa-icon">&#128269;</span>
           <span class="qa-label">${t("dashboard.scan_folder")}</span>
         </button>
+        <button class="quick-action-card" id="btn-generate-report">
+          <span class="qa-icon">&#128202;</span>
+          <span class="qa-label">${t("report.generate")}</span>
+        </button>
       </div>
     </div>`;
 
@@ -455,6 +459,14 @@ async function renderDashboard(container, stats) {
       // Open settings panel (which has the pipeline form)
       const settingsBtn = $("#btn-settings");
       if (settingsBtn) settingsBtn.click();
+    });
+  }
+
+  // Bind report generation
+  const reportBtn = container.querySelector("#btn-generate-report");
+  if (reportBtn) {
+    reportBtn.addEventListener("click", () => {
+      window.open("/api/report/generate", "_blank");
     });
   }
 

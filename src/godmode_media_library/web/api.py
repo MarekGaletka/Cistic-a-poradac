@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from ..catalog import Catalog
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -322,6 +322,7 @@ def get_files(
     tag_id: int | None = None,
     min_rating: int | None = None,
     has_notes: bool | None = None,
+    quality_category: str | None = None,
     sort: str | None = None,
     order: str | None = None,
     limit: int = Query(default=500, le=10000),
@@ -369,6 +370,7 @@ def get_files(
                 camera=camera,
                 has_gps=has_gps,
                 has_phash=has_phash,
+                quality_category=quality_category,
                 sort=sort,
                 order=order,
                 limit=100000,
@@ -410,6 +412,7 @@ def get_files(
                 camera=camera,
                 has_gps=has_gps,
                 has_phash=has_phash,
+                quality_category=quality_category,
                 sort=sort,
                 order=order,
                 limit=limit + 1,
@@ -3452,6 +3455,171 @@ def cloud_test_remote(name: str):
     return test_remote(name)
 
 
+@router.get("/timeline/gaps")
+def get_timeline_gaps(request: Request) -> dict:
+    """Analyse timeline coverage — monthly file counts, gaps, and coverage stats."""
+    cat = _open_catalog(request)
+    try:
+        # Fetch all year-month combos with counts
+        cur = cat.conn.execute(
+            "SELECT strftime('%Y', date_original) AS y, strftime('%m', date_original) AS m, COUNT(*) AS cnt "
+            "FROM files WHERE date_original IS NOT NULL "
+            "GROUP BY y, m ORDER BY y, m"
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return {"months": [], "gaps": [], "coverage": {"first_date": None, "last_date": None, "total_months": 0, "covered_months": 0, "coverage_pct": 0}}
+
+        # Build month list
+        month_counts: dict[tuple[int, int], int] = {}
+        for r in rows:
+            year, month = int(r[0]), int(r[1])
+            month_counts[(year, month)] = r[2]
+
+        first_ym = min(month_counts.keys())
+        last_ym = max(month_counts.keys())
+
+        # Generate all months in range
+        all_months: list[dict] = []
+        y, m = first_ym
+        while (y, m) <= last_ym:
+            cnt = month_counts.get((y, m), 0)
+            all_months.append({"year": y, "month": m, "count": cnt})
+            m += 1
+            if m > 12:
+                m = 1
+                y += 1
+
+        # Detect consecutive gaps (months with 0 files)
+        gaps: list[dict] = []
+        gap_start = None
+        for entry in all_months:
+            if entry["count"] == 0:
+                if gap_start is None:
+                    gap_start = entry
+            else:
+                if gap_start is not None:
+                    # End of gap — previous entry was the last zero month
+                    prev = all_months[all_months.index(entry) - 1]
+                    from_str = f"{gap_start['year']}-{gap_start['month']:02d}"
+                    to_str = f"{prev['year']}-{prev['month']:02d}"
+                    gap_len = 0
+                    gy, gm = gap_start["year"], gap_start["month"]
+                    while (gy, gm) <= (prev["year"], prev["month"]):
+                        gap_len += 1
+                        gm += 1
+                        if gm > 12:
+                            gm = 1
+                            gy += 1
+                    gaps.append({"from": from_str, "to": to_str, "months": gap_len})
+                    gap_start = None
+        # Handle trailing gap
+        if gap_start is not None:
+            last = all_months[-1]
+            from_str = f"{gap_start['year']}-{gap_start['month']:02d}"
+            to_str = f"{last['year']}-{last['month']:02d}"
+            gap_len = 0
+            gy, gm = gap_start["year"], gap_start["month"]
+            while (gy, gm) <= (last["year"], last["month"]):
+                gap_len += 1
+                gm += 1
+                if gm > 12:
+                    gm = 1
+                    gy += 1
+            gaps.append({"from": from_str, "to": to_str, "months": gap_len})
+
+        total_months = len(all_months)
+        covered_months = sum(1 for e in all_months if e["count"] > 0)
+        coverage_pct = round(covered_months / total_months * 100, 1) if total_months else 0
+
+        return {
+            "months": all_months,
+            "gaps": gaps,
+            "coverage": {
+                "first_date": f"{first_ym[0]}-{first_ym[1]:02d}",
+                "last_date": f"{last_ym[0]}-{last_ym[1]:02d}",
+                "total_months": total_months,
+                "covered_months": covered_months,
+                "coverage_pct": coverage_pct,
+            },
+        }
+    finally:
+        cat.close()
+
+
+# ── Quality scoring endpoints ─────────────────────────────────────────
+
+
+@router.post("/quality/analyze")
+def trigger_quality_analysis(request: Request, background: BackgroundTasks):
+    """Start background quality analysis for all unanalyzed images."""
+    task = _create_task("quality_analyze")
+
+    def _run():
+        try:
+            from godmode_media_library.quality import batch_analyze
+
+            cat = _open_catalog(request)
+
+            def on_progress(done, total):
+                task.progress = {"done": done, "total": total}
+                _notify_ws(task.id, _task_to_msg(task))
+
+            try:
+                stats = batch_analyze(cat, progress_fn=on_progress)
+                task.result = stats
+                task.status = "completed"
+            finally:
+                cat.close()
+        except Exception as exc:
+            task.status = "failed"
+            task.error = str(exc)
+            logger.exception("Quality analysis task failed")
+        task.finished_at = datetime.now(timezone.utc).isoformat()
+        _notify_ws(task.id, _task_to_msg(task))
+
+    background.add_task(_run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.get("/quality/stats")
+def get_quality_stats(request: Request) -> dict:
+    """Return quality category breakdown."""
+    cat = _open_catalog(request)
+    try:
+        cur = cat.conn.execute(
+            "SELECT quality_category, COUNT(*) FROM files "
+            "WHERE quality_category IS NOT NULL GROUP BY quality_category"
+        )
+        categories = {row[0]: row[1] for row in cur.fetchall()}
+
+        blurry = cat.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE quality_blur IS NOT NULL AND quality_blur < 50"
+        ).fetchone()[0]
+
+        dark = cat.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE quality_brightness IS NOT NULL AND quality_brightness < 40"
+        ).fetchone()[0]
+
+        overexposed = cat.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE quality_brightness IS NOT NULL AND quality_brightness > 220"
+        ).fetchone()[0]
+
+        analyzed = cat.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE quality_category IS NOT NULL"
+        ).fetchone()[0]
+
+        return {
+            **categories,
+            "blurry": blurry,
+            "dark": dark,
+            "overexposed": overexposed,
+            "analyzed": analyzed,
+        }
+    finally:
+        cat.close()
+
+
 def _sync_person_labels(cat: Catalog, person_id: int) -> None:
     """Sync labels table when person name changes — update people column for all files with this person's faces."""
     faces = cat.get_faces_for_person(person_id, limit=100000)
@@ -3464,3 +3632,31 @@ def _sync_person_labels(cat: Catalog, person_id: int) -> None:
         })
         people_str = ";".join(names)
         cat.upsert_label(fid, people=people_str)
+
+
+# ── Report endpoints ──────────────────────────────────────────────
+
+
+@router.get("/report/generate")
+def report_generate(request: Request) -> HTMLResponse:
+    """Generate a comprehensive HTML report and return it inline."""
+    from ..report import generate_report_html
+
+    catalog_path = request.app.state.catalog_path
+    html = generate_report_html(catalog_path)
+    return HTMLResponse(content=html)
+
+
+@router.get("/report/download")
+def report_download(request: Request) -> HTMLResponse:
+    """Generate a comprehensive HTML report and return it as a downloadable file."""
+    from ..report import generate_report_html
+
+    catalog_path = request.app.state.catalog_path
+    html = generate_report_html(catalog_path)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"godmode_report_{ts}.html"
+    return HTMLResponse(
+        content=html,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

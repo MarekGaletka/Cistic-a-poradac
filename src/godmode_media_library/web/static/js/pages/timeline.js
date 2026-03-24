@@ -7,6 +7,8 @@ import { showFileDetail } from "../modal.js";
 import { openLightbox } from "../lightbox.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
+const MONTH_NAMES_CS = ["Led", "Úno", "Bře", "Dub", "Kvě", "Čvn", "Čvc", "Srp", "Zář", "Říj", "Lis", "Pro"];
+const MONTH_NAMES_FULL_CS = ["Leden", "Únor", "Březen", "Duben", "Květen", "Červen", "Červenec", "Srpen", "Září", "Říjen", "Listopad", "Prosinec"];
 
 // ── State ──
 let _container = null;
@@ -239,6 +241,7 @@ function _update() {
   let html = `
     <div class="page-header">
       <h2>${t("timeline.title")} <span class="header-count">${t("timeline.dated_files", { count: totalCount })}</span></h2>
+      <button class="btn btn-secondary tl-gap-btn">${t("timeline.gap_analysis")}</button>
     </div>
     ${_renderBreadcrumb()}
     <div class="tl-content">
@@ -251,6 +254,10 @@ function _update() {
 }
 
 function _bindEvents() {
+  // Gap analysis button
+  const gapBtn = _container.querySelector(".tl-gap-btn");
+  if (gapBtn) gapBtn.addEventListener("click", () => _openGapAnalysis());
+
   // Breadcrumb navigation
   _container.querySelectorAll(".tl-bread-item").forEach(el => {
     el.addEventListener("click", () => {
@@ -337,6 +344,124 @@ function _lazyLoad() {
   } else {
     images.forEach(img => { img.src = img.dataset.src; });
   }
+}
+
+// ── Gap Analysis ──
+
+async function _openGapAnalysis() {
+  // Fetch gap data from API
+  let data;
+  try {
+    data = await api("/timeline/gaps");
+  } catch (e) {
+    return;
+  }
+
+  const { months, gaps, coverage } = data;
+  if (!months.length) return;
+
+  // Build year→month map for heatmap
+  const yearMap = {};
+  let maxCount = 0;
+  for (const m of months) {
+    if (!yearMap[m.year]) yearMap[m.year] = {};
+    yearMap[m.year][m.month] = m.count;
+    if (m.count > maxCount) maxCount = m.count;
+  }
+  const years = Object.keys(yearMap).map(Number).sort();
+
+  // Heatmap color class
+  function _cellClass(count) {
+    if (count === 0) return "";
+    if (maxCount <= 1) return "heatmap-max";
+    const ratio = count / maxCount;
+    if (ratio >= 0.7) return "heatmap-max";
+    if (ratio >= 0.4) return "heatmap-high";
+    if (ratio >= 0.15) return "heatmap-mid";
+    return "heatmap-low";
+  }
+
+  // Month name for gap description
+  function _monthName(ym) {
+    const [y, m] = ym.split("-");
+    return `${MONTH_NAMES_FULL_CS[parseInt(m) - 1]} ${y}`;
+  }
+
+  // Build heatmap HTML
+  let heatmapHtml = `<div class="timeline-heatmap">`;
+  // Header row
+  heatmapHtml += `<div class="heatmap-header"></div>`;
+  for (let i = 0; i < 12; i++) {
+    heatmapHtml += `<div class="heatmap-header">${MONTH_NAMES_CS[i]}</div>`;
+  }
+  // Data rows
+  for (const year of years) {
+    heatmapHtml += `<div class="heatmap-year">${year}</div>`;
+    for (let m = 1; m <= 12; m++) {
+      const count = yearMap[year]?.[m];
+      if (count === undefined) {
+        // Month outside the tracked range
+        heatmapHtml += `<div class="heatmap-cell heatmap-empty" title="${MONTH_NAMES_CS[m - 1]} ${year}">–</div>`;
+      } else {
+        const cls = _cellClass(count);
+        heatmapHtml += `<div class="heatmap-cell ${cls}" data-count="${count}" title="${MONTH_NAMES_CS[m - 1]} ${year}: ${count} souborů">${count}</div>`;
+      }
+    }
+  }
+  heatmapHtml += `</div>`;
+
+  // Gap list HTML
+  let gapHtml = `<ul class="gap-list">`;
+  if (gaps.length === 0) {
+    gapHtml += `<li class="gap-item gap-item-no-gaps">${t("timeline.no_gaps")}</li>`;
+  } else {
+    for (const g of gaps) {
+      const fromName = _monthName(g.from);
+      const toName = _monthName(g.to);
+      const desc = g.months === 1
+        ? `${fromName} (1 měsíc bez dat)`
+        : `${fromName} – ${toName} (${g.months} měsíců bez dat)`;
+      gapHtml += `<li class="gap-item">${escapeHtml(desc)}</li>`;
+    }
+  }
+  gapHtml += `</ul>`;
+
+  // Coverage summary HTML
+  const covHtml = `
+    <div class="coverage-summary">
+      <div class="coverage-summary-pct">${coverage.coverage_pct}%</div>
+      <div class="coverage-summary-detail">
+        <div>${t("timeline.coverage")}: ${t("timeline.months_covered", { covered: coverage.covered_months, total: coverage.total_months })}</div>
+        <div style="margin-top:2px;font-size:12px;color:var(--text-muted)">${coverage.first_date} – ${coverage.last_date}</div>
+      </div>
+    </div>`;
+
+  // Create overlay
+  const overlay = document.createElement("div");
+  overlay.className = "tl-gap-overlay";
+  overlay.innerHTML = `
+    <div class="tl-gap-panel">
+      <div class="tl-gap-header">
+        <h3>${t("timeline.gap_analysis")}</h3>
+        <button class="tl-gap-close" title="${t("general.close")}">&times;</button>
+      </div>
+      ${heatmapHtml}
+      ${gapHtml}
+      ${covHtml}
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  // Close handlers
+  const close = () => overlay.remove();
+  overlay.querySelector(".tl-gap-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  const escHandler = (e) => {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", escHandler); }
+  };
+  document.addEventListener("keydown", escHandler);
 }
 
 // ── Entry point ──

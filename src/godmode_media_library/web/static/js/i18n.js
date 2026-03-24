@@ -168,6 +168,11 @@ const translations = {
     "timeline.empty_title": "Žádné soubory s datem nenalezeny",
     "timeline.empty_hint": "Naskenujte soubory pro zobrazení časové osy.",
     "timeline.year": "Rok {year}",
+    "timeline.gap_analysis": "Analýza pokrytí",
+    "timeline.coverage": "Pokrytí",
+    "timeline.gap_found": "Mezera: {from} – {to} ({months} měsíců)",
+    "timeline.no_gaps": "Žádné mezery — timeline je kompletní!",
+    "timeline.months_covered": "{covered}/{total} měsíců",
 
     // Map
     "map.title": "Mapa",
@@ -828,6 +833,22 @@ const translations = {
     "cloud.disconnect": "Odpojit",
     "cloud.disconnect_confirm": "Opravdu odpojit {name}?",
     "cloud.disconnected": "{name} odpojeno",
+
+    // Quality scoring
+    "quality.title": "Kvalita soubor\u016f",
+    "quality.analyze": "Analyzovat kvalitu",
+    "quality.analyzing": "Analyzuji kvalitu...",
+    "quality.photo": "Fotografie",
+    "quality.screenshot": "Sn\u00edmky obrazovky",
+    "quality.meme": "Memy / obr\u00e1zky z internetu",
+    "quality.blurry": "Rozmazan\u00e9",
+    "quality.dark": "P\u0159\u00edli\u0161 tmav\u00e9",
+    "quality.category_breakdown": "Rozd\u011blen\u00ed podle typu",
+
+    // Report
+    "report.generate": "Generovat report",
+    "report.title": "Souhrnn\u00fd report",
+    "report.generating": "Generuji report...",
   },
 };
 
