@@ -732,6 +732,13 @@ const translations = {
     "scenario.step_app_mine": "Těžba z aplikací",
     "scenario.step_app_download": "Stažení médií z aplikací",
     "scenario.step_signal_decrypt": "Dešifrování Signal médií",
+    "scenario.step_cloud_connect": "Připojení cloud zdrojů",
+    "scenario.step_cloud_download": "Stažení z cloudu",
+    "scenario.step_metadata_enrich": "Obohacení metadat",
+    "scenario.step_timeline_analysis": "Analýza časové osy",
+    "scenario.step_quality_analyze": "Analýza kvality",
+    "scenario.step_cloud_backup": "Záloha do cloudu",
+    "scenario.step_generate_report": "Generování reportu",
 
     // People / Face Recognition
     "people.title": "Rozpoznávání osob",
