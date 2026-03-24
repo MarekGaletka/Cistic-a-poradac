@@ -7434,6 +7434,76 @@ button:focus-visible, a:focus-visible {
   word-break: break-all;
 }
 
+/* Cloud verify bar */
+.cloud-verify-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.cloud-verify-bar.verify-ok {
+  border-color: #22c55e40;
+  background: #22c55e10;
+}
+
+.cloud-verify-bar.verify-partial {
+  border-color: #f59e0b40;
+  background: #f59e0b10;
+}
+
+.cloud-verify-bar.verify-none {
+  border-color: var(--border);
+}
+
+.cloud-verify-bar.verify-empty {
+  border-color: #ef444440;
+  background: #ef444410;
+  color: #f87171;
+}
+
+.cloud-verify-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.verify-ok .cloud-verify-icon { color: #22c55e; }
+.verify-partial .cloud-verify-icon { color: #f59e0b; }
+
+.cloud-verify-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cloud-verify-info span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+}
+
+.cloud-verify-progress {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.cloud-verify-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.verify-ok .cloud-verify-fill { background: #22c55e; }
+.verify-partial .cloud-verify-fill { background: #f59e0b; }
+.verify-none .cloud-verify-fill { background: var(--text-muted); }
+
 /* Native paths list */
 
 .cloud-native-list {

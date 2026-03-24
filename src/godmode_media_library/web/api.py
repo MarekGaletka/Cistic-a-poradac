@@ -3118,7 +3118,7 @@ def cloud_status(request: Request):
     from godmode_media_library.cloud import get_cloud_status
     status = get_cloud_status()
 
-    # Enrich each source with scan/file info from catalog
+    # Enrich each source with scan/file info from catalog + disk file count
     cat = _open_catalog(request)
     try:
         for src in status.get("sources", []):
@@ -3127,6 +3127,7 @@ def cloud_status(request: Request):
                 src["scanned"] = False
                 src["last_scan"] = None
                 src["file_count"] = 0
+                src["disk_count"] = 0
                 continue
             # Count indexed files under this path
             count_row = cat.conn.execute(
@@ -3141,6 +3142,12 @@ def cloud_status(request: Request):
             ).fetchone()
             src["last_scan"] = scan_row[0] if scan_row and scan_row[0] else None
             src["scanned"] = src["file_count"] > 0
+            # Count actual files on disk (quick, non-recursive for perf)
+            try:
+                p = Path(path)
+                src["disk_count"] = sum(1 for _ in p.rglob("*") if _.is_file()) if p.is_dir() else 0
+            except Exception:
+                src["disk_count"] = 0
     finally:
         cat.close()
 
@@ -3166,19 +3173,27 @@ def cloud_native_paths(request: Request):
     from godmode_media_library.cloud import detect_native_cloud_paths
     paths = detect_native_cloud_paths()
 
-    # Enrich with scan info
+    # Enrich with scan info + disk count
     cat = _open_catalog(request)
     try:
         for p in paths:
             path = p.get("path", "")
             if not path:
                 p["scanned"] = False
+                p["file_count"] = 0
+                p["disk_count"] = 0
                 continue
             count_row = cat.conn.execute(
                 "SELECT COUNT(*) FROM files WHERE path LIKE ? || '%'",
                 (path.rstrip("/"),),
             ).fetchone()
-            p["scanned"] = (count_row[0] if count_row else 0) > 0
+            p["file_count"] = count_row[0] if count_row else 0
+            p["scanned"] = p["file_count"] > 0
+            try:
+                pp = Path(path)
+                p["disk_count"] = sum(1 for _ in pp.rglob("*") if _.is_file()) if pp.is_dir() else 0
+            except Exception:
+                p["disk_count"] = 0
     finally:
         cat.close()
 

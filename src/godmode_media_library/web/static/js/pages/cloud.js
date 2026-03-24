@@ -73,6 +73,27 @@ function _statusBadge(done) {
   return `<span class="cloud-badge cloud-badge-none" title="Neprovedeno">●</span>`;
 }
 
+function _verifyBar(diskCount, catCount) {
+  if (diskCount === 0 && catCount === 0) {
+    return `<div class="cloud-verify-bar verify-empty">
+      <div class="cloud-verify-icon">⚠</div>
+      <span>Složka je prázdná — zkontrolujte připojení</span>
+    </div>`;
+  }
+  const allIndexed = diskCount > 0 && catCount >= diskCount;
+  const partial = catCount > 0 && catCount < diskCount;
+  const pct = diskCount > 0 ? Math.round(catCount / diskCount * 100) : 0;
+  const barClass = allIndexed ? "verify-ok" : partial ? "verify-partial" : "verify-none";
+  return `
+    <div class="cloud-verify-bar ${barClass}">
+      <div class="cloud-verify-icon">${allIndexed ? "✓" : partial ? "◐" : "○"}</div>
+      <div class="cloud-verify-info">
+        <span>${diskCount} na disku → ${catCount} indexováno${!allIndexed && diskCount > 0 ? ` (${pct}%)` : ""}</span>
+        <div class="cloud-verify-progress"><div class="cloud-verify-fill" style="width:${Math.min(pct, 100)}%"></div></div>
+      </div>
+    </div>`;
+}
+
 function renderSources(sources) {
   const el = $("#cloud-sources");
   if (!el) return;
@@ -131,11 +152,13 @@ function renderSources(sources) {
             }
           }
 
-          // Info line
+          // Info lines
           let infoLine = "";
           if (s.mounted) infoLine += `<div class="cloud-source-path">${t("cloud.mounted_at")}: ${s.mount_path}</div>`;
           if (s.synced) infoLine += `<div class="cloud-source-path">${t("cloud.synced_to")}: ${s.sync_path}</div>`;
-          if (s.scanned && s.file_count) infoLine += `<div class="cloud-source-path">${s.file_count} souborů indexováno</div>`;
+
+          // Verify bar
+          const verifyHtml = connected ? _verifyBar(s.disk_count || 0, s.file_count || 0) : "";
 
           return `
           <div class="cloud-source-card ${connected ? "cloud-source-online" : "cloud-source-offline"}">
@@ -149,6 +172,7 @@ function renderSources(sources) {
             </div>
             <div class="cloud-source-actions">${actions}</div>
             ${infoLine}
+            ${verifyHtml}
           </div>`;
         }).join("")}
       </div>
@@ -261,6 +285,7 @@ function renderNativePaths(paths) {
       <div class="cloud-native-list">
         ${paths.map(p => {
           // Grouped entry (e.g. iCloud Apps with sub-paths)
+          const nVerify = _verifyBar(p.disk_count || 0, p.file_count || 0);
           if (p.apps && p.apps.length) {
             return `
               <div class="cloud-native-item cloud-native-group">
@@ -274,6 +299,7 @@ function renderNativePaths(paths) {
                 </button>
                 <button class="btn btn-small btn-expand-group" aria-expanded="false" title="${t("cloud.show_details")}">&#9660;</button>
               </div>
+              ${nVerify}
               <div class="cloud-native-sublist hidden">
                 ${p.apps.map(a => `
                   <div class="cloud-native-subitem">
@@ -293,7 +319,8 @@ function renderNativePaths(paths) {
               <button class="btn btn-small btn-scan-native" data-path="${p.path}">
                 ${_statusBadge(p.scanned)} ${t("cloud.scan")}
               </button>
-            </div>`;
+            </div>
+            ${nVerify}`;
         }).join("")}
       </div>
     </div>`;
