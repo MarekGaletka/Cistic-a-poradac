@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 from .utils import ensure_dir, read_tsv_dict, write_tsv
@@ -48,7 +50,16 @@ def write_labels_table(path: Path, header: list[str], rows: dict[Path, dict[str,
             ordered.append(tuple(norm[col] for col in fields))
         return ordered
 
-    write_tsv(path, fields, iter_rows())
+    # Atomic write via temp file to prevent corruption from concurrent access
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    os.close(fd)
+    tmp = Path(tmp_path)
+    try:
+        write_tsv(tmp, fields, iter_rows())
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def merge_label_updates(

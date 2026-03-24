@@ -35,30 +35,34 @@ class _FakeImage:
 def test_resize_if_needed_no_resize():
     """Small array should be returned unchanged."""
     arr = _FakeArray(shape=(100, 200, 3))
-    result = _resize_if_needed(arr, max_dimension=1600, np_mod=_FakeNp(), pil_image_cls=_FakeImage)
+    result, scale = _resize_if_needed(arr, max_dimension=1600, np_mod=_FakeNp(), pil_image_cls=_FakeImage)
     # max(100, 200) = 200, which is <= 1600 — no resize needed
     assert result is arr
+    assert scale == 1.0
 
 
 def test_resize_if_needed_large_image():
     """Large array should be resized."""
     arr = _FakeArray(shape=(3200, 4800, 3))
     np_mod = _FakeNp()
-    result = _resize_if_needed(arr, max_dimension=1600, np_mod=np_mod, pil_image_cls=_FakeImage)
+    result, scale = _resize_if_needed(arr, max_dimension=1600, np_mod=np_mod, pil_image_cls=_FakeImage)
     # max(3200, 4800) = 4800 > 1600 — should be resized
     # result will be whatever _FakeNp.array returns from the resized image
     assert result is not arr
+    assert scale < 1.0
 
 
 def test_resize_if_needed_no_shape():
     """Object without proper shape should be returned as-is."""
     obj = "not_an_array"
-    result = _resize_if_needed(obj, max_dimension=1600, np_mod=_FakeNp(), pil_image_cls=_FakeImage)
+    result, scale = _resize_if_needed(obj, max_dimension=1600, np_mod=_FakeNp(), pil_image_cls=_FakeImage)
     assert result is obj
+    assert scale == 1.0
 
 
 def test_resize_if_needed_1d_shape():
     """1D shape (less than 2 dimensions) should be returned as-is."""
     arr = _FakeArray(shape=(100,))
-    result = _resize_if_needed(arr, max_dimension=1600, np_mod=_FakeNp(), pil_image_cls=_FakeImage)
+    result, scale = _resize_if_needed(arr, max_dimension=1600, np_mod=_FakeNp(), pil_image_cls=_FakeImage)
     assert result is arr
+    assert scale == 1.0

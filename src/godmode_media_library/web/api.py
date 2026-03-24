@@ -210,36 +210,51 @@ def _task_to_msg(task: TaskStatus) -> dict:
     }
 
 
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _capture_event_loop() -> None:
+    """Capture the running event loop at startup for cross-thread WS dispatch."""
+    global _event_loop
+    _event_loop = asyncio.get_running_loop()
+
+
 def _notify_ws(task_id: str, msg: dict) -> None:
     """Best-effort broadcast to all WebSocket connections for a task."""
+    loop = _event_loop
+    if loop is None:
+        return
     with _ws_lock:
         conns = _ws_connections.get(task_id, [])
         if not conns:
             return
-        stale: list[WebSocket] = []
-        for ws in conns:
-            try:
-                # send_json is a coroutine; schedule it on the running loop
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.run_coroutine_threadsafe(ws.send_json(msg), loop)
-                else:
-                    loop.run_until_complete(ws.send_json(msg))
-            except Exception:
-                stale.append(ws)
-        for ws in stale:
-            conns.remove(ws)
+        conns_snapshot = list(conns)
+    stale: list[WebSocket] = []
+    for ws in conns_snapshot:
+        try:
+            asyncio.run_coroutine_threadsafe(ws.send_json(msg), loop)
+        except Exception:
+            stale.append(ws)
+    if stale:
+        with _ws_lock:
+            conns = _ws_connections.get(task_id, [])
+            for ws in stale:
+                if ws in conns:
+                    conns.remove(ws)
 
 
 def _update_progress(task_id: str, progress: dict) -> None:
+    msg = None
     with _tasks_lock:
         if task_id in _tasks:
             _tasks[task_id].progress = progress
             msg = _task_to_msg(_tasks[task_id])
-    _notify_ws(task_id, msg)
+    if msg is not None:
+        _notify_ws(task_id, msg)
 
 
 def _finish_task(task_id: str, result: dict | None = None, error: str | None = None) -> None:
+    msg = None
     with _tasks_lock:
         if task_id in _tasks:
             _tasks[task_id].status = "failed" if error else "completed"
@@ -247,7 +262,8 @@ def _finish_task(task_id: str, result: dict | None = None, error: str | None = N
             _tasks[task_id].error = error
             _tasks[task_id].finished_at = datetime.now(timezone.utc).isoformat()
             msg = _task_to_msg(_tasks[task_id])
-    _notify_ws(task_id, msg)
+    if msg is not None:
+        _notify_ws(task_id, msg)
 
 
 # ── Catalog helper ────────────────────────────────────────────────────
@@ -853,13 +869,24 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
 
 
 @router.get("/preview/{file_path:path}")
-def get_preview(file_path: str, size: int = Query(default=120, le=400)) -> StreamingResponse:
+def get_preview(request: Request, file_path: str, size: int = Query(default=120, le=400)) -> StreamingResponse:
     """Generate a thumbnail preview for any file on disk (no catalog check).
 
     Used by recovery/app-mine to preview files not yet in the catalog.
     Only serves image thumbnails — no video frame extraction for speed.
     """
     full_path = Path(f"/{file_path}").resolve()
+
+    # Security: block access to sensitive system directories
+    full_str = str(full_path)
+    if any(full_str.startswith(prefix) for prefix in _BLOCKED_PREFIXES):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Also verify file is within one of the configured scan roots
+    scan_roots = getattr(request.app.state, "scan_roots", None)
+    if scan_roots:
+        if not any(full_str.startswith(str(r)) for r in scan_roots):
+            raise HTTPException(status_code=403, detail="File outside allowed roots")
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -1082,6 +1109,8 @@ async def ws_task(websocket: WebSocket, task_id: str):
             conns = _ws_connections.get(task_id, [])
             if websocket in conns:
                 conns.remove(websocket)
+            if not conns and task_id in _ws_connections:
+                del _ws_connections[task_id]
 
 
 # ── Action endpoints ──────────────────────────────────────────────────
@@ -2935,6 +2964,168 @@ def backup_test_notification():
     """Send a test notification."""
     from ..backup_monitor import send_test_notification
     return send_test_notification()
+
+
+# ── Bit Rot Detection ────────────────────────────────────────────────
+
+
+@router.get("/bitrot/stats")
+def bitrot_stats(request: Request):
+    """Get bit rot verification statistics."""
+    from ..bitrot import get_verification_stats
+    cat = _open_catalog(request)
+    try:
+        return get_verification_stats(cat)
+    finally:
+        cat.close()
+
+
+@router.post("/bitrot/scan")
+def bitrot_scan(request: Request, background_tasks: BackgroundTasks, limit: int = 500):
+    """Run bit rot scan (background task)."""
+    from ..bitrot import scan_bitrot
+
+    task = _create_task("bitrot:scan")
+    catalog_path = str(request.app.state.catalog_path)
+
+    def run():
+        from ..catalog import Catalog
+        cat = Catalog(catalog_path)
+        cat.open()
+        try:
+            result = scan_bitrot(
+                cat, limit=limit,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result={
+                "total_checked": result.total_checked,
+                "healthy": result.healthy,
+                "corrupted": result.corrupted,
+                "missing": result.missing,
+                "bytes_verified": result.bytes_verified,
+                "elapsed_seconds": result.elapsed_seconds,
+                "corrupted_files": result.corrupted_files[:50],
+                "missing_files": result.missing_files[:50],
+            })
+        except Exception as e:
+            logger.exception("Bit rot scan failed")
+            _finish_task(task.id, error=str(e))
+        finally:
+            cat.close()
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started", "limit": limit}
+
+
+# ── Library integrity score ────────────────────────────────────────────
+
+
+@router.get("/integrity-score")
+def integrity_score(request: Request):
+    """Compute overall library integrity score (0-100)."""
+    cat = _open_catalog(request)
+    try:
+        total_files = cat.conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        if total_files == 0:
+            return {"score": 0, "grade": "N/A", "factors": {}}
+
+        # Factor 1: Hash coverage (files with SHA256)
+        hashed = cat.conn.execute("SELECT COUNT(*) FROM files WHERE sha256 IS NOT NULL").fetchone()[0]
+        hash_pct = hashed / max(total_files, 1)
+
+        # Factor 2: Metadata richness (files with date_original)
+        with_date = cat.conn.execute("SELECT COUNT(*) FROM files WHERE date_original IS NOT NULL AND date_original > '0000'").fetchone()[0]
+        date_pct = with_date / max(total_files, 1)
+
+        # Factor 3: Duplicate resolution (unresolved duplicate groups)
+        dup_groups = cat.conn.execute("SELECT COUNT(DISTINCT group_id) FROM duplicates").fetchone()[0]
+        dup_penalty = min(dup_groups * 0.5, 15)  # Max 15% penalty
+
+        # Factor 4: Backup coverage
+        try:
+            backed_up = cat.conn.execute("SELECT COUNT(DISTINCT file_id) FROM backup_manifest").fetchone()[0]
+            backup_pct = backed_up / max(total_files, 1)
+        except Exception:
+            backup_pct = 0
+
+        # Factor 5: Verification freshness (files verified in last 30 days)
+        try:
+            recently_verified = cat.conn.execute(
+                "SELECT COUNT(*) FROM files WHERE last_verified IS NOT NULL AND last_verified > datetime('now', '-30 days')"
+            ).fetchone()[0]
+            verify_pct = recently_verified / max(total_files, 1)
+        except Exception:
+            verify_pct = 0
+
+        # Factor 6: Quality analysis coverage
+        try:
+            quality_analyzed = cat.conn.execute("SELECT COUNT(*) FROM files WHERE quality_category IS NOT NULL").fetchone()[0]
+            quality_pct = quality_analyzed / max(total_files, 1)
+        except Exception:
+            quality_pct = 0
+
+        # Compute weighted score
+        score = (
+            hash_pct * 25 +        # 25% weight: hashing
+            date_pct * 15 +         # 15% weight: metadata
+            backup_pct * 25 +       # 25% weight: backup
+            verify_pct * 15 +       # 15% weight: verification
+            quality_pct * 5 +       # 5% weight: quality
+            15 - dup_penalty        # 15% base minus duplicate penalty
+        )
+        score = max(0, min(100, round(score, 1)))
+
+        # Grade
+        if score >= 90: grade = "A+"
+        elif score >= 80: grade = "A"
+        elif score >= 70: grade = "B"
+        elif score >= 60: grade = "C"
+        elif score >= 50: grade = "D"
+        else: grade = "F"
+
+        return {
+            "score": score,
+            "grade": grade,
+            "factors": {
+                "hash_coverage": {"value": round(hash_pct * 100, 1), "weight": 25, "label": "Hashov\u00e1n\u00ed"},
+                "metadata": {"value": round(date_pct * 100, 1), "weight": 15, "label": "Metadata"},
+                "backup": {"value": round(backup_pct * 100, 1), "weight": 25, "label": "Z\u00e1loha"},
+                "verification": {"value": round(verify_pct * 100, 1), "weight": 15, "label": "Verifikace"},
+                "quality": {"value": round(quality_pct * 100, 1), "weight": 5, "label": "Kvalita"},
+                "duplicates": {"value": round(max(0, 15 - dup_penalty), 1), "weight": 15, "label": "Duplicity", "groups": dup_groups},
+            },
+            "total_files": total_files,
+        }
+    finally:
+        cat.close()
+
+
+# ── Backup auto-heal ──────────────────────────────────────────────────
+
+
+@router.post("/backup/auto-heal")
+def backup_auto_heal(request: Request, background_tasks: BackgroundTasks):
+    """Auto-heal: redistribute files from unhealthy remotes."""
+    from ..distributed_backup import auto_heal
+
+    task = _create_task("backup:auto-heal")
+    catalog_path = str(request.app.state.catalog_path)
+
+    def run():
+        from ..catalog import Catalog
+        cat = Catalog(catalog_path)
+        cat.open()
+        try:
+            result = auto_heal(cat, progress_fn=lambda p: _update_progress(task.id, p))
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("Auto-heal failed")
+            _finish_task(task.id, error=str(e))
+        finally:
+            cat.close()
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started"}
 
 
 # ── Signal decryption ─────────────────────────────────────────────────

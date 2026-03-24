@@ -155,7 +155,7 @@ def probe_targets(catalog: Catalog) -> list[BackupTarget]:
                 free_bytes=free,
             )
 
-            # Check for crypt overlay
+            # Check for crypt overlay using rclone listremotes with type filter
             try:
                 all_config = subprocess.run(
                     ["rclone", "config", "dump"],
@@ -171,8 +171,10 @@ def probe_targets(catalog: Catalog) -> list[BackupTarget]:
                             target.encrypted = True
                             target.crypt_remote = crypt_name
                             break
-            except Exception:
-                pass
+                    # Explicitly clear parsed config to avoid credential leaks
+                    del config_data
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
+                logger.debug("Cannot check crypt overlay for %s: %s", r.name, type(exc).__name__)
 
             # Update or insert in DB
             catalog.conn.execute(
@@ -299,7 +301,7 @@ def _compute_file_priority(row: dict) -> int:
     elif quality_cat == "blurry":
         score += 50
 
-    return max(0, score)
+    return score
 
 
 def get_files_for_backup(catalog: Catalog, limit: int = 0) -> list[dict]:
@@ -539,7 +541,6 @@ def execute_backup_plan(
                             remote_path,
                         ),
                     )
-                    catalog.conn.commit()
 
                     uploaded += 1
                     bytes_uploaded += entry["size"]
@@ -558,6 +559,10 @@ def execute_backup_plan(
             except Exception as e:
                 errors += 1
                 logger.error("Upload error for %s: %s", file_path, e)
+
+        # Batch commit after each group instead of per-file
+        if not dry_run:
+            catalog.conn.commit()
 
     if progress_fn:
         progress_fn(
@@ -724,6 +729,72 @@ def verify_backups(
         "missing": missing,
         "errors": errors,
         "total_checked": len(rows),
+    }
+
+
+def auto_heal(catalog: Catalog, progress_fn: Callable | None = None) -> dict:
+    """Auto-heal: find files whose backup remote is unreachable and re-plan them to other remotes.
+
+    Steps:
+    1. Check which remotes are currently accessible
+    2. Find manifest entries on inaccessible remotes
+    3. Remove those entries from manifest
+    4. Re-run create_backup_plan to assign them to healthy remotes
+
+    Returns summary dict.
+    """
+    ensure_backup_tables(catalog)
+    targets = get_targets(catalog)
+
+    # 1. Check accessibility
+    healthy_remotes = set()
+    unhealthy_remotes = set()
+
+    for t in targets:
+        if not t.enabled:
+            continue
+        try:
+            result = subprocess.run(
+                ["rclone", "lsd", f"{t.remote_name}:", "--max-depth", "1"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                healthy_remotes.add(t.remote_name)
+            else:
+                unhealthy_remotes.add(t.remote_name)
+        except Exception:
+            unhealthy_remotes.add(t.remote_name)
+
+    if not unhealthy_remotes:
+        return {"status": "ok", "message": "V\u0161echny remoty jsou zdrav\u00e9", "healed": 0}
+
+    # 2. Find affected files
+    placeholders = ",".join("?" for _ in unhealthy_remotes)
+    affected = catalog.conn.execute(f"""
+        SELECT id, file_id, remote_name FROM backup_manifest
+        WHERE remote_name IN ({placeholders})
+    """, list(unhealthy_remotes)).fetchall()
+
+    if not affected:
+        return {"status": "ok", "message": "\u017d\u00e1dn\u00e9 soubory na nezdrav\u00fdch remotech", "healed": 0}
+
+    # 3. Remove affected entries
+    for row_id, file_id, remote_name in affected:
+        catalog.conn.execute("DELETE FROM backup_manifest WHERE id = ?", (row_id,))
+    catalog.conn.commit()
+
+    logger.info("Auto-heal: removed %d entries from unhealthy remotes %s", len(affected), unhealthy_remotes)
+
+    # 4. Re-plan (these files will now be picked up by get_files_for_backup)
+    plan = create_backup_plan(catalog)
+
+    return {
+        "status": "healed",
+        "unhealthy_remotes": list(unhealthy_remotes),
+        "healthy_remotes": list(healthy_remotes),
+        "affected_files": len(affected),
+        "new_plan_files": plan.total_files,
+        "message": f"P\u0159erozd\u011blen{len(affected)} soubor\u016f z nezdrav\u00fdch remot\u016f",
     }
 
 

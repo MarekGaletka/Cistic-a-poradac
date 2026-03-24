@@ -28,7 +28,7 @@ NOISE_XATTR_NAMES = {
 
 
 def utc_stamp() -> str:
-    return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
 def ensure_dir(path: Path) -> None:
@@ -51,6 +51,8 @@ def iter_files(roots: Iterable[Path]) -> Iterator[Path]:
         if not root.exists() or not root.is_dir():
             continue
         for path in root.rglob("*"):
+            if path.is_symlink():
+                continue
             if path.is_file():
                 yield path
 

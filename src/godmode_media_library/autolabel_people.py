@@ -71,22 +71,22 @@ def _load_face_libs() -> tuple[object, object, object, object]:
     return face_recognition, np, Image, DBSCAN
 
 
-def _resize_if_needed(image_arr: object, max_dimension: int, np_mod: object, pil_image_cls: object) -> object:
+def _resize_if_needed(image_arr: object, max_dimension: int, np_mod: object, pil_image_cls: object) -> tuple[object, float]:
     shape = getattr(image_arr, "shape", None)
     if not shape or len(shape) < 2:
-        return image_arr
+        return image_arr, 1.0
 
     h = int(shape[0])
     w = int(shape[1])
     if max(h, w) <= max_dimension:
-        return image_arr
+        return image_arr, 1.0
 
     scale = max_dimension / float(max(h, w))
     new_w = max(1, int(round(w * scale)))
     new_h = max(1, int(round(h * scale)))
     image = pil_image_cls.fromarray(image_arr)
     image = image.resize((new_w, new_h))
-    return np_mod.array(image)
+    return np_mod.array(image), scale
 
 
 def auto_people_labels(
@@ -121,7 +121,7 @@ def auto_people_labels(
         for path in candidate_paths:
             try:
                 image = face_recognition.load_image_file(str(path))
-                image = _resize_if_needed(image, max_dimension=max_dimension, np_mod=np, pil_image_cls=pil_image_cls)
+                image, _scale = _resize_if_needed(image, max_dimension=max_dimension, np_mod=np, pil_image_cls=pil_image_cls)
                 locations = face_recognition.face_locations(image, model=model)
                 vectors = face_recognition.face_encodings(image, known_face_locations=locations)
                 processed_images += 1

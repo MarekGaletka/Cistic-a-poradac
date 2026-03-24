@@ -93,8 +93,8 @@ def list_quarantine(quarantine_root: Path | None = None) -> list[QuarantineEntry
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Cannot read quarantine manifest %s: %s", manifest_path, exc)
 
     for fpath in sorted(root.rglob("*")):
         if fpath.is_file() and fpath.name != "manifest.json":
@@ -126,8 +126,8 @@ def restore_from_quarantine(
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Cannot read quarantine manifest %s: %s", manifest_path, exc)
 
     restored = 0
     errors: list[str] = []
@@ -169,8 +169,8 @@ def restore_from_quarantine(
     if manifest_path.exists() or restored > 0:
         try:
             manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.warning("Cannot write quarantine manifest %s: %s", manifest_path, exc)
 
     return {"restored": restored, "errors": errors}
 
@@ -183,8 +183,8 @@ def delete_from_quarantine(paths: list[str], quarantine_root: Path | None = None
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Cannot read quarantine manifest %s: %s", manifest_path, exc)
 
     deleted = 0
     errors: list[str] = []
@@ -204,8 +204,8 @@ def delete_from_quarantine(paths: list[str], quarantine_root: Path | None = None
 
     try:
         manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.warning("Cannot write quarantine manifest %s: %s", manifest_path, exc)
 
     return {"deleted": deleted, "errors": errors}
 

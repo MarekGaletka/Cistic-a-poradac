@@ -31,11 +31,12 @@ def _sanitize_segment(value: str) -> str:
     cleaned = re.sub(r"[\\/:*?\"<>|]", "_", cleaned)
     cleaned = cleaned.replace("\t", "_")
     cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned[:200] if cleaned else "Unknown"
     return cleaned or "Unknown"
 
 
 def _date_bucket(ts: float, granularity: str) -> str:
-    d = dt.datetime.fromtimestamp(ts)
+    d = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
     if granularity == "year":
         return f"{d:%Y}"
     if granularity == "month":
@@ -148,13 +149,12 @@ def _allocate_destination(dest: Path, reserved: set[Path]) -> Path:
     stem = dest.stem
     suffix = dest.suffix
     parent = dest.parent
-    n = 1
-    while True:
+    for n in range(1, 100_000):
         cand = parent / f"{stem} ({n}){suffix}"
         if cand not in reserved and not cand.exists():
             reserved.add(cand)
             return cand
-        n += 1
+    raise RuntimeError(f"Cannot allocate destination after 100000 attempts: {dest}")
 
 
 def create_tree_plan(
@@ -297,8 +297,12 @@ def apply_tree_plan(
                 else:
                     raise ValueError(f"Unsupported operation: {operation}")
             except OSError as exc:
+                import errno as errno_mod
                 skipped += 1
-                log_rows.append((str(src), str(final_dst), operation, "skip", f"os_error:{exc.errno}"))
+                detail = f"os_error:{exc.errno}"
+                if exc.errno == errno_mod.EXDEV:
+                    detail = "cross_device_link:hardlinks_cannot_span_filesystems"
+                log_rows.append((str(src), str(final_dst), operation, "skip", detail))
                 continue
 
         applied += 1

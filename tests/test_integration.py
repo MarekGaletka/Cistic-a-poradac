@@ -103,8 +103,10 @@ def test_exiftool_extraction(fixture_root, catalog):
     from godmode_media_library.exiftool_extract import extract_all_metadata
 
     incremental_scan(catalog, [fixture_root], workers=1)
-    count = extract_all_metadata(catalog)
-    assert count >= 1
+    rows = catalog.query_files()
+    paths = [Path(r.path) for r in rows]
+    result = extract_all_metadata(paths)
+    assert len(result) >= 1
 
 
 @pytest.mark.requires_exiftool
@@ -113,7 +115,9 @@ def test_exiftool_camera_info(fixture_root, catalog):
     from godmode_media_library.exiftool_extract import extract_all_metadata
 
     incremental_scan(catalog, [fixture_root], workers=1)
-    extract_all_metadata(catalog)
+    rows_all = catalog.query_files()
+    paths = [Path(r.path) for r in rows_all]
+    extract_all_metadata(paths)
 
     # Check that camera info was extracted for tiny_photo.jpg
     rows = catalog.query_files(ext="jpg")
@@ -131,7 +135,9 @@ def test_richness_scoring(fixture_root, catalog):
     from godmode_media_library.metadata_richness import compute_richness
 
     incremental_scan(catalog, [fixture_root], workers=1)
-    extract_all_metadata(catalog)
+    rows_all = catalog.query_files()
+    paths = [Path(r.path) for r in rows_all]
+    extract_all_metadata(paths)
 
     rows = catalog.query_files(ext="jpg")
     for row in rows:

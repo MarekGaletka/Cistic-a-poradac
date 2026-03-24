@@ -10,6 +10,8 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -36,6 +38,12 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
     api_token = os.environ.get("GML_API_TOKEN", "")
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        from .api import _capture_event_loop
+        _capture_event_loop()
+        yield
+
     app = FastAPI(
         title="GOD MODE Media Library",
         version="0.1.0",
@@ -43,6 +51,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        lifespan=lifespan,
     )
 
     app.state.catalog_path = catalog_path or default_catalog_path()

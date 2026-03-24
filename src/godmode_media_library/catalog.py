@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import logging
 import os
 import sqlite3
@@ -243,6 +242,7 @@ class Catalog:
             lock_path = self._db_path.with_suffix(".lock")
             self._lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
             try:
+                import fcntl
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 os.close(self._lock_fd)
@@ -447,7 +447,11 @@ class Catalog:
             self._conn.close()
             self._conn = None
         if self._lock_fd is not None:
-            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            try:
+                import fcntl
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            except ImportError:
+                pass  # Windows — no flock needed
             os.close(self._lock_fd)
             self._lock_fd = None
 

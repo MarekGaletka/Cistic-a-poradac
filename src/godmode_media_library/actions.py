@@ -5,6 +5,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+import csv
+
 from .utils import ensure_dir, read_tsv_dict, sha256_file, write_tsv
 
 logger = logging.getLogger(__name__)
@@ -58,8 +60,6 @@ def apply_plan(
 ) -> ApplyResult:
     rows = read_tsv_dict(plan_path)
 
-    executed_rows: list[tuple[object, ...]] = []
-    skipped_rows: list[tuple[object, ...]] = []
     # Track actual file moves for rollback on unexpected failure
     move_log: list[tuple[Path, Path]] = []
 
@@ -69,72 +69,80 @@ def apply_plan(
     rolled_back = 0
     error_msg: str | None = None
 
-    try:
-        for row in rows:
-            digest = row.get("hash", "")
-            size = int(row.get("size", "0"))
-            keep_path = Path(row.get("keep_path", ""))
-            move_path = Path(row.get("move_path", ""))
-            reason = row.get("reason", "")
+    # Write logs incrementally so they survive crashes
+    ensure_dir(executed_log_path.parent)
+    ensure_dir(skipped_log_path.parent)
+    exec_header = ["hash", "size", "keep_path", "move_path", "quarantine_path", "reason", "verified_hash"]
+    skip_header = ["hash", "size", "keep_path", "move_path", "reason", "skip_reason"]
 
-            if not move_path.exists():
-                skipped += 1
-                skipped_rows.append((digest, size, str(keep_path), str(move_path), reason, "move_path_missing"))
-                continue
-            if not keep_path.exists():
-                skipped += 1
-                skipped_rows.append((digest, size, str(keep_path), str(move_path), reason, "keep_path_missing"))
-                continue
+    with (
+        executed_log_path.open("w", newline="", encoding="utf-8") as ef,
+        skipped_log_path.open("w", newline="", encoding="utf-8") as sf,
+    ):
+        exec_writer = csv.writer(ef, delimiter="\t")
+        skip_writer = csv.writer(sf, delimiter="\t")
+        exec_writer.writerow(exec_header)
+        skip_writer.writerow(skip_header)
 
-            try:
-                keep_hash = sha256_file(keep_path)
-                move_hash = sha256_file(move_path)
-            except OSError:
-                skipped += 1
-                skipped_rows.append((digest, size, str(keep_path), str(move_path), reason, "hash_read_error"))
-                continue
+        try:
+            for row in rows:
+                digest = row.get("hash", "")
+                size = int(row.get("size", "0"))
+                keep_path = Path(row.get("keep_path", ""))
+                move_path = Path(row.get("move_path", ""))
+                reason = row.get("reason", "")
 
-            if keep_hash != move_hash:
-                skipped += 1
-                skipped_rows.append((digest, size, str(keep_path), str(move_path), reason, "hash_mismatch"))
-                continue
+                if not move_path.exists():
+                    skipped += 1
+                    skip_writer.writerow([digest, size, str(keep_path), str(move_path), reason, "move_path_missing"])
+                    sf.flush()
+                    continue
+                if not keep_path.exists():
+                    skipped += 1
+                    skip_writer.writerow([digest, size, str(keep_path), str(move_path), reason, "keep_path_missing"])
+                    sf.flush()
+                    continue
 
-            dest = _quarantine_path(quarantine_root, move_path)
+                try:
+                    keep_hash = sha256_file(keep_path)
+                    move_hash = sha256_file(move_path)
+                except OSError:
+                    skipped += 1
+                    skip_writer.writerow([digest, size, str(keep_path), str(move_path), reason, "hash_read_error"])
+                    sf.flush()
+                    continue
 
-            if not dry_run:
-                ensure_dir(dest.parent)
-                if dest.exists():
-                    # Keep deterministic non-destructive behavior.
-                    suffix = 1
-                    candidate = Path(f"{dest}.dup{suffix}")
-                    while candidate.exists():
-                        suffix += 1
-                        candidate = Path(f"{dest}.dup{suffix}")
-                    dest = candidate
-                shutil.move(str(move_path), str(dest))
-                move_log.append((move_path, dest))
+                if keep_hash != move_hash:
+                    skipped += 1
+                    skip_writer.writerow([digest, size, str(keep_path), str(move_path), reason, "hash_mismatch"])
+                    sf.flush()
+                    continue
 
-            moved += 1
-            moved_bytes += size
-            executed_rows.append((digest, size, str(keep_path), str(move_path), str(dest), reason, keep_hash))
-    except Exception as exc:
-        error_msg = f"Apply failed after {moved} moves: {exc}"
-        logger.error(error_msg)
-        if move_log and not dry_run:
-            logger.info("Rolling back %d file moves...", len(move_log))
-            rolled_back = _rollback_moves(move_log)
-            logger.info("Rolled back %d/%d moves", rolled_back, len(move_log))
+                dest = _quarantine_path(quarantine_root, move_path)
 
-    write_tsv(
-        executed_log_path,
-        ["hash", "size", "keep_path", "move_path", "quarantine_path", "reason", "verified_hash"],
-        executed_rows,
-    )
-    write_tsv(
-        skipped_log_path,
-        ["hash", "size", "keep_path", "move_path", "reason", "skip_reason"],
-        skipped_rows,
-    )
+                if not dry_run:
+                    ensure_dir(dest.parent)
+                    if dest.exists():
+                        suffix_n = 1
+                        candidate = Path(f"{dest}.dup{suffix_n}")
+                        while candidate.exists():
+                            suffix_n += 1
+                            candidate = Path(f"{dest}.dup{suffix_n}")
+                        dest = candidate
+                    shutil.move(str(move_path), str(dest))
+                    move_log.append((move_path, dest))
+
+                moved += 1
+                moved_bytes += size
+                exec_writer.writerow([digest, size, str(keep_path), str(move_path), str(dest), reason, keep_hash])
+                ef.flush()
+        except Exception as exc:
+            error_msg = f"Apply failed after {moved} moves: {exc}"
+            logger.error(error_msg)
+            if move_log and not dry_run:
+                logger.info("Rolling back %d file moves...", len(move_log))
+                rolled_back = _rollback_moves(move_log)
+                logger.info("Rolled back %d/%d moves", rolled_back, len(move_log))
 
     return ApplyResult(moved=moved, skipped=skipped, moved_bytes=moved_bytes, rolled_back=rolled_back, error=error_msg)
 
