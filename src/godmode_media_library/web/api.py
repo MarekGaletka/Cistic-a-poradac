@@ -234,7 +234,7 @@ def _notify_ws(task_id: str, msg: dict) -> None:
     for ws in conns_snapshot:
         try:
             asyncio.run_coroutine_threadsafe(ws.send_json(msg), loop)
-        except Exception:
+        except (RuntimeError, OSError):
             stale.append(ws)
     if stale:
         with _ws_lock:
@@ -2213,7 +2213,7 @@ def get_file_preview(request: Request, file_path: str) -> dict:
                 "language": lang,
                 "lines": content.count("\n") + 1,
             })
-        except Exception:
+        except OSError:
             result["type"] = "unknown"
         return result
 
@@ -2250,7 +2250,7 @@ def get_file_preview(request: Request, file_path: str) -> dict:
                 "entries": entries,
                 "total_entries": len(entries),
             })
-        except Exception:
+        except (OSError, zipfile.BadZipFile, tarfile.TarError):
             result["type"] = "unknown"
         return result
 
@@ -3047,7 +3047,7 @@ def integrity_score(request: Request):
         try:
             backed_up = cat.conn.execute("SELECT COUNT(DISTINCT file_id) FROM backup_manifest").fetchone()[0]
             backup_pct = backed_up / max(total_files, 1)
-        except Exception:
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
             backup_pct = 0
 
         # Factor 5: Verification freshness (files verified in last 30 days)
@@ -3056,14 +3056,14 @@ def integrity_score(request: Request):
                 "SELECT COUNT(*) FROM files WHERE last_verified IS NOT NULL AND last_verified > datetime('now', '-30 days')"
             ).fetchone()[0]
             verify_pct = recently_verified / max(total_files, 1)
-        except Exception:
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
             verify_pct = 0
 
         # Factor 6: Quality analysis coverage
         try:
             quality_analyzed = cat.conn.execute("SELECT COUNT(*) FROM files WHERE quality_category IS NOT NULL").fetchone()[0]
             quality_pct = quality_analyzed / max(total_files, 1)
-        except Exception:
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
             quality_pct = 0
 
         # Compute weighted score

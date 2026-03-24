@@ -762,7 +762,7 @@ def auto_heal(catalog: Catalog, progress_fn: Callable | None = None) -> dict:
                 healthy_remotes.add(t.remote_name)
             else:
                 unhealthy_remotes.add(t.remote_name)
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             unhealthy_remotes.add(t.remote_name)
 
     if not unhealthy_remotes:

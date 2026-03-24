@@ -65,7 +65,7 @@ def dhash(path: Path, *, hash_size: int = HASH_SIZE) -> str | None:
             img = img.resize((hash_size + 1, hash_size), Image.LANCZOS)
             get_pixels = getattr(img, "get_flattened_data", None) or img.getdata
             pixels = list(get_pixels())
-    except Exception:
+    except (OSError, ValueError):
         logger.debug("Cannot open image for hashing: %s", path)
         return None
 

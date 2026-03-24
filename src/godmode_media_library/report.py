@@ -411,7 +411,7 @@ def _render_html(data: dict) -> str:
             t_min = dt.fromtimestamp(overview["date_range_mtime"][0]).strftime("%Y-%m-%d")
             t_max = dt.fromtimestamp(overview["date_range_mtime"][1]).strftime("%Y-%m-%d")
             date_range = f"{t_min} &mdash; {t_max} (mtime)"
-        except Exception:
+        except (ValueError, TypeError, OSError):
             date_range = "-"
 
     overview_section = f"""

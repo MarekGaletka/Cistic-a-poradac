@@ -143,8 +143,8 @@ def watch_roots(
                 )
                 if on_scan_complete:
                     on_scan_complete(stats)
-            except Exception:
-                logger.exception("Auto-scan failed")
+            except Exception as exc:
+                logger.exception("Auto-scan failed: %s", exc)
     except KeyboardInterrupt:
         logger.info("Watch stopped by user")
     finally:

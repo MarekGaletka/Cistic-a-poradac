@@ -265,6 +265,7 @@ def reverse_geocode_coords(
     min_delay_seconds: float = 1.1,
 ) -> tuple[dict[tuple[float, float], str], int]:
     try:
+        from geopy.exc import GeocoderServiceError
         from geopy.extra.rate_limiter import RateLimiter
         from geopy.geocoders import Nominatim
     except Exception as exc:  # pragma: no cover - optional dependency path
@@ -298,7 +299,7 @@ def reverse_geocode_coords(
                         if isinstance(k, str) and isinstance(v, str)
                     }
                     label = _format_geocode_label(normalized)
-        except Exception:
+        except (OSError, ValueError, GeocoderServiceError):
             label = ""
 
         api_calls += 1

@@ -1532,7 +1532,7 @@ class Catalog:
         try:
             total_faces = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
             total_persons = conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0]
-        except Exception:
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
             total_faces = 0
             total_persons = 0
 

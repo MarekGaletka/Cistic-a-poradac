@@ -55,7 +55,7 @@ def _load_face_libs() -> tuple[object, object, object, object]:
             import pillow_heif  # type: ignore
 
             pillow_heif.register_heif_opener()
-        except Exception:
+        except ImportError:
             # HEIF plugin is optional. If unavailable, HEIC files may fail to decode.
             pass
 
