@@ -535,7 +535,14 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
         if result.returncode == 0:
             logger.info("Mounted %s at %s", remote, mount_point)
             return mount_point, True
-        logger.warning("Failed to mount %s: %s", remote, result.stderr)
+        stderr = result.stderr or ""
+        logger.warning("Failed to mount %s: %s", remote, stderr)
+        if "cannot find FUSE" in stderr or "macfuse" in stderr.lower():
+            raise RuntimeError(
+                "macFUSE není nainstalovaný. Nainstalujte: brew install macfuse "
+                "nebo stáhněte z https://osxfuse.github.io/. "
+                "Alternativně použijte 'Stáhnout lokálně'."
+            )
         return mount_point, False
     except (subprocess.TimeoutExpired, OSError) as exc:
         logger.warning("Mount error for %s: %s", remote, exc)

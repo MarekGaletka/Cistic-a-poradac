@@ -23,7 +23,7 @@ export function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-export function showToast(message, type = "info") {
+export function showToast(message, type = "info", duration = 4000) {
   const container = $("#toast-container");
   if (!container) return;
   const icons = { success: "\u2713", error: "\u2717", info: "\u2139" };
@@ -38,7 +38,7 @@ export function showToast(message, type = "info") {
   };
   toast.addEventListener("click", dismiss);
   container.appendChild(toast);
-  setTimeout(() => { if (toast.parentNode && !toast.classList.contains("dismissing")) dismiss(); }, 4000);
+  setTimeout(() => { if (toast.parentNode && !toast.classList.contains("dismissing")) dismiss(); }, duration);
 }
 
 export function content() {

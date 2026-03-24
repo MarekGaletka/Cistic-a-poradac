@@ -3302,7 +3302,7 @@ def cloud_mount_remote(body: CloudMountRequest):
         path, success = rclone_mount(body.remote, body.mount_point or None)
         return {"mount_path": path, "success": success}
     except RuntimeError as e:
-        raise HTTPException(500, str(e)) from e
+        return {"mount_path": "", "success": False, "message": str(e)}
 
 
 @router.post("/cloud/unmount")

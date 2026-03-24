@@ -206,7 +206,7 @@ function renderSources(sources) {
           showToast(t("cloud.mount_success", { name: remote }), "success");
           await loadStatus();
         } else {
-          showToast(t("cloud.mount_failed"), "error");
+          showToast(result.message || t("cloud.mount_failed"), "error", 8000);
           _btnRestore(btn);
         }
       } catch (e) {
