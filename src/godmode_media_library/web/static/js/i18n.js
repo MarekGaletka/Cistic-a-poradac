@@ -773,6 +773,15 @@ const translations = {
     "backup.not_verified": "Neověřeno",
     "backup.prev_page": "Předchozí",
     "backup.next_page": "Další",
+    "backup.encrypted": "Šifrováno (E2E)",
+    "backup.not_encrypted": "Nešifrováno",
+    "backup.health_check": "Kontrola zdraví",
+    "backup.test_notification": "Test notifikace",
+    "backup.acknowledge_all": "Potvrdit všechna upozornění",
+    "backup.monitor_ok": "V pořádku",
+    "backup.monitor_warning": "Varování",
+    "backup.monitor_critical": "Kritické",
+    "backup.last_check": "Poslední kontrola",
 
     // People / Face Recognition
     "people.title": "Rozpoznávání osob",

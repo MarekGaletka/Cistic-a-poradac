@@ -46,10 +46,15 @@ export async function render(container) {
         </section>
 
         <section class="backup-section">
-          <h3>\u2705 Ov\u011b\u0159en\u00ed z\u00e1lohy</h3>
+          <h3>\uD83D\uDEE1\uFE0F Monitoring & Ov\u011b\u0159en\u00ed</h3>
+          <div id="backup-monitor-status"></div>
           <div class="backup-actions-row">
+            <button id="btn-health" class="btn btn-sm">\uD83E\uDE7A Kontrola zdrav\u00ed</button>
             <button id="btn-verify" class="btn btn-sm">\uD83D\uDD12 Ov\u011b\u0159it z\u00e1lohy</button>
+            <button id="btn-test-notif" class="btn btn-sm">\uD83D\uDD14 Test notifikace</button>
+            <button id="btn-ack-alerts" class="btn btn-sm" style="display:none">\u2705 Potvrdit v\u0161echna upozorn\u011bn\u00ed</button>
           </div>
+          <div id="backup-alerts"></div>
           <div id="backup-verify-result"></div>
         </section>
 
@@ -69,6 +74,9 @@ export async function render(container) {
   $("#btn-execute").addEventListener("click", () => executePlan(false));
   $("#btn-execute-dry").addEventListener("click", () => executePlan(true));
   $("#btn-verify").addEventListener("click", verifyBackups);
+  $("#btn-health").addEventListener("click", runHealthCheck);
+  $("#btn-test-notif").addEventListener("click", testNotification);
+  $("#btn-ack-alerts").addEventListener("click", acknowledgeAlerts);
 
   const searchInput = $("#manifest-search");
   let _searchTimeout = null;
@@ -81,7 +89,7 @@ export async function render(container) {
   });
 
   // Load data
-  await Promise.all([loadStats(), loadTargets(), loadManifest()]);
+  await Promise.all([loadStats(), loadTargets(), loadManifest(), loadMonitorStatus()]);
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +197,10 @@ async function loadTargets() {
         <div class="backup-target-card ${enabled ? "target-enabled" : "target-disabled"}" data-target="${name}">
           <div class="backup-target-header">
             <span class="backup-target-name">\u2601\uFE0F ${name}</span>
-            <span class="backup-target-badge">${backedFiles.toLocaleString("cs-CZ")} souboru</span>
+            <span style="display:flex;gap:0.4rem;align-items:center">
+              ${tgt.encrypted ? '<span class="backup-encrypt-badge" title="End-to-end \u0161ifrov\u00e1no (rclone crypt)">\uD83D\uDD12 E2E</span>' : '<span class="backup-no-encrypt-badge" title="Ne\u0161ifrov\u00e1no">\uD83D\uDD13</span>'}
+              <span class="backup-target-badge">${backedFiles.toLocaleString("cs-CZ")} souboru</span>
+            </span>
           </div>
 
           ${capacityRow}
@@ -644,5 +655,99 @@ async function refreshAll() {
   const progressEl = document.getElementById("backup-progress");
   if (progressEl) progressEl.remove();
 
-  await Promise.all([loadStats(), loadTargets(), loadManifest()]);
+  await Promise.all([loadStats(), loadTargets(), loadManifest(), loadMonitorStatus()]);
+}
+
+// ---------------------------------------------------------------------------
+// Monitoring
+// ---------------------------------------------------------------------------
+
+async function loadMonitorStatus() {
+  const el = $("#backup-monitor-status");
+  const alertsEl = $("#backup-alerts");
+  const ackBtn = $("#btn-ack-alerts");
+  if (!el) return;
+
+  try {
+    const data = await api("/backup/monitor");
+    const overall = data.overall || "ok";
+    const lastCheck = data.last_check_at
+      ? new Date(data.last_check_at).toLocaleString("cs-CZ")
+      : "nikdy";
+
+    const statusColor = overall === "ok" ? "#3fb950" : overall === "warning" ? "#d29922" : "#f85149";
+    const statusLabel = overall === "ok" ? "V poradku" : overall === "warning" ? "Varovani" : "Kriticke";
+    const statusIcon = overall === "ok" ? "\u2705" : overall === "warning" ? "\u26A0\uFE0F" : "\u274C";
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:1rem;margin-bottom:0.75rem;padding:0.75rem;background:var(--bg);border-radius:8px;border-left:3px solid ${statusColor}">
+        <span style="font-size:1.5rem">${statusIcon}</span>
+        <div>
+          <div style="font-weight:600;color:${statusColor}">${statusLabel}</div>
+          <div style="font-size:0.8rem;color:var(--text-secondary)">Posledni kontrola: ${lastCheck}</div>
+        </div>
+        ${data.critical_count > 0 ? `<span style="background:#f85149;color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:600">${data.critical_count} kriticke</span>` : ""}
+        ${data.warning_count > 0 ? `<span style="background:#d29922;color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:600">${data.warning_count} varovani</span>` : ""}
+      </div>`;
+
+    // Show alerts
+    const alerts = data.active_alerts || [];
+    if (alerts.length > 0 && alertsEl) {
+      if (ackBtn) ackBtn.style.display = "";
+      alertsEl.innerHTML = alerts.map(a => {
+        const sev = a.severity === "critical" ? "#f85149" : "#d29922";
+        const icon = a.severity === "critical" ? "\u274C" : "\u26A0\uFE0F";
+        const time = a.timestamp ? new Date(a.timestamp).toLocaleString("cs-CZ") : "";
+        return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;margin-bottom:0.25rem;background:var(--bg);border-radius:6px;border-left:2px solid ${sev};font-size:0.85rem">
+          <span>${icon}</span>
+          <span style="flex:1">${a.message}</span>
+          <span style="color:var(--text-secondary);font-size:0.75rem">${time}</span>
+        </div>`;
+      }).join("");
+    } else {
+      if (alertsEl) alertsEl.innerHTML = "";
+      if (ackBtn) ackBtn.style.display = "none";
+    }
+  } catch {
+    el.innerHTML = "";
+  }
+}
+
+async function runHealthCheck() {
+  const btn = $("#btn-health");
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = "\u23F3 Kontroluji...";
+  try {
+    const { task_id } = await apiPost("/backup/monitor/check");
+    const result = await pollTask(task_id, "Kontrola zdravi");
+    if (result) {
+      showToast(`Kontrola: ${result.healthy}/${result.checked} zdravych`, result.unhealthy > 0 ? "warning" : "success");
+    }
+    await loadMonitorStatus();
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "\uD83E\uDE7A Kontrola zdravi";
+  }
+}
+
+async function testNotification() {
+  try {
+    await apiPost("/backup/monitor/test-notification");
+    showToast("Testovaci notifikace odeslana", "success");
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+  }
+}
+
+async function acknowledgeAlerts() {
+  try {
+    const { acknowledged } = await apiPost("/backup/monitor/acknowledge");
+    showToast(`Potvrzeno ${acknowledged} upozorneni`, "success");
+    await loadMonitorStatus();
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+  }
 }

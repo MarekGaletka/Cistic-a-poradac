@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -30,6 +31,8 @@ class BackupTarget:
     free_bytes: int = 0
     enabled: bool = True
     priority: int = 0  # lower = fill first
+    encrypted: bool = False
+    crypt_remote: str = ""
 
     @property
     def available_bytes(self) -> int:
@@ -72,6 +75,7 @@ class BackupStats:
     not_backed_up: int = 0
     backup_coverage_pct: float = 0.0
     total_backup_size: int = 0
+    encrypted_files: int = 0
     remotes_used: int = 0
     remotes_healthy: int = 0
     last_backup_at: str | None = None
@@ -94,6 +98,8 @@ def ensure_backup_tables(catalog: Catalog) -> None:
             total_bytes INTEGER DEFAULT 0,
             used_bytes INTEGER DEFAULT 0,
             free_bytes INTEGER DEFAULT 0,
+            encrypted INTEGER DEFAULT 0,
+            crypt_remote TEXT DEFAULT '',
             last_probed_at TEXT
         )
     """)
@@ -149,19 +155,41 @@ def probe_targets(catalog: Catalog) -> list[BackupTarget]:
                 free_bytes=free,
             )
 
+            # Check for crypt overlay
+            try:
+                all_config = subprocess.run(
+                    ["rclone", "config", "dump"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if all_config.returncode == 0:
+                    config_data = json.loads(all_config.stdout)
+                    for crypt_name, crypt_cfg in config_data.items():
+                        if (
+                            crypt_cfg.get("type") == "crypt"
+                            and crypt_cfg.get("remote", "").startswith(f"{r.name}:")
+                        ):
+                            target.encrypted = True
+                            target.crypt_remote = crypt_name
+                            break
+            except Exception:
+                pass
+
             # Update or insert in DB
             catalog.conn.execute(
                 """
                 INSERT INTO backup_targets
-                    (remote_name, total_bytes, used_bytes, free_bytes, last_probed_at)
-                VALUES (?, ?, ?, ?, datetime('now'))
+                    (remote_name, total_bytes, used_bytes, free_bytes,
+                     encrypted, crypt_remote, last_probed_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(remote_name) DO UPDATE SET
                     total_bytes=excluded.total_bytes,
                     used_bytes=excluded.used_bytes,
                     free_bytes=excluded.free_bytes,
+                    encrypted=excluded.encrypted,
+                    crypt_remote=excluded.crypt_remote,
                     last_probed_at=excluded.last_probed_at
             """,
-                (r.name, total, used, free),
+                (r.name, total, used, free, int(target.encrypted), target.crypt_remote),
             )
 
             targets.append(target)
@@ -178,7 +206,7 @@ def get_targets(catalog: Catalog) -> list[BackupTarget]:
     ensure_backup_tables(catalog)
     rows = catalog.conn.execute("""
         SELECT remote_name, remote_path, enabled, priority,
-               total_bytes, used_bytes, free_bytes
+               total_bytes, used_bytes, free_bytes, encrypted, crypt_remote
         FROM backup_targets ORDER BY priority, remote_name
     """).fetchall()
 
@@ -191,6 +219,8 @@ def get_targets(catalog: Catalog) -> list[BackupTarget]:
             total_bytes=r[4] or 0,
             used_bytes=r[5] or 0,
             free_bytes=r[6] or 0,
+            encrypted=bool(r[7]),
+            crypt_remote=r[8] or "",
         )
         for r in rows
     ]
@@ -425,6 +455,13 @@ def execute_backup_plan(
     errors = 0
     skipped = 0
     bytes_uploaded = 0
+    encrypted_files = 0
+
+    # Build mapping of remote_name -> crypt_remote from targets
+    targets_list = get_targets(catalog)
+    crypt_map: dict[str, str] = {
+        t.remote_name: t.crypt_remote for t in targets_list if t.crypt_remote
+    }
 
     # Group entries by (remote, remote_path) for batch uploads
     groups: dict[tuple[str, str], list[dict]] = {}
@@ -461,12 +498,21 @@ def execute_backup_plan(
                 continue
 
             try:
+                # Determine upload target (prefer encrypted)
+                upload_remote = remote
+                upload_path = remote_path
+                if remote in crypt_map:
+                    upload_remote = crypt_map[remote]
+                    # For crypt remotes, use relative path (crypt remote already has base path)
+                    date_part = remote_path.rsplit("/", 1)[-1] if "/" in remote_path else remote_path
+                    upload_path = date_part
+
                 # Upload individual file using rclone copy
                 cmd = [
                     "rclone",
                     "copy",
                     file_path,
-                    f"{remote}:{remote_path}/",
+                    f"{upload_remote}:{upload_path}/",
                     "--no-traverse",
                 ]
                 result = subprocess.run(
@@ -497,8 +543,10 @@ def execute_backup_plan(
 
                     uploaded += 1
                     bytes_uploaded += entry["size"]
+                    if remote in crypt_map:
+                        encrypted_files += 1
                     logger.info(
-                        "Backed up: %s -> %s:%s", file_path, remote, remote_path
+                        "Backed up: %s -> %s:%s", file_path, upload_remote, upload_path
                     )
                 else:
                     errors += 1
@@ -524,6 +572,7 @@ def execute_backup_plan(
     return {
         "uploaded": uploaded,
         "bytes_uploaded": bytes_uploaded,
+        "encrypted_files": encrypted_files,
         "errors": errors,
         "skipped": skipped,
         "dry_run": dry_run,

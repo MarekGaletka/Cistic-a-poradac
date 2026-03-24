@@ -2672,6 +2672,8 @@ def backup_targets(request: Request):
                     "used_bytes": t.used_bytes,
                     "free_bytes": t.free_bytes,
                     "available_bytes": t.available_bytes,
+                    "encrypted": t.encrypted,
+                    "crypt_remote": t.crypt_remote,
                 }
                 for t in targets
             ]
@@ -2872,6 +2874,67 @@ def backup_manifest(request: Request, page: int = 1, limit: int = 50, search: st
         }
     finally:
         cat.close()
+
+
+# ── Backup Monitoring ────────────────────────────────────────────────
+
+
+@router.get("/backup/monitor")
+def backup_monitor_status():
+    """Get backup monitoring status and alerts."""
+    from ..backup_monitor import get_monitor_status
+    return get_monitor_status()
+
+
+@router.post("/backup/monitor/check")
+def backup_monitor_run(background_tasks: BackgroundTasks):
+    """Run health checks on all backup targets."""
+    from ..backup_monitor import run_health_checks
+
+    task = _create_task("backup:health-check")
+
+    def run():
+        try:
+            checks = run_health_checks()
+            results = [
+                {
+                    "remote": c.remote_name,
+                    "accessible": c.accessible,
+                    "write_ok": c.write_ok,
+                    "read_ok": c.read_ok,
+                    "latency_ms": c.latency_ms,
+                    "error": c.error,
+                }
+                for c in checks
+            ]
+            ok = sum(1 for c in checks if c.accessible)
+            _finish_task(task.id, result={
+                "checked": len(checks),
+                "healthy": ok,
+                "unhealthy": len(checks) - ok,
+                "details": results,
+            })
+        except Exception as e:
+            logger.exception("Health check failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/backup/monitor/acknowledge")
+def backup_monitor_ack():
+    """Acknowledge all active alerts."""
+    from ..backup_monitor import acknowledge_all_alerts
+    count = acknowledge_all_alerts()
+    return {"acknowledged": count}
+
+
+@router.post("/backup/monitor/test-notification")
+def backup_test_notification():
+    """Send a test notification."""
+    from ..backup_monitor import send_test_notification
+    return send_test_notification()
 
 
 # ── Signal decryption ─────────────────────────────────────────────────
