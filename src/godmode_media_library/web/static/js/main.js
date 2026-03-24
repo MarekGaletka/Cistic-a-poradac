@@ -7,6 +7,7 @@ import { closeLightbox } from "./lightbox.js";
 import { cleanupTasks } from "./tasks.js";
 import { cleanup as cleanupMap } from "./pages/map.js";
 import { initGlobalProgress } from "./tasks.js";
+import { init as initCommandPalette } from "./command-palette.js";
 
 // Page modules
 import * as dashboard from "./pages/dashboard.js";
@@ -408,6 +409,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Init global progress bar
   initGlobalProgress();
+
+  // Init command palette (Cmd+K)
+  initCommandPalette();
 
   // Hash-based routing
   window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "dashboard"));

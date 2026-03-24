@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import shutil
+import sqlite3
 import threading
 import time
 import uuid
@@ -1617,8 +1618,8 @@ def get_sources(request: Request) -> dict:
                     r = r.strip()
                     if r:
                         scan_roots.append(r)
-        except Exception:
-            pass
+        except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
+            logger.debug("Failed to read scan roots from catalog: %s", exc)
 
         all_roots = list(dict.fromkeys(configured + scan_roots))  # dedupe, preserve order
 
@@ -1720,8 +1721,9 @@ def stream_file(request: Request, file_path: str) -> StreamingResponse:
     ext = full_path.suffix.lower()
     media_type = media_types.get(ext, "application/octet-stream")
 
-    return StreamingResponse(
-        open(full_path, "rb"),  # noqa: SIM115
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        str(full_path),
         media_type=media_type,
         headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"},
     )
@@ -3646,8 +3648,8 @@ def cloud_status(request: Request):
                 count += len(filenames)
                 if time.monotonic() > deadline:
                     break  # Return partial count rather than hang
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("os.walk failed for %s: %s", root, exc)
         return count
 
     # Enrich each source with scan/file info from catalog + disk file count
@@ -3710,8 +3712,8 @@ def cloud_native_paths(request: Request):
                 count += len(filenames)
                 if time.monotonic() > deadline:
                     break
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("os.walk failed for %s: %s", root, exc)
         return count
 
     # Enrich with scan info + disk count

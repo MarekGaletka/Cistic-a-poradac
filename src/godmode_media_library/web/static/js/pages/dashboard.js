@@ -8,6 +8,7 @@ import { openFolderPicker } from "../folder-picker.js";
 import { openLightbox } from "../lightbox.js";
 import { loadTags } from "../tags.js";
 import { applySmartFilter } from "./files.js";
+import { renderActivityFeed } from "../activity-feed.js";
 
 let _selectedRoots = [];
 
@@ -235,6 +236,9 @@ async function renderDashboard(container, stats) {
 
   html += `</div>`;
 
+  // Integrity score widget
+  html += `<div id="integrity-score-widget" class="integrity-widget"></div>`;
+
   // Memories (On This Day) section
   if (memoriesData && memoriesData.memories && memoriesData.memories.length > 0) {
     const monthNames = ["ledna", "února", "března", "dubna", "května", "června",
@@ -444,7 +448,17 @@ async function renderDashboard(container, stats) {
     html += `</div></div>`;
   }
 
+  // Activity feed section
+  html += `<div class="dashboard-section">
+    <h3>📋 Nedávná aktivita</h3>
+    <div id="activity-feed"></div>
+  </div>`;
+
   container.innerHTML = html;
+
+  // Render activity feed
+  const activityEl = container.querySelector("#activity-feed");
+  if (activityEl) renderActivityFeed(activityEl);
 
   // Bind refresh
   const refreshBtn = container.querySelector("#btn-dashboard-refresh");
@@ -517,5 +531,50 @@ async function renderDashboard(container, stats) {
         openLightbox(memPaths, idx);
       });
     });
+  }
+
+  // Load integrity score widget
+  loadIntegrityScore();
+}
+
+async function loadIntegrityScore() {
+  const el = document.getElementById("integrity-score-widget");
+  if (!el) return;
+  try {
+    const data = await api("/integrity-score");
+    const score = data.score || 0;
+    const grade = data.grade || "?";
+    const circumference = 2 * Math.PI * 40;
+    const offset = circumference * (1 - score / 100);
+    const color = score >= 80 ? "#3fb950" : score >= 60 ? "#d29922" : "#f85149";
+
+    const factors = Object.values(data.factors || {}).map(f =>
+      `<div style="display:flex;justify-content:space-between;font-size:0.8rem;padding:0.15rem 0">
+        <span>${f.label}</span>
+        <span style="color:${f.value >= 70 ? '#3fb950' : f.value >= 40 ? '#d29922' : '#f85149'}">${f.value}%</span>
+      </div>`
+    ).join("");
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:1.5rem;padding:1rem;background:var(--card);border:1px solid var(--border);border-radius:12px">
+        <div style="position:relative;width:100px;height:100px;flex-shrink:0">
+          <svg viewBox="0 0 100 100" style="transform:rotate(-90deg)">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--border)" stroke-width="8"/>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="${color}" stroke-width="8"
+              stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"
+              style="transition:stroke-dashoffset 1s ease"/>
+          </svg>
+          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+            <span style="font-size:1.5rem;font-weight:700;color:${color}">${grade}</span>
+            <span style="font-size:0.7rem;color:var(--text-secondary)">${score}%</span>
+          </div>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;margin-bottom:0.5rem">Zdrav\u00ed knihovny</div>
+          ${factors}
+        </div>
+      </div>`;
+  } catch {
+    el.innerHTML = "";
   }
 }

@@ -125,8 +125,8 @@ def check_remote_health(remote_name: str) -> HealthCheck:
             if about.returncode == 0:
                 info = json.loads(about.stdout)
                 check.free_bytes = info.get("free", 0) or 0
-        except Exception:
-            pass
+        except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
+            logger.debug("rclone about failed for %s: %s", remote_name, exc)
 
     except subprocess.TimeoutExpired:
         check.error = "Timeout (30s)"

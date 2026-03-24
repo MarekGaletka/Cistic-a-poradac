@@ -8347,6 +8347,209 @@ button:focus-visible, a:focus-visible {
   color: #d29922;
 }
 
+/* ── Command Palette (Cmd+K) ── */
+
+.cmd-palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  padding-top: 15vh;
+}
+
+.cmd-palette {
+  width: min(600px, 90vw);
+  max-height: 60vh;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: cmd-palette-in 0.15s ease-out;
+}
+
+@keyframes cmd-palette-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.cmd-palette-input-wrap {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  gap: 0.5rem;
+}
+
+.cmd-palette-icon {
+  font-size: 1.1rem;
+  opacity: 0.6;
+}
+
+.cmd-palette-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.cmd-palette-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.cmd-palette-kbd {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-family: inherit;
+}
+
+.cmd-palette-results {
+  overflow-y: auto;
+  flex: 1;
+  padding: 0.5rem;
+}
+
+.cmd-palette-group {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 0.5rem 0.75rem 0.25rem;
+  letter-spacing: 0.05em;
+}
+
+.cmd-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.cmd-palette-item:hover,
+.cmd-palette-selected {
+  background: var(--hover);
+}
+
+.cmd-palette-selected {
+  background: rgba(88, 166, 255, 0.15);
+}
+
+.cmd-palette-item-icon {
+  font-size: 1.1rem;
+  width: 2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.cmd-palette-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cmd-palette-item-text span:first-child {
+  font-weight: 500;
+}
+
+.cmd-palette-sublabel {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-palette-empty {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+}
+
+.cmd-palette-footer {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.cmd-palette-footer kbd {
+  font-size: 0.65rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  margin-right: 0.25rem;
+}
+
+/* ── Activity Feed ── */
+
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--border);
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.activity-icon {
+  flex-shrink: 0;
+  width: 1.5rem;
+  text-align: center;
+}
+
+.activity-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.activity-detail {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-time {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.activity-empty {
+  text-align: center;
+  padding: 1rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
 /* ── Share modal ────────────────────────────────────── */
 
 /* Detail modal action buttons */

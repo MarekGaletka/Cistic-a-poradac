@@ -568,8 +568,8 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                     dt = datetime.fromisoformat(e.quarantine_date)
                     if dt.timestamp() < cutoff:
                         old_paths.append(e.path)
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.debug("Invalid quarantine_date %r: %s", e.quarantine_date, exc)
             else:
                 # No date — check file mtime
                 try:
@@ -577,8 +577,8 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                     mtime = _P(e.path).stat().st_mtime
                     if mtime < cutoff:
                         old_paths.append(e.path)
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug("Cannot stat quarantined file %s: %s", e.path, exc)
 
         if old_paths:
             result = delete_from_quarantine(old_paths)

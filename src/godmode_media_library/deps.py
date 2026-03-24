@@ -182,8 +182,8 @@ def _check_python_package(
         version = getattr(mod, "__version__", None) or getattr(mod, "VERSION", None)
         if isinstance(version, tuple):
             version = ".".join(str(v) for v in version)
-    except Exception:
-        pass
+    except (ImportError, AttributeError, TypeError) as exc:
+        logger.debug("Could not determine version for %s: %s", name, exc)
     return DependencyStatus(name=name, available=True, version=str(version) if version else None)
 
 

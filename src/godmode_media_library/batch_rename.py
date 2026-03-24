@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -21,11 +21,7 @@ class RenameAction:
 class RenameResult:
     renamed: int = 0
     skipped: int = 0
-    errors: list[str] = None
-
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
+    errors: list[str] = field(default_factory=list)
 
 
 def plan_renames(

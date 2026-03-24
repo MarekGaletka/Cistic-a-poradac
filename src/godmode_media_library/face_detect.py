@@ -8,6 +8,7 @@ Supports incremental matching against known persons.
 from __future__ import annotations
 
 import logging
+import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -32,8 +33,8 @@ def _load_libs():
         try:
             import pillow_heif  # type: ignore
             pillow_heif.register_heif_opener()
-        except Exception:
-            pass
+        except ImportError:
+            logger.debug("pillow_heif not available, HEIF support disabled")
         import face_recognition  # type: ignore
         import numpy as np  # type: ignore
         from PIL import Image  # type: ignore
@@ -261,7 +262,8 @@ def match_face_to_known(
             else:
                 import struct
                 ref_vec = np.array(struct.unpack("<128d", row[0]))
-        except Exception:
+        except (struct.error, ValueError, TypeError) as exc:
+            logger.debug("Failed to decode face encoding for person: %s", exc)
             continue
 
         distance = float(np.linalg.norm(enc_vec - ref_vec))
@@ -297,34 +299,34 @@ def crop_face_thumbnail(
         try:
             import pillow_heif  # type: ignore
             pillow_heif.register_heif_opener()
-        except Exception:
+        except ImportError:
             pass
 
-        img = Image.open(file_path)
-        img_w, img_h = img.size
+        with Image.open(file_path) as img:
+            img_w, img_h = img.size
 
-        top = bbox["top"]
-        right = bbox["right"]
-        bottom = bbox["bottom"]
-        left = bbox["left"]
+            top = bbox.get("top", 0)
+            right = bbox.get("right", 0)
+            bottom = bbox.get("bottom", 0)
+            left = bbox.get("left", 0)
 
-        face_h = bottom - top
-        face_w = right - left
-        pad_h = int(face_h * padding)
-        pad_w = int(face_w * padding)
+            face_h = bottom - top
+            face_w = right - left
+            pad_h = int(face_h * padding)
+            pad_w = int(face_w * padding)
 
-        crop_top = max(0, top - pad_h)
-        crop_left = max(0, left - pad_w)
-        crop_bottom = min(img_h, bottom + pad_h)
-        crop_right = min(img_w, right + pad_w)
+            crop_top = max(0, top - pad_h)
+            crop_left = max(0, left - pad_w)
+            crop_bottom = min(img_h, bottom + pad_h)
+            crop_right = min(img_w, right + pad_w)
 
-        face_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
-        face_img = face_img.resize((size, size), Image.LANCZOS)
+            face_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+            face_img = face_img.resize((size, size), Image.LANCZOS)
 
-        import io
-        buf = io.BytesIO()
-        face_img.convert("RGB").save(buf, format="JPEG", quality=85)
-        return buf.getvalue()
-    except Exception as exc:
+            import io
+            buf = io.BytesIO()
+            face_img.convert("RGB").save(buf, format="JPEG", quality=85)
+            return buf.getvalue()
+    except (OSError, ValueError, KeyError) as exc:
         logger.warning("Cannot crop face from %s: %s", file_path, exc)
         return None

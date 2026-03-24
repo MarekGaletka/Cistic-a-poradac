@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -150,7 +151,7 @@ def _collect_data(cat: Any) -> dict:
         try:
             if len(d) >= 7:
                 dates_parsed.append(d[:7])  # YYYY-MM
-        except Exception:
+        except (TypeError, IndexError):
             pass
 
     coverage_data = _compute_coverage(dates_parsed, min_date, max_date)
@@ -198,8 +199,8 @@ def _collect_data(cat: Any) -> dict:
         ).fetchone()[0]
         quality_data["low_quality"] = low_richness
 
-    except Exception:
-        pass
+    except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
+        logger.debug("Quality data query failed (table/column may not exist): %s", exc)
 
     data["quality"] = quality_data
 
@@ -209,8 +210,8 @@ def _collect_data(cat: Any) -> dict:
         total_faces = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
         total_persons = conn.execute("SELECT COUNT(*) FROM persons WHERE name != ''").fetchone()[0]
         faces_data = {"total_faces": total_faces, "total_persons": total_persons}
-    except Exception:
-        pass
+    except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
+        logger.debug("Faces data query failed (table may not exist): %s", exc)
     data["faces"] = faces_data
 
     # ── Cloud sources ─────────────────────────────────────────────
@@ -219,8 +220,8 @@ def _collect_data(cat: Any) -> dict:
         from .cloud import list_remotes
         remotes = list_remotes()
         cloud_data = remotes.get("remotes", [])
-    except Exception:
-        pass
+    except (ImportError, OSError) as exc:
+        logger.debug("Cloud remotes unavailable: %s", exc)
     data["cloud"] = cloud_data
 
     # ── Recommendations ───────────────────────────────────────────
