@@ -16,10 +16,22 @@ import logging
 import platform
 import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class RcloneTransferError(RuntimeError):
+    """Raised by rclone_copyto when raise_on_failure=True and the transfer fails.
+
+    Carries the full result dict so callers can inspect error details.
+    """
+
+    def __init__(self, result: dict):
+        self.result = result
+        super().__init__(result.get("error", "rclone transfer failed"))
 
 
 def _rclone_bin() -> str:
@@ -489,17 +501,27 @@ def rclone_copy(
         )
         elapsed = time.monotonic() - start
 
-        # Parse stats from stderr
+        # Parse stats from stderr.
+        # rclone -v outputs TWO "Transferred:" lines:
+        #   Transferred:   5.000 MiB / 5.000 MiB, 100%, 2.500 MiB/s, ETA 0s  (bytes)
+        #   Transferred:            42 / 42, 100%                               (files)
+        import re
         files_transferred = 0
         bytes_transferred = 0
         errors = 0
+        size_multipliers = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
         for line in (result.stderr or "").splitlines():
-            if "Transferred:" in line and "Bytes" not in line:
-                # e.g. "Transferred:      42 / 42, 100%"
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    with contextlib.suppress(ValueError, IndexError):
-                        files_transferred = int(parts[1].strip().split("/")[0].strip().split(",")[0].strip())
+            if "Transferred:" in line:
+                m = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
+                if m:
+                    unit = m.group(2).lower()
+                    if unit in size_multipliers:
+                        # Bytes line (has a size unit like MiB, GiB, etc.)
+                        bytes_transferred = int(float(m.group(1)) * size_multipliers[unit])
+                    else:
+                        # File count line (no size unit — first token is a number)
+                        with contextlib.suppress(ValueError):
+                            files_transferred = int(m.group(1).split(".")[0])
             if "Errors:" in line:
                 with contextlib.suppress(ValueError, IndexError):
                     errors = int(line.split(":")[1].strip())
@@ -562,15 +584,25 @@ def rclone_upload(
         )
         elapsed = time.monotonic() - start
 
+        # Parse stats from stderr.
+        # rclone -v outputs TWO "Transferred:" lines:
+        #   Transferred:   5.000 MiB / 5.000 MiB, 100%, 2.500 MiB/s, ETA 0s  (bytes)
+        #   Transferred:            42 / 42, 100%                               (files)
+        import re
         files_transferred = 0
         bytes_transferred = 0
         errors = 0
+        size_multipliers = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
         for line in (result.stderr or "").splitlines():
-            if "Transferred:" in line and "Bytes" not in line:
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    with contextlib.suppress(ValueError, IndexError):
-                        files_transferred = int(parts[1].strip().split("/")[0].strip().split(",")[0].strip())
+            if "Transferred:" in line:
+                m = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
+                if m:
+                    unit = m.group(2).lower()
+                    if unit in size_multipliers:
+                        bytes_transferred = int(float(m.group(1)) * size_multipliers[unit])
+                    else:
+                        with contextlib.suppress(ValueError):
+                            files_transferred = int(m.group(1).split(".")[0])
             if "Errors:" in line:
                 with contextlib.suppress(ValueError, IndexError):
                     errors = int(line.split(":")[1].strip())
@@ -1006,20 +1038,19 @@ def rclone_ls_paginated(
     path: str = "",
     *,
     max_depth: int = 1,
-    page_size: int = 5000,
     inter_page_delay: float = 0.5,
-) -> list[dict]:
-    """List remote files in paginated fashion to avoid OOM on huge remotes.
+) -> Iterator[dict]:
+    """Yield remote files lazily via breadth-first directory walk.
 
-    Instead of one recursive call, walks directory tree level by level.
-    Returns flat list of file dicts (same format as rclone_ls).
+    Instead of one recursive call, walks directory tree level by level
+    and *yields* file dicts as they arrive — constant memory overhead
+    regardless of remote size (same dict format as rclone_ls).
     """
     if not check_rclone():
-        return []
+        return
 
     import time
 
-    all_files: list[dict] = []
     dirs_to_scan: list[str] = [path]
     depth = 0
 
@@ -1046,7 +1077,7 @@ def rclone_ls_paginated(
                         if max_depth == -1 or depth < max_depth:
                             next_dirs.append(full_path)
                     else:
-                        all_files.append(item)
+                        yield item
 
                 # Rate limit protection — pause between API calls
                 if inter_page_delay > 0:
@@ -1059,8 +1090,6 @@ def rclone_ls_paginated(
 
         dirs_to_scan = next_dirs
         depth += 1
-
-    return all_files
 
 
 def _dynamic_timeout(file_size: int | None, min_speed_bps: int = 500_000) -> int:
@@ -1084,6 +1113,7 @@ def rclone_copyto(
     file_size: int | None = None,
     bwlimit: str | None = None,
     checksum: bool = True,
+    raise_on_failure: bool = False,
 ) -> dict:
     """Copy a single file between remotes. Streams through local RAM, no disk write.
 
@@ -1092,11 +1122,20 @@ def rclone_copyto(
         file_size: file size in bytes, used for dynamic timeout calculation.
         bwlimit: bandwidth limit (e.g. "10M" for 10 MB/s). None = unlimited.
         checksum: if True, verify checksum after transfer (--checksum flag).
+        raise_on_failure: if True, raise RcloneTransferError instead of returning
+            {"success": False} dict. This makes the function compatible with
+            retry_with_backoff which only retries on exceptions.
 
     Returns {"success": bool, "bytes": int, "elapsed": float, "error": str|None}
+
+    Raises:
+        RcloneTransferError: if raise_on_failure=True and the transfer fails.
     """
     if not check_rclone():
-        return {"success": False, "bytes": 0, "elapsed": 0.0, "error": "rclone is not installed"}
+        fail = {"success": False, "bytes": 0, "elapsed": 0.0, "error": "rclone is not installed"}
+        if raise_on_failure:
+            raise RcloneTransferError(fail)
+        return fail
 
     import re
     import time
@@ -1124,18 +1163,25 @@ def rclone_copyto(
 
         if result.returncode != 0:
             error_msg = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "copyto failed"
-            return {"success": False, "bytes": 0, "elapsed": elapsed, "error": error_msg}
+            fail = {"success": False, "bytes": 0, "elapsed": elapsed, "error": error_msg}
+            if raise_on_failure:
+                raise RcloneTransferError(fail)
+            return fail
 
-        # Parse bytes transferred from stderr stats line
+        # Parse bytes transferred from stderr stats line.
+        # rclone -v outputs TWO "Transferred:" lines:
+        #   Transferred:   5.000 MiB / 5.000 MiB, 100%, 2.500 MiB/s, ETA 0s  (bytes)
+        #   Transferred:            1 / 1, 100%                                 (files)
+        # We only want the first one (with a size unit).
         bytes_transferred = 0
+        size_multipliers = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
         for line in (result.stderr or "").splitlines():
-            # e.g. "Transferred:   1.234 MiB / 1.234 MiB, 100%, 500 KiB/s, ETA 0s"
             m = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
             if m:
-                value = float(m.group(1))
                 unit = m.group(2).lower()
-                multipliers = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
-                bytes_transferred = int(value * multipliers.get(unit, 1))
+                if unit in size_multipliers:
+                    bytes_transferred = int(float(m.group(1)) * size_multipliers[unit])
+                    break
 
         return {"success": True, "bytes": bytes_transferred, "elapsed": elapsed, "error": None}
 
@@ -1143,12 +1189,18 @@ def rclone_copyto(
         elapsed = time.monotonic() - start
         logger.warning("rclone copyto timed out after %.1fs: %s:%s -> %s:%s",
                         elapsed, src_remote, src_path, dst_remote, dst_path)
-        return {"success": False, "bytes": 0, "elapsed": elapsed,
+        fail = {"success": False, "bytes": 0, "elapsed": elapsed,
                 "error": f"Timed out after {effective_timeout}s (file_size={file_size})"}
+        if raise_on_failure:
+            raise RcloneTransferError(fail)
+        return fail
     except OSError as exc:
         elapsed = time.monotonic() - start
         logger.error("rclone copyto OS error: %s", exc)
-        return {"success": False, "bytes": 0, "elapsed": elapsed, "error": str(exc)}
+        fail = {"success": False, "bytes": 0, "elapsed": elapsed, "error": str(exc)}
+        if raise_on_failure:
+            raise RcloneTransferError(fail)
+        return fail
 
 
 def rclone_check_file(

@@ -47,6 +47,7 @@ from .catalog import Catalog
 from .cloud import (
     _dynamic_timeout,
     _rclone_bin,
+    RcloneTransferError,
     check_rclone,
     check_volume_mounted,
     list_remotes,
@@ -158,6 +159,13 @@ def _build_dest_path(
     Format: base_path/YYYY/MM/filename
     On collision (same name, different hash): base_path/YYYY/MM/filename_abc123.ext
     """
+    # Guard against empty/whitespace-only filenames
+    filename = filename.strip()
+    if not filename:
+        # Derive a filename from the file hash to avoid path-ending-in-slash
+        ext = ""
+        filename = f"unnamed_{file_hash[:12]}{ext}" if file_hash else "unnamed_file"
+
     year, month = "unknown", "00"
 
     if mod_time:
@@ -179,16 +187,38 @@ def _build_dest_path(
     return f"{prefix}/{filename}"
 
 
-def _make_collision_safe(dest_path: str, file_hash: str) -> str:
+def _make_collision_safe(
+    dest_path: str,
+    file_hash: str,
+    existing_paths: set[str] | None = None,
+) -> str:
     """Add hash suffix to filename to avoid collisions.
 
     IMG_0001.jpg → IMG_0001_a3f2b1.jpg
+
+    If *existing_paths* is provided, loops with increasing hash length
+    until the generated path is unique (prevents double-collision overwrites).
     """
     p = PurePosixPath(dest_path)
     stem = p.stem
     suffix = p.suffix
-    hash_suffix = file_hash[:6] if file_hash else hashlib.md5(dest_path.encode()).hexdigest()[:6]
-    return str(p.parent / f"{stem}_{hash_suffix}{suffix}")
+    full_hash = file_hash if file_hash else hashlib.md5(dest_path.encode()).hexdigest()
+
+    hash_len = 6
+    candidate = str(p.parent / f"{stem}_{full_hash[:hash_len]}{suffix}")
+
+    if existing_paths is not None:
+        while candidate in existing_paths and hash_len < len(full_hash):
+            hash_len = min(hash_len + 4, len(full_hash))
+            candidate = str(p.parent / f"{stem}_{full_hash[:hash_len]}{suffix}")
+        # Ultimate fallback: append a counter
+        if candidate in existing_paths:
+            counter = 2
+            while candidate in existing_paths:
+                candidate = str(p.parent / f"{stem}_{full_hash[:hash_len]}_{counter}{suffix}")
+                counter += 1
+
+    return candidate
 
 
 def _estimate_speed(bytes_transferred: int, elapsed: float) -> float:
@@ -676,9 +706,9 @@ def run_consolidation(
                         mod_time, config.structure_pattern,
                     )
 
-                    # Collision detection
+                    # Collision detection (loop-safe: handles double collisions)
                     if dest_path in dest_paths_used:
-                        dest_path = _make_collision_safe(dest_path, fs.file_hash)
+                        dest_path = _make_collision_safe(dest_path, fs.file_hash, dest_paths_used)
                     dest_paths_used.add(dest_path)
 
                     # ── Get file size for dynamic timeout ──
@@ -690,17 +720,19 @@ def run_consolidation(
 
                     # ── Transfer ──
                     ckpt.mark_file(cat, job.job_id, fs.file_hash,
-                                   fs.source_location, "stream", "in_progress")
+                                   fs.source_location, "stream", "in_progress",
+                                   dest=f"{config.dest_remote}:{dest_path}")
 
                     try:
                         result = retry_with_backoff(
                             rclone_copyto,
                             src_remote, src_path, config.dest_remote, dest_path,
                             max_retries=config.max_transfer_retries,
-                            retryable_exceptions=(RuntimeError, OSError),
+                            retryable_exceptions=(RcloneTransferError, RuntimeError, OSError),
                             file_size=file_size,
                             bwlimit=config.bwlimit,
                             checksum=True,
+                            raise_on_failure=True,
                         )
 
                         if result["success"]:
@@ -743,6 +775,24 @@ def run_consolidation(
                                 progress.paused = True
                                 _report("stream", "Pozastaveno — úložiště plné", 5)
                                 break
+
+                    except RcloneTransferError as exc:
+                        # All retry_with_backoff attempts exhausted
+                        error_msg = str(exc)[:200]
+                        ckpt.mark_file(
+                            cat, job.job_id, fs.file_hash, fs.source_location,
+                            "stream", "failed", error=error_msg,
+                        )
+                        source_failures[src_remote] = source_failures.get(src_remote, 0) + 1
+
+                        # ── Quota/disk-full detection → auto-pause ──
+                        if any(q in error_msg.lower() for q in _QUOTA_ERRORS):
+                            logger.error("QUOTA/RATE LIMIT detected after retries: %s — pausing job", error_msg)
+                            ckpt.update_job(cat, job.job_id, status="paused",
+                                            error=f"Cílové úložiště plné nebo rate limit: {error_msg[:100]}")
+                            progress.paused = True
+                            _report("stream", "Pozastaveno — úložiště plné", 5)
+                            break
 
                     except Exception as exc:
                         ckpt.mark_file(
@@ -811,19 +861,30 @@ def run_consolidation(
                             logger.warning("Source %s unreachable for retry, skipping", src_remote)
                             continue
 
-                    # Rebuild dest path
-                    filename = PurePosixPath(src_path).name
+                    # Use stored dest_location from Phase 5 if available (preserves
+                    # collision-safe suffix); otherwise rebuild as fallback.
                     file_row = conn.execute(
                         "SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
                         (fs.file_hash,),
                     ).fetchone()
-                    mod_time = file_row["date_original"] if file_row else None
                     file_size = file_row["size"] if file_row else None
 
-                    dest_path = _build_dest_path(
-                        config.dest_path, filename, fs.file_hash,
-                        mod_time, config.structure_pattern,
-                    )
+                    if fs.dest_location and ":" in fs.dest_location:
+                        # dest_location is "remote:path" — extract path part
+                        dest_path = fs.dest_location.split(":", 1)[1]
+                    else:
+                        # Fallback: rebuild (may differ from Phase 5 if collision-safe was used)
+                        filename = PurePosixPath(src_path).name
+                        mod_time = file_row["date_original"] if file_row else None
+                        dest_path = _build_dest_path(
+                            config.dest_path, filename, fs.file_hash,
+                            mod_time, config.structure_pattern,
+                        )
+                        logger.warning(
+                            "Retry %s: no stored dest_location, rebuilt path %s "
+                            "(may differ from Phase 5 collision-safe path)",
+                            fs.source_location, dest_path,
+                        )
 
                     # Use longer timeout for retry (explicit timeout, not fake file_size)
                     try:

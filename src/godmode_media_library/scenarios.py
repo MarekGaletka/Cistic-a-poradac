@@ -788,7 +788,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         return {"cataloged": total_cataloged, "remotes_scanned": len(remotes_config)}
 
     if step_type == "cloud_stream_reorganize":
-        from .cloud import rclone_copyto, rclone_is_reachable, retry_with_backoff, wait_for_connectivity
+        from .cloud import RcloneTransferError, rclone_copyto, rclone_is_reachable, retry_with_backoff, wait_for_connectivity
         from .catalog import Catalog
         from . import checkpoint as ckpt
         dest_remote = config.get("dest_remote", "gws-backup")
@@ -855,6 +855,8 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                             rclone_copyto,
                             src_remote, src_path, dest_remote, dest_file_path,
                             max_retries=3,
+                            retryable_exceptions=(RcloneTransferError, RuntimeError, OSError),
+                            raise_on_failure=True,
                         )
                         if result["success"]:
                             ckpt.mark_file(
@@ -869,6 +871,12 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                                 error=result.get("error", "unknown"),
                             )
                             failed += 1
+                    except RcloneTransferError as exc:
+                        ckpt.mark_file(
+                            cat, job.job_id, fs.file_hash, fs.source_location, "stream", "failed",
+                            error=str(exc)[:200],
+                        )
+                        failed += 1
                     except Exception as exc:
                         ckpt.mark_file(
                             cat, job.job_id, fs.file_hash, fs.source_location, "stream", "failed",
