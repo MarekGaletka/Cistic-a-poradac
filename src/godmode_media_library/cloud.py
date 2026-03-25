@@ -1001,13 +1001,96 @@ def format_cloud_guide() -> str:
 # ── Cloud-to-cloud copy, verification, and retry utilities ──
 
 
+def rclone_ls_paginated(
+    remote: str,
+    path: str = "",
+    *,
+    max_depth: int = 1,
+    page_size: int = 5000,
+    inter_page_delay: float = 0.5,
+) -> list[dict]:
+    """List remote files in paginated fashion to avoid OOM on huge remotes.
+
+    Instead of one recursive call, walks directory tree level by level.
+    Returns flat list of file dicts (same format as rclone_ls).
+    """
+    if not check_rclone():
+        return []
+
+    import time
+
+    all_files: list[dict] = []
+    dirs_to_scan: list[str] = [path]
+    depth = 0
+
+    while dirs_to_scan and (max_depth == -1 or depth <= max_depth):
+        next_dirs: list[str] = []
+
+        for dir_path in dirs_to_scan:
+            target = f"{remote}:{dir_path}" if dir_path else f"{remote}:"
+            cmd = [_rclone_bin(), "lsjson", target, "--max-depth", "1",
+                   "--no-mimetype", "--fast-list"]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if result.returncode != 0:
+                    logger.warning("rclone lsjson failed for %s:%s: %s",
+                                   remote, dir_path, result.stderr.strip()[:200])
+                    continue
+
+                items = json.loads(result.stdout)
+                for item in items:
+                    full_path = f"{dir_path}/{item['Name']}" if dir_path else item["Name"]
+                    item["Path"] = full_path
+
+                    if item.get("IsDir"):
+                        if max_depth == -1 or depth < max_depth:
+                            next_dirs.append(full_path)
+                    else:
+                        all_files.append(item)
+
+                # Rate limit protection — pause between API calls
+                if inter_page_delay > 0:
+                    time.sleep(inter_page_delay)
+
+            except subprocess.TimeoutExpired:
+                logger.warning("rclone lsjson timed out for %s:%s", remote, dir_path)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("rclone lsjson error for %s:%s: %s", remote, dir_path, exc)
+
+        dirs_to_scan = next_dirs
+        depth += 1
+
+    return all_files
+
+
+def _dynamic_timeout(file_size: int | None, min_speed_bps: int = 500_000) -> int:
+    """Calculate timeout for a file transfer based on size.
+
+    Assumes worst-case min_speed_bps (default 500 KB/s).
+    Minimum 120s, maximum 7200s (2 hours).
+    """
+    if not file_size or file_size <= 0:
+        return 600  # default 10 min for unknown size
+    estimated_seconds = file_size / min_speed_bps
+    return max(120, min(int(estimated_seconds * 2), 7200))  # 2x safety margin
+
+
 def rclone_copyto(
     src_remote: str, src_path: str,
     dst_remote: str, dst_path: str,
     *,
-    timeout: int = 600,
+    timeout: int | None = None,
+    file_size: int | None = None,
+    bwlimit: str | None = None,
+    checksum: bool = True,
 ) -> dict:
     """Copy a single file between remotes. Streams through local RAM, no disk write.
+
+    Args:
+        timeout: override timeout in seconds. If None, auto-calculated from file_size.
+        file_size: file size in bytes, used for dynamic timeout calculation.
+        bwlimit: bandwidth limit (e.g. "10M" for 10 MB/s). None = unlimited.
+        checksum: if True, verify checksum after transfer (--checksum flag).
 
     Returns {"success": bool, "bytes": int, "elapsed": float, "error": str|None}
     """
@@ -1016,6 +1099,8 @@ def rclone_copyto(
 
     import re
     import time
+
+    effective_timeout = timeout or _dynamic_timeout(file_size)
     start = time.monotonic()
 
     cmd = [
@@ -1027,9 +1112,13 @@ def rclone_copyto(
         "--stats-one-line",
         "-v",
     ]
+    if bwlimit:
+        cmd.extend(["--bwlimit", bwlimit])
+    if checksum:
+        cmd.append("--checksum")
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=effective_timeout)
         elapsed = time.monotonic() - start
 
         if result.returncode != 0:
@@ -1053,7 +1142,8 @@ def rclone_copyto(
         elapsed = time.monotonic() - start
         logger.warning("rclone copyto timed out after %.1fs: %s:%s -> %s:%s",
                         elapsed, src_remote, src_path, dst_remote, dst_path)
-        return {"success": False, "bytes": 0, "elapsed": elapsed, "error": f"Timed out after {timeout}s"}
+        return {"success": False, "bytes": 0, "elapsed": elapsed,
+                "error": f"Timed out after {effective_timeout}s (file_size={file_size})"}
     except OSError as exc:
         elapsed = time.monotonic() - start
         logger.error("rclone copyto OS error: %s", exc)
@@ -1122,6 +1212,51 @@ def rclone_hashsum(remote: str, path: str, hash_type: str = "sha256") -> str | N
     except (OSError, IndexError) as exc:
         logger.warning("rclone hashsum error for %s:%s: %s", remote, path, exc)
         return None
+
+
+def rclone_verify_transfer(
+    remote: str, path: str,
+    expected_size: int | None = None,
+    expected_hash: str | None = None,
+    hash_type: str = "sha256",
+) -> dict:
+    """Verify a transferred file exists and matches expected size/hash.
+
+    Returns {"verified": bool, "size_ok": bool|None, "hash_ok": bool|None,
+             "actual_size": int|None, "actual_hash": str|None, "error": str|None}
+    """
+    result = {
+        "verified": False, "size_ok": None, "hash_ok": None,
+        "actual_size": None, "actual_hash": None, "error": None,
+    }
+
+    check = rclone_check_file(remote, path, expected_size=expected_size)
+    if not check["exists"]:
+        result["error"] = "File not found on destination"
+        return result
+
+    result["actual_size"] = check["size"]
+    if expected_size is not None:
+        result["size_ok"] = check.get("size_match", False)
+        if not result["size_ok"]:
+            result["error"] = f"Size mismatch: expected {expected_size}, got {check['size']}"
+            return result
+
+    # Hash verification (optional, slower but definitive)
+    if expected_hash:
+        actual_hash = rclone_hashsum(remote, path, hash_type=hash_type)
+        result["actual_hash"] = actual_hash
+        if actual_hash:
+            result["hash_ok"] = actual_hash.lower() == expected_hash.lower()
+            if not result["hash_ok"]:
+                result["error"] = f"Hash mismatch: expected {expected_hash[:16]}…, got {actual_hash[:16]}…"
+                return result
+        else:
+            # Hash not available (some remotes don't support it) — rely on size only
+            result["hash_ok"] = None
+
+    result["verified"] = True
+    return result
 
 
 def rclone_is_reachable(remote: str, timeout: int = 10) -> bool:

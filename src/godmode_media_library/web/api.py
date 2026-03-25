@@ -4200,7 +4200,33 @@ class ConsolidationStartRequest(BaseModel):
     disk_path: str = "/Volumes/4TB/GML-Library"
     structure_pattern: str = "year_month"
     dedup_strategy: str = "richness"
-    verify_sample_pct: int = 10
+    verify_pct: int = 100
+    bwlimit: str | None = None
+    dry_run: bool = False
+    media_only: bool = True
+
+
+def _consolidation_progress_dict(p) -> dict:
+    """Convert ConsolidationProgress to dict for task updates."""
+    return {
+        "phase": p.phase,
+        "phase_label": p.phase_label,
+        "current_step": p.current_step,
+        "total_steps": p.total_steps,
+        "files_cataloged": p.files_cataloged,
+        "files_unique": p.files_unique,
+        "files_transferred": p.files_transferred,
+        "files_verified": p.files_verified,
+        "files_failed": p.files_failed,
+        "files_retried": p.files_retried,
+        "bytes_transferred": p.bytes_transferred,
+        "bytes_total_estimate": p.bytes_total_estimate,
+        "transfer_speed_bps": p.transfer_speed_bps,
+        "eta_seconds": p.eta_seconds,
+        "errors": p.errors,
+        "paused": p.paused,
+        "dry_run": p.dry_run,
+    }
 
 
 @router.get("/consolidation/status")
@@ -4211,9 +4237,46 @@ def consolidation_status(request: Request):
     return get_consolidation_status(catalog_path)
 
 
+@router.post("/consolidation/preview")
+def consolidation_preview(body: ConsolidationStartRequest, request: Request, background_tasks: BackgroundTasks):
+    """Dry-run: scan all sources, count files, estimate transfer — NO actual transfers.
+
+    ALWAYS run this before starting a real consolidation.
+    """
+    from ..consolidation import preview_consolidation, ConsolidationConfig
+
+    task = _create_task("consolidation:preview")
+    catalog_path = str(request.app.state.catalog_path)
+    cfg = ConsolidationConfig(
+        source_remotes=body.source_remotes,
+        local_roots=body.local_roots,
+        dest_remote=body.dest_remote,
+        dest_path=body.dest_path,
+        disk_path=body.disk_path,
+        structure_pattern=body.structure_pattern,
+        dedup_strategy=body.dedup_strategy,
+        verify_pct=0,
+        media_only=body.media_only,
+    )
+
+    def run():
+        try:
+            result = preview_consolidation(catalog_path=catalog_path, config=cfg)
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("Consolidation preview failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "previewing"}
+
+
 @router.post("/consolidation/start")
 def consolidation_start(body: ConsolidationStartRequest, request: Request, background_tasks: BackgroundTasks):
-    """Start or resume the Ultimate Consolidation pipeline."""
+    """Start the Ultimate Consolidation pipeline.
+
+    Recommended: run /consolidation/preview first to see what will happen.
+    """
     from ..consolidation import run_consolidation, ConsolidationConfig
 
     task = _create_task("consolidation:ultimate")
@@ -4226,7 +4289,10 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
         disk_path=body.disk_path,
         structure_pattern=body.structure_pattern,
         dedup_strategy=body.dedup_strategy,
-        verify_sample_pct=body.verify_sample_pct,
+        verify_pct=body.verify_pct,
+        bwlimit=body.bwlimit,
+        dry_run=body.dry_run,
+        media_only=body.media_only,
     )
 
     def run():
@@ -4234,16 +4300,7 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
             result = run_consolidation(
                 catalog_path=catalog_path,
                 config=cfg,
-                progress_fn=lambda p: _update_progress(task.id, {
-                    "phase": p.phase,
-                    "phase_label": p.phase_label,
-                    "current_step": p.current_step,
-                    "total_steps": p.total_steps,
-                    "files_transferred": p.files_transferred,
-                    "bytes_transferred": p.bytes_transferred,
-                    "errors": p.errors,
-                    "paused": p.paused,
-                }),
+                progress_fn=lambda p: _update_progress(task.id, _consolidation_progress_dict(p)),
             )
             _finish_task(task.id, result=result)
         except Exception as e:
@@ -4251,7 +4308,7 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
             _finish_task(task.id, error=str(e))
 
     background_tasks.add_task(run)
-    return {"task_id": task.id, "status": "started"}
+    return {"task_id": task.id, "status": "started", "dry_run": body.dry_run}
 
 
 @router.post("/consolidation/pause")
@@ -4264,7 +4321,7 @@ def consolidation_pause(request: Request):
 
 @router.post("/consolidation/resume")
 def consolidation_resume(request: Request, background_tasks: BackgroundTasks):
-    """Resume a paused consolidation job."""
+    """Resume a paused consolidation job. Completed phases are skipped automatically."""
     from ..consolidation import resume_consolidation
 
     task = _create_task("consolidation:resume")
@@ -4274,16 +4331,7 @@ def consolidation_resume(request: Request, background_tasks: BackgroundTasks):
         try:
             result = resume_consolidation(
                 catalog_path=catalog_path,
-                progress_fn=lambda p: _update_progress(task.id, {
-                    "phase": p.phase,
-                    "phase_label": p.phase_label,
-                    "current_step": p.current_step,
-                    "total_steps": p.total_steps,
-                    "files_transferred": p.files_transferred,
-                    "bytes_transferred": p.bytes_transferred,
-                    "errors": p.errors,
-                    "paused": p.paused,
-                }),
+                progress_fn=lambda p: _update_progress(task.id, _consolidation_progress_dict(p)),
             )
             _finish_task(task.id, result=result)
         except Exception as e:
@@ -4292,3 +4340,11 @@ def consolidation_resume(request: Request, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(run)
     return {"task_id": task.id, "status": "resuming"}
+
+
+@router.get("/consolidation/failed")
+def consolidation_failed(request: Request):
+    """Get detailed report of all failed transfers for manual review."""
+    from ..consolidation import get_failed_files_report
+    catalog_path = str(request.app.state.catalog_path)
+    return {"failed_files": get_failed_files_report(catalog_path)}

@@ -378,6 +378,88 @@ def get_resumable_jobs(catalog: Catalog) -> list[ConsolidationJob]:
     return [_row_to_job(r) for r in cur.fetchall()]
 
 
+def mark_phase_done(catalog: Catalog, job_id: str, phase: str) -> None:
+    """Record that a phase has completed (stored in config_json)."""
+    _ensure(catalog)
+    conn = catalog.conn
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
+    config = {}
+    if row and row["config_json"]:
+        try:
+            config = json.loads(row["config_json"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    completed = config.get("completed_phases", [])
+    if phase not in completed:
+        completed.append(phase)
+    config["completed_phases"] = completed
+    now = _now()
+    with conn:
+        conn.execute(
+            "UPDATE consolidation_jobs SET config_json = ?, updated_at = ? WHERE job_id = ?",
+            (json.dumps(config), now, job_id),
+        )
+    logger.info("Phase '%s' marked done for job %s", phase, job_id)
+
+
+def is_phase_done(catalog: Catalog, job_id: str, phase: str) -> bool:
+    """Check if a phase has already been completed."""
+    _ensure(catalog)
+    conn = catalog.conn
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
+    if not row or not row["config_json"]:
+        return False
+    try:
+        config = json.loads(row["config_json"])
+        return phase in config.get("completed_phases", [])
+    except (json.JSONDecodeError, TypeError):
+        return False
+
+
+def get_failed_files(
+    catalog: Catalog,
+    job_id: str,
+    step: str,
+    limit: int = 5000,
+) -> list[FileTransferState]:
+    """Get files that failed transfer (for retry pass)."""
+    _ensure(catalog)
+    conn = catalog.conn
+    conn.row_factory = sqlite3.Row
+    cur = conn.execute(
+        """SELECT * FROM consolidation_file_state
+           WHERE job_id = ? AND step_name = ? AND status = 'failed'
+           ORDER BY attempt_count ASC, id
+           LIMIT ?""",
+        (job_id, step, limit),
+    )
+    return [_row_to_file_state(r) for r in cur.fetchall()]
+
+
+def get_files_by_source(
+    catalog: Catalog,
+    job_id: str,
+    step: str,
+    source_prefix: str,
+    status: str | None = None,
+) -> list[FileTransferState]:
+    """Get files from a specific source remote."""
+    _ensure(catalog)
+    conn = catalog.conn
+    conn.row_factory = sqlite3.Row
+    query = """SELECT * FROM consolidation_file_state
+               WHERE job_id = ? AND step_name = ? AND source_location LIKE ?"""
+    params: list[Any] = [job_id, step, f"{source_prefix}:%"]
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    query += " ORDER BY id"
+    cur = conn.execute(query, params)
+    return [_row_to_file_state(r) for r in cur.fetchall()]
+
+
 def reset_stale_in_progress(catalog: Catalog, job_id: str, step: str) -> int:
     _ensure(catalog)
     now = _now()

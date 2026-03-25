@@ -432,11 +432,14 @@ def get_templates() -> list[dict]:
             "id": "tpl_ultimate_consolidation",
             "name": "Ultimátní konsolidace \U0001f30d\U0001f680",
             "description": (
-                "Napojí VŠECHNY zdroje (disk, cloudy, telefon, aplikace), "
-                "zkatalogizuje metadata bez stahování, deduplikuje cross-source, "
-                "streamuje unikáty cloud\u2192cloud na Google Workspace 6TB, "
-                "ověří integritu, synchronizuje na 4TB disk. "
-                "Plně odolný: checkpoint/resume při výpadku internetu, odpojení disku, uspání Macu."
+                "GOD MODE: Napojí VŠECHNY zdroje (disk, cloudy, telefon, aplikace). "
+                "Paginovaná katalogizace bez stahování. Cross-source deduplikace. "
+                "Streaming unikátů cloud\u2192cloud na Google Workspace 6TB "
+                "(rok/měsíc struktura, collision-safe). "
+                "100% verifikace po přenosu (velikost + hash). "
+                "Retry fáze pro neúspěšné soubory. Sync na 4TB disk. "
+                "Plně odolný: checkpoint/resume při výpadku internetu, odpojení disku, uspání Macu. "
+                "Bandwidth limit. Dry-run preview. Podrobný report s logem chyb."
             ),
             "icon": "\U0001f30d",
             "color": "#ff6b35",
@@ -452,8 +455,10 @@ def get_templates() -> list[dict]:
                     "dest_path": "GML-Consolidated",
                     "structure_pattern": "year_month",
                     "deduplicate": True,
+                    "verify_pct": 100,
+                    "bwlimit": None,
                 }, "enabled": True},
-                {"type": "cloud_verify_integrity", "config": {"remote": "gws-backup", "sample_pct": 10}, "enabled": True},
+                {"type": "cloud_verify_integrity", "config": {"remote": "gws-backup", "sample_pct": 100}, "enabled": True},
                 {"type": "sync_to_disk", "config": {
                     "source_remote": "gws-backup",
                     "source_path": "GML-Consolidated",
