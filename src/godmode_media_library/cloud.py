@@ -1067,12 +1067,13 @@ def _dynamic_timeout(file_size: int | None, min_speed_bps: int = 500_000) -> int
     """Calculate timeout for a file transfer based on size.
 
     Assumes worst-case min_speed_bps (default 500 KB/s).
-    Minimum 120s, maximum 7200s (2 hours).
+    Minimum 120s, no upper cap (large 4K videos need hours).
+    A 10GB file at 500KB/s = ~6 hours — the cap must allow this.
     """
     if not file_size or file_size <= 0:
         return 600  # default 10 min for unknown size
     estimated_seconds = file_size / min_speed_bps
-    return max(120, min(int(estimated_seconds * 2), 7200))  # 2x safety margin
+    return max(120, int(estimated_seconds * 2))  # 2x safety margin, no cap
 
 
 def rclone_copyto(
@@ -1325,9 +1326,11 @@ def rclone_dedupe(
             "error": None if result.returncode == 0 else output[-500:],
         }
     except subprocess.TimeoutExpired:
-        return {"success": False, "error": f"Dedupe timeout after {timeout}s", "duplicates_removed": 0}
+        return {"success": False, "error": f"Dedupe timeout after {timeout}s",
+                "duplicates_removed": 0, "bytes_freed": 0, "dry_run": dry_run, "output": ""}
     except OSError as exc:
-        return {"success": False, "error": str(exc), "duplicates_removed": 0}
+        return {"success": False, "error": str(exc),
+                "duplicates_removed": 0, "bytes_freed": 0, "dry_run": dry_run, "output": ""}
 
 
 def rclone_is_reachable(remote: str, timeout: int = 20) -> bool:

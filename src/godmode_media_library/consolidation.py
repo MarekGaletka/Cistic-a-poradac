@@ -22,9 +22,9 @@ Phases:
   3. Local scan — incremental scan of local roots
   4. Pre-transfer dedup — SHA256-based for files with real hashes (local)
   5. Stream cloud→cloud — ALL cloud files, checkpoint-resumable, verified
-  6. Post-transfer dedup — rclone dedupe on destination (100% accurate, real hashes)
-  7. Retry failed — second pass with longer timeout for failed transfers
-  8. Verify integrity — check ALL transferred files (not just sample)
+  6. Retry failed — second pass with longer timeout for failed transfers
+  7. Verify integrity — check ALL transferred files (BEFORE dedupe!)
+  8. Post-transfer dedup — rclone dedupe on destination (100% accurate, mode=largest)
   9. Sync to disk — rclone sync from cloud to external drive
  10. Final report — summary of everything
 """
@@ -240,6 +240,16 @@ def run_consolidation(
                 job = j
                 logger.info("Resuming consolidation job %s (status=%s, step=%s)",
                             j.job_id, j.status, j.current_step)
+                # Restore original config from job if caller didn't provide one
+                if j.config:
+                    saved = j.config
+                    config.dest_remote = saved.get("dest_remote", config.dest_remote)
+                    config.dest_path = saved.get("dest_path", config.dest_path)
+                    config.disk_path = saved.get("disk_path", config.disk_path)
+                    config.source_remotes = saved.get("source_remotes", config.source_remotes)
+                    config.bwlimit = saved.get("bwlimit", config.bwlimit)
+                    logger.info("Restored config from job: dest=%s:%s, disk=%s, bwlimit=%s",
+                               config.dest_remote, config.dest_path, config.disk_path, config.bwlimit)
                 break
 
         if not job:
@@ -582,11 +592,37 @@ def run_consolidation(
             # Execute streaming transfers
             stream_start_time = time.monotonic()
             total_stream_bytes = 0
-            dest_paths_used: set[str] = set()  # track used paths for collision detection
+
+            # Rebuild dest_paths_used from checkpoint DB (survive resume!)
+            dest_paths_used: set[str] = set()
+            completed_dests = conn.execute("""
+                SELECT dest_location FROM consolidation_file_state
+                WHERE job_id = ? AND step_name = 'stream'
+                  AND status = 'completed' AND dest_location IS NOT NULL
+            """, (job.job_id,)).fetchall()
+            for row_d in completed_dests:
+                # dest_location is "remote:path" — extract path part
+                dl = row_d["dest_location"]
+                if ":" in dl:
+                    dest_paths_used.add(dl.split(":", 1)[1])
+            if dest_paths_used:
+                logger.info("Resume: loaded %d existing dest paths for collision detection",
+                           len(dest_paths_used))
 
             pending = ckpt.get_pending_files(cat, job.job_id, "stream", limit=200)
 
+            _QUOTA_ERRORS = ("quota", "insufficient storage", "no space", "storage limit",
+                             "rate limit exceeded", "user rate limit")
+
             while pending:
+                # ── Check if job was paused externally (via API) ──
+                _job_check = ckpt.get_job(cat, job.job_id)
+                if _job_check and _job_check.status == "paused":
+                    logger.info("Job %s paused externally, stopping stream", job.job_id)
+                    progress.paused = True
+                    _report("stream", "Pozastaveno uživatelem", 5)
+                    break
+
                 # ── Destination connectivity check ──
                 if not rclone_is_reachable(config.dest_remote, timeout=15):
                     logger.warning("Destination %s unreachable, waiting…", config.dest_remote)
@@ -692,12 +728,21 @@ def run_consolidation(
                                     "stream", "failed", error=error_msg,
                                 )
                         else:
+                            error_msg = result.get("error", "unknown")[:200]
                             ckpt.mark_file(
                                 cat, job.job_id, fs.file_hash, fs.source_location,
-                                "stream", "failed",
-                                error=result.get("error", "unknown")[:200],
+                                "stream", "failed", error=error_msg,
                             )
                             source_failures[src_remote] = source_failures.get(src_remote, 0) + 1
+
+                            # ── Quota/disk-full detection → auto-pause ──
+                            if any(q in error_msg.lower() for q in _QUOTA_ERRORS):
+                                logger.error("QUOTA/RATE LIMIT detected: %s — pausing job", error_msg)
+                                ckpt.update_job(cat, job.job_id, status="paused",
+                                                error=f"Cílové úložiště plné nebo rate limit: {error_msg[:100]}")
+                                progress.paused = True
+                                _report("stream", "Pozastaveno — úložiště plné", 5)
+                                break
 
                     except Exception as exc:
                         ckpt.mark_file(
@@ -720,6 +765,9 @@ def run_consolidation(
                             transfer_speed_bps=speed,
                             eta_seconds=eta)
 
+                # Exit if paused (by user, quota, or connectivity)
+                if progress.paused:
+                    break
                 # Next batch
                 pending = ckpt.get_pending_files(cat, job.job_id, "stream", limit=200)
 
@@ -732,57 +780,13 @@ def run_consolidation(
             }
 
         # ══════════════════════════════════════════════════════════
-        # Phase 6: Post-transfer deduplication (rclone dedupe)
-        # ══════════════════════════════════════════════════════════
-        # Now that ALL cloud files are on the destination, Google Drive
-        # provides real MD5 hashes. rclone dedupe uses these for 100%
-        # accurate content-based dedup — no false positives possible.
-        if not config.dry_run and not _phase_done("post_transfer_dedup"):
-            _report("post_transfer_dedup", "Post-transfer deduplikace na cíli…", 6)
-            ckpt.update_job(cat, job.job_id, current_step="post_transfer_dedup")
-
-            if rclone_is_reachable(config.dest_remote):
-                dedup_result = rclone_dedupe(
-                    config.dest_remote,
-                    config.dest_path,
-                    mode="newest",  # keep newest copy among duplicates
-                    dry_run=False,
-                    timeout=3600,
-                )
-
-                results["post_transfer_dedup"] = {
-                    "success": dedup_result["success"],
-                    "duplicates_removed": dedup_result.get("duplicates_removed", 0),
-                    "bytes_freed": dedup_result.get("bytes_freed", 0),
-                }
-
-                if dedup_result["success"]:
-                    logger.info("Post-transfer dedupe: removed %d duplicates, freed %d bytes",
-                               dedup_result.get("duplicates_removed", 0),
-                               dedup_result.get("bytes_freed", 0))
-                else:
-                    logger.warning("Post-transfer dedupe had issues: %s", dedup_result.get("error", ""))
-
-                _report("post_transfer_dedup", "Post-transfer deduplikace hotová", 6)
-            else:
-                results["post_transfer_dedup"] = {
-                    "note": "Cílové úložiště nedostupné pro deduplikaci"
-                }
-            _finish_phase("post_transfer_dedup")
-        elif config.dry_run:
-            results["post_transfer_dedup"] = {
-                "dry_run": True,
-                "note": "Deduplikace proběhne po přenosu pomocí rclone dedupe (mode=newest)",
-            }
-
-        # ══════════════════════════════════════════════════════════
-        # Phase 7: Retry failed files
+        # Phase 6: Retry failed files
         # ══════════════════════════════════════════════════════════
         if not config.dry_run and not _phase_done("retry_failed"):
             failed_files = ckpt.get_failed_files(cat, job.job_id, "stream", limit=5000)
 
             if failed_files:
-                _report("retry_failed", f"Opakování {len(failed_files)} neúspěšných přenosů…", 7)
+                _report("retry_failed", f"Opakování {len(failed_files)} neúspěšných přenosů…", 6)
                 ckpt.update_job(cat, job.job_id, current_step="retry_failed")
 
                 retried_ok = 0
@@ -864,7 +868,7 @@ def run_consolidation(
                         )
                         retried_fail += 1
 
-                    _report("retry_failed", f"Retry: {retried_ok} OK, {retried_fail} fail", 7,
+                    _report("retry_failed", f"Retry: {retried_ok} OK, {retried_fail} fail", 6,
                             files_retried=retried_ok)
 
                 results["retry"] = {"retried_ok": retried_ok, "retried_fail": retried_fail}
@@ -874,10 +878,13 @@ def run_consolidation(
             _finish_phase("retry_failed")
 
         # ══════════════════════════════════════════════════════════
-        # Phase 8: Verify integrity on destination
+        # Phase 7: Verify integrity on destination (BEFORE dedupe!)
         # ══════════════════════════════════════════════════════════
+        # Verify runs BEFORE dedupe so that all transferred files are
+        # still present and can be checked. After dedupe, some would be
+        # removed and verification would count them as false failures.
         if not config.dry_run and not _phase_done("verify"):
-            _report("verify", "Ověřování integrity na cíli…", 8)
+            _report("verify", "Ověřování integrity na cíli…", 7)
             ckpt.update_job(cat, job.job_id, current_step="verify")
 
             if rclone_is_reachable(config.dest_remote):
@@ -917,7 +924,7 @@ def run_consolidation(
                                      dest_loc, check["exists"], check.get("size_match"))
 
                     if (idx + 1) % 50 == 0:
-                        _report("verify", f"Ověřeno {idx + 1}/{total_to_verify}…", 8,
+                        _report("verify", f"Ověřeno {idx + 1}/{total_to_verify}…", 7,
                                 files_verified=verified_ok, errors=verified_fail)
 
                 results["verify"] = {
@@ -925,12 +932,56 @@ def run_consolidation(
                     "verified_ok": verified_ok,
                     "verified_fail": verified_fail,
                 }
-                _report("verify", "Ověření hotové", 8,
+                _report("verify", "Ověření hotové", 7,
                         files_verified=verified_ok, errors=verified_fail)
             else:
                 results["verify"] = {"note": "Cílové úložiště nedostupné pro ověření"}
 
             _finish_phase("verify")
+
+        # ══════════════════════════════════════════════════════════
+        # Phase 8: Post-transfer deduplication (rclone dedupe)
+        # ══════════════════════════════════════════════════════════
+        # Runs AFTER verify so that verification counts are not inflated
+        # by dedupe-removed files. Uses "largest" mode to keep highest
+        # quality copy (not "newest" which could keep a re-encoded version).
+        if not config.dry_run and not _phase_done("post_transfer_dedup"):
+            _report("post_transfer_dedup", "Post-transfer deduplikace na cíli…", 8)
+            ckpt.update_job(cat, job.job_id, current_step="post_transfer_dedup")
+
+            if rclone_is_reachable(config.dest_remote):
+                dedup_result = rclone_dedupe(
+                    config.dest_remote,
+                    config.dest_path,
+                    mode="largest",  # keep largest copy (highest quality) — safest for media
+                    dry_run=False,
+                    timeout=7200,  # 2h for large datasets
+                )
+
+                results["post_transfer_dedup"] = {
+                    "success": dedup_result["success"],
+                    "duplicates_removed": dedup_result.get("duplicates_removed", 0),
+                    "bytes_freed": dedup_result.get("bytes_freed", 0),
+                }
+
+                if dedup_result["success"]:
+                    logger.info("Post-transfer dedupe: removed %d duplicates, freed %d bytes",
+                               dedup_result.get("duplicates_removed", 0),
+                               dedup_result.get("bytes_freed", 0))
+                else:
+                    logger.warning("Post-transfer dedupe had issues: %s", dedup_result.get("error", ""))
+
+                _report("post_transfer_dedup", "Post-transfer deduplikace hotová", 8)
+            else:
+                results["post_transfer_dedup"] = {
+                    "note": "Cílové úložiště nedostupné pro deduplikaci"
+                }
+            _finish_phase("post_transfer_dedup")
+        elif config.dry_run:
+            results["post_transfer_dedup"] = {
+                "dry_run": True,
+                "note": "Deduplikace proběhne po přenosu pomocí rclone dedupe (mode=largest)",
+            }
 
         # ══════════════════════════════════════════════════════════
         # Phase 9: Sync to disk
@@ -953,6 +1004,10 @@ def run_consolidation(
                 except Exception as exc:
                     results["sync"] = {"synced": False, "error": str(exc)[:200]}
                     logger.error("Sync to disk failed: %s", exc)
+                    # DON'T mark phase done — resume will retry
+                    ckpt.update_job(cat, job.job_id, status="paused",
+                                    error=f"Sync selhal: {str(exc)[:150]}")
+                    progress.paused = True
             else:
                 results["sync"] = {
                     "synced": False,
