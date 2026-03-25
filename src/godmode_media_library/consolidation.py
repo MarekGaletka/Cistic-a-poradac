@@ -45,6 +45,7 @@ from typing import Any, Callable
 from . import checkpoint as ckpt
 from .catalog import Catalog
 from .cloud import (
+    _dynamic_timeout,
     _rclone_bin,
     check_rclone,
     check_volume_mounted,
@@ -820,11 +821,13 @@ def run_consolidation(
                         mod_time, config.structure_pattern,
                     )
 
-                    # Use longer timeout for retry
+                    # Use longer timeout for retry (explicit timeout, not fake file_size)
                     try:
+                        retry_timeout = int(_dynamic_timeout(file_size) * config.retry_timeout_multiplier) if file_size else 600
                         result = rclone_copyto(
                             src_remote, src_path, config.dest_remote, dest_path,
-                            file_size=int(file_size * config.retry_timeout_multiplier) if file_size else None,
+                            file_size=file_size,
+                            timeout=retry_timeout,
                             bwlimit=config.bwlimit,
                             checksum=True,
                         )

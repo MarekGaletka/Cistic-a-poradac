@@ -297,11 +297,31 @@ def mark_file(
                 created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                ON CONFLICT(job_id, file_hash, step_name) DO UPDATE SET
-                   status = excluded.status,
+                   status = CASE
+                       WHEN consolidation_file_state.status IN ('completed', 'skipped')
+                            AND excluded.status = 'pending'
+                       THEN consolidation_file_state.status
+                       ELSE excluded.status
+                   END,
                    dest_location = COALESCE(excluded.dest_location, dest_location),
-                   bytes_transferred = excluded.bytes_transferred,
-                   last_error = excluded.last_error,
-                   attempt_count = attempt_count + 1,
+                   bytes_transferred = CASE
+                       WHEN consolidation_file_state.status IN ('completed', 'skipped')
+                            AND excluded.status = 'pending'
+                       THEN consolidation_file_state.bytes_transferred
+                       ELSE excluded.bytes_transferred
+                   END,
+                   last_error = CASE
+                       WHEN consolidation_file_state.status IN ('completed', 'skipped')
+                            AND excluded.status = 'pending'
+                       THEN consolidation_file_state.last_error
+                       ELSE excluded.last_error
+                   END,
+                   attempt_count = CASE
+                       WHEN consolidation_file_state.status IN ('completed', 'skipped')
+                            AND excluded.status = 'pending'
+                       THEN consolidation_file_state.attempt_count
+                       ELSE attempt_count + 1
+                   END,
                    updated_at = excluded.updated_at""",
             (job_id, file_hash, source, step, status, dest, bytes_transferred, error, now, now),
         )
