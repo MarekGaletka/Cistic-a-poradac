@@ -1259,12 +1259,12 @@ def rclone_verify_transfer(
     return result
 
 
-def rclone_is_reachable(remote: str, timeout: int = 10) -> bool:
+def rclone_is_reachable(remote: str, timeout: int = 20) -> bool:
     """Quick check if remote is accessible."""
     if not check_rclone():
         return False
 
-    cmd = [_rclone_bin(), "lsd", f"{remote}:", "--max-depth", "0"]
+    cmd = [_rclone_bin(), "lsd", f"{remote}:", "--max-depth", "1"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return result.returncode == 0

@@ -140,6 +140,14 @@ STEP_TYPES = {
         "icon": "\u23f3",
         "config_fields": ["remotes", "timeout_minutes"],
     },
+    "ultimate_consolidation": {
+        "label_key": "scenario.step_ultimate_consolidation",
+        "icon": "\U0001f30d",
+        "config_fields": [
+            "source_remotes", "dest_remote", "dest_path", "disk_path",
+            "structure_pattern", "verify_pct", "bwlimit", "dry_run", "media_only",
+        ],
+    },
 }
 
 
@@ -433,7 +441,8 @@ def get_templates() -> list[dict]:
             "name": "Ultimátní konsolidace \U0001f30d\U0001f680",
             "description": (
                 "GOD MODE: Napojí VŠECHNY zdroje (disk, cloudy, telefon, aplikace). "
-                "Paginovaná katalogizace bez stahování. Cross-source deduplikace. "
+                "Paginovaná katalogizace bez stahování. Cross-source deduplikace "
+                "(SHA256 + heuristika název+velikost). "
                 "Streaming unikátů cloud\u2192cloud na Google Workspace 6TB "
                 "(rok/měsíc struktura, collision-safe). "
                 "100% verifikace po přenosu (velikost + hash). "
@@ -444,27 +453,17 @@ def get_templates() -> list[dict]:
             "icon": "\U0001f30d",
             "color": "#ff6b35",
             "steps": [
-                {"type": "wait_for_sources", "config": {"remotes": [], "timeout_minutes": 5}, "enabled": True},
-                {"type": "cloud_catalog_scan", "config": {"remotes": [], "scan_depth": -1}, "enabled": True},
-                {"type": "scan", "config": {"workers": 4}, "enabled": True},
-                {"type": "app_download", "config": {}, "enabled": True},
-                {"type": "integrity_check", "config": {}, "enabled": True},
-                {"type": "dedup_resolve", "config": {"strategy": "richness"}, "enabled": True},
-                {"type": "cloud_stream_reorganize", "config": {
+                {"type": "ultimate_consolidation", "config": {
+                    "source_remotes": [],
                     "dest_remote": "gws-backup",
                     "dest_path": "GML-Consolidated",
+                    "disk_path": "/Volumes/4TB/GML-Library",
                     "structure_pattern": "year_month",
-                    "deduplicate": True,
                     "verify_pct": 100,
                     "bwlimit": None,
+                    "dry_run": False,
+                    "media_only": True,
                 }, "enabled": True},
-                {"type": "cloud_verify_integrity", "config": {"remote": "gws-backup", "sample_pct": 100}, "enabled": True},
-                {"type": "sync_to_disk", "config": {
-                    "source_remote": "gws-backup",
-                    "source_path": "GML-Consolidated",
-                    "disk_path": "/Volumes/4TB/GML-Library",
-                }, "enabled": True},
-                {"type": "generate_report", "config": {}, "enabled": True},
             ],
         },
     ]
@@ -943,6 +942,31 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             return {"synced": True, "destination": disk_path, "result": result}
         except Exception as exc:
             return {"synced": False, "error": str(exc)[:200]}
+
+    if step_type == "ultimate_consolidation":
+        from .consolidation import ConsolidationConfig, run_consolidation
+        cfg = ConsolidationConfig(
+            source_remotes=config.get("source_remotes", []),
+            dest_remote=config.get("dest_remote", "gws-backup"),
+            dest_path=config.get("dest_path", "GML-Consolidated"),
+            disk_path=config.get("disk_path", "/Volumes/4TB/GML-Library"),
+            structure_pattern=config.get("structure_pattern", "year_month"),
+            verify_pct=config.get("verify_pct", 100),
+            bwlimit=config.get("bwlimit"),
+            dry_run=config.get("dry_run", False),
+            media_only=config.get("media_only", True),
+        )
+        result = run_consolidation(
+            catalog_path,
+            config=cfg,
+            progress_fn=lambda p: progress_fn({
+                "phase": p.phase,
+                "step_type": "ultimate_consolidation",
+                "progress_pct": int((p.current_step / max(p.total_steps, 1)) * 100),
+                "detail": p.phase_label,
+            }) if progress_fn else None,
+        )
+        return result
 
     return {"note": f"Neznámý typ kroku: {step_type}"}
 

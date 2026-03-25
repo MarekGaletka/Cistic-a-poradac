@@ -450,7 +450,7 @@ def run_consolidation(
             conn = cat.conn
             conn.row_factory = sqlite3.Row
 
-            # Count total unique vs duplicate
+            # ── Step 4a: SHA256-based dedup (works for real hashes) ──
             cur = conn.execute("""
                 SELECT sha256, COUNT(*) as cnt, MAX(metadata_richness) as best_richness
                 FROM files
@@ -458,17 +458,92 @@ def run_consolidation(
                 GROUP BY sha256
                 HAVING cnt > 1
             """)
-            dedup_groups = cur.fetchall()
-            total_duplicates = sum(row["cnt"] - 1 for row in dedup_groups)
+            dedup_groups_sha = cur.fetchall()
 
-            # Count total unique files
+            # ── Step 4b: Cross-source heuristic dedup ──
+            # Surrogate hashes (SHA256 of "remote:path:size") are unique per source
+            # by definition, so they can NEVER match cross-source. We need to find
+            # duplicates by (normalized_basename, extension, size) when real hashes
+            # are not available.
+            #
+            # Strategy: group all cloud files by (basename_lower, size) where size > 0.
+            # If a group has files from MULTIPLE sources, they're likely the same file.
+            # Unify their sha256 to the "primary" file's hash (best metadata_richness).
+            # This makes Phase 5's GROUP BY sha256 automatically deduplicate them.
+            _report("dedup", "Cross-source heuristická deduplikace (název+velikost)…", 4)
+
+            # Find candidate groups: same basename + same size, from different sources
+            cross_source_cur = conn.execute("""
+                SELECT
+                    LOWER(REPLACE(path, RTRIM(path, REPLACE(path, '/', '')), '')) AS basename,
+                    size,
+                    GROUP_CONCAT(DISTINCT source_remote) AS remotes,
+                    COUNT(*) AS cnt
+                FROM files
+                WHERE sha256 IS NOT NULL
+                  AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
+                  AND size > 0
+                GROUP BY basename, size
+                HAVING cnt > 1 AND remotes LIKE '%,%'
+            """)
+            cross_groups = cross_source_cur.fetchall()
+
+            cross_source_unified = 0
+            for group in cross_groups:
+                basename = group["basename"]
+                size = group["size"]
+
+                # Get all files in this group, ordered by quality
+                members = conn.execute("""
+                    SELECT sha256, path, source_remote, metadata_richness, size
+                    FROM files
+                    WHERE LOWER(REPLACE(path, RTRIM(path, REPLACE(path, '/', '')), '')) = ?
+                      AND size = ?
+                      AND sha256 IS NOT NULL
+                      AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
+                    ORDER BY metadata_richness DESC NULLS LAST, path
+                """, (basename, size)).fetchall()
+
+                if len(members) < 2:
+                    continue
+
+                # Primary = first (best metadata_richness)
+                primary_hash = members[0]["sha256"]
+
+                # Unify: set all other members' sha256 to the primary's hash
+                for m in members[1:]:
+                    if m["sha256"] != primary_hash:
+                        conn.execute(
+                            "UPDATE files SET sha256 = ? WHERE sha256 = ? AND path = ?",
+                            (primary_hash, m["sha256"], m["path"]),
+                        )
+                        cross_source_unified += 1
+
+            if cross_source_unified:
+                conn.commit()
+                logger.info("Cross-source dedup: unified %d files by (basename, size) heuristic",
+                           cross_source_unified)
+
+            # ── Final counts after both dedup passes ──
+            cur_final = conn.execute("""
+                SELECT sha256, COUNT(*) as cnt
+                FROM files
+                WHERE sha256 IS NOT NULL
+                GROUP BY sha256
+                HAVING cnt > 1
+            """)
+            all_dedup_groups = cur_final.fetchall()
+            total_duplicates = sum(row["cnt"] - 1 for row in all_dedup_groups)
+
             cur2 = conn.execute("SELECT COUNT(DISTINCT sha256) as uniq FROM files WHERE sha256 IS NOT NULL")
             total_unique = cur2.fetchone()["uniq"]
 
             results["dedup"] = {
                 "unique_files": total_unique,
-                "duplicate_groups": len(dedup_groups),
+                "duplicate_groups": len(all_dedup_groups),
                 "total_duplicates": total_duplicates,
+                "sha256_dedup_groups": len(dedup_groups_sha),
+                "cross_source_unified": cross_source_unified,
             }
             _report("dedup", "Deduplikace hotová", 4,
                     files_unique=total_unique, files_duplicate=total_duplicates)
