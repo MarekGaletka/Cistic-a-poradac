@@ -25,7 +25,7 @@ Phases:
   6. Retry failed — second pass with longer timeout for failed transfers
   7. Verify integrity — check ALL transferred files (BEFORE dedupe!)
   8. Post-transfer dedup — rclone dedupe on destination (100% accurate, mode=largest)
-  9. Sync to disk — rclone sync from cloud to external drive
+  9. Sync to disk — rclone copy from cloud to external drive (additive, never deletes)
  10. Final report — summary of everything
 """
 
@@ -34,7 +34,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import logging
-import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -48,7 +47,6 @@ from .cloud import (
     _dynamic_timeout,
     _rclone_bin,
     RcloneTransferError,
-    check_rclone,
     check_volume_mounted,
     list_remotes,
     rclone_check_file,
@@ -829,6 +827,10 @@ def run_consolidation(
                 "bytes": stream_progress["bytes_transferred"],
             }
 
+            # Mark Phase 5 done so resume skips re-registration of files
+            if not progress.paused:
+                _finish_phase("stream")
+
         # ══════════════════════════════════════════════════════════
         # Phase 6: Retry failed files
         # ══════════════════════════════════════════════════════════
@@ -981,6 +983,14 @@ def run_consolidation(
                         verified_ok += 1
                     else:
                         verified_fail += 1
+                        # Track verification failure in DB so retry can pick it up
+                        file_hash = row["file_hash"]
+                        reason = "missing" if not check["exists"] else "size_mismatch"
+                        ckpt.mark_file(
+                            cat, job.job_id, file_hash, dest_loc,
+                            "stream", "failed",
+                            error=f"verify_{reason}: exists={check['exists']}, size_match={check.get('size_match')}",
+                        )
                         logger.error("VERIFY FAIL: %s (exists=%s, size_match=%s)",
                                      dest_loc, check["exists"], check.get("size_match"))
 
@@ -995,6 +1005,20 @@ def run_consolidation(
                 }
                 _report("verify", "Ověření hotové", 7,
                         files_verified=verified_ok, errors=verified_fail)
+
+                # If significant verification failures, pause before dedupe
+                if verified_fail > 0 and total_to_verify > 0:
+                    fail_pct = 100 * verified_fail / total_to_verify
+                    if fail_pct > 5:  # More than 5% failed
+                        logger.error(
+                            "VERIFY: %d/%d (%.1f%%) failed — pausing before dedupe",
+                            verified_fail, total_to_verify, fail_pct,
+                        )
+                        ckpt.update_job(
+                            cat, job.job_id, status="paused",
+                            error=f"Ověření: {verified_fail}/{total_to_verify} souborů selhalo ({fail_pct:.1f}%) — zkontroluj a spusť resume",
+                        )
+                        progress.paused = True
             else:
                 results["verify"] = {"note": "Cílové úložiště nedostupné pro ověření"}
 

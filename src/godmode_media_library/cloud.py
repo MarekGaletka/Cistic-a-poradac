@@ -360,9 +360,15 @@ def test_remote(name: str) -> dict:
         return {"success": False, "message": str(exc)}
 
 
+_rclone_available: bool | None = None
+
+
 def check_rclone() -> bool:
-    """Return True if rclone is available."""
-    return Path(_rclone_bin()).is_file() or shutil.which("rclone") is not None
+    """Return True if rclone is available. Result is cached after first call."""
+    global _rclone_available
+    if _rclone_available is None:
+        _rclone_available = Path(_rclone_bin()).is_file() or shutil.which("rclone") is not None
+    return _rclone_available
 
 
 def rclone_version() -> str | None:

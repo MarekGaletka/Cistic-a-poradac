@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -52,9 +53,11 @@ CREATE TABLE IF NOT EXISTS consolidation_file_state (
 
 CREATE INDEX IF NOT EXISTS idx_cfs_job_step ON consolidation_file_state(job_id, step_name);
 CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status);
+CREATE INDEX IF NOT EXISTS idx_cfs_job_step_status ON consolidation_file_state(job_id, step_name, status);
 """
 
-_tables_created: set[int] = set()
+# Use WeakKeyDictionary to avoid false cache hits after GC reuses object IDs
+_tables_cache: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def _now() -> str:
@@ -102,11 +105,12 @@ class FileTransferState:
 # ---------------------------------------------------------------------------
 
 def ensure_tables(conn: sqlite3.Connection) -> None:
-    cid = id(conn)
-    if cid in _tables_created:
+    if conn in _tables_cache:
         return
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(_CHECKPOINT_SQL)
-    _tables_created.add(cid)
+    _tables_cache[conn] = True
 
 
 def _ensure(catalog: Catalog) -> None:
@@ -298,27 +302,28 @@ def mark_file(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                ON CONFLICT(job_id, file_hash, step_name) DO UPDATE SET
                    status = CASE
+                       -- Terminal states: only 'failed' from verify can override 'completed'
                        WHEN consolidation_file_state.status IN ('completed', 'skipped')
-                            AND excluded.status = 'pending'
+                            AND excluded.status NOT LIKE 'failed'
                        THEN consolidation_file_state.status
                        ELSE excluded.status
                    END,
                    dest_location = COALESCE(excluded.dest_location, dest_location),
                    bytes_transferred = CASE
                        WHEN consolidation_file_state.status IN ('completed', 'skipped')
-                            AND excluded.status = 'pending'
+                            AND excluded.status NOT LIKE 'failed'
                        THEN consolidation_file_state.bytes_transferred
                        ELSE excluded.bytes_transferred
                    END,
                    last_error = CASE
                        WHEN consolidation_file_state.status IN ('completed', 'skipped')
-                            AND excluded.status = 'pending'
+                            AND excluded.status NOT LIKE 'failed'
                        THEN consolidation_file_state.last_error
                        ELSE excluded.last_error
                    END,
                    attempt_count = CASE
                        WHEN consolidation_file_state.status IN ('completed', 'skipped')
-                            AND excluded.status = 'pending'
+                            AND excluded.status NOT LIKE 'failed'
                        THEN consolidation_file_state.attempt_count
                        ELSE attempt_count + 1
                    END,
@@ -480,18 +485,33 @@ def get_files_by_source(
     return [_row_to_file_state(r) for r in cur.fetchall()]
 
 
-def reset_stale_in_progress(catalog: Catalog, job_id: str, step: str) -> int:
+def reset_stale_in_progress(
+    catalog: Catalog,
+    job_id: str,
+    step: str,
+    stale_after_seconds: int = 1800,
+) -> int:
+    """Reset files stuck in 'in_progress' back to 'pending' for retry.
+
+    Only resets files whose updated_at is older than *stale_after_seconds*
+    (default 30 min) to avoid resetting files that are genuinely transferring.
+    """
     _ensure(catalog)
-    now = _now()
+    from datetime import timedelta
+    now_dt = datetime.now(timezone.utc)
+    stale_threshold = (now_dt - timedelta(seconds=stale_after_seconds)).isoformat()
+    now = now_dt.isoformat()
     conn = catalog.conn
     with conn:
         cur = conn.execute(
             """UPDATE consolidation_file_state
                SET status = 'pending', updated_at = ?
-               WHERE job_id = ? AND step_name = ? AND status = 'in_progress'""",
-            (now, job_id, step),
+               WHERE job_id = ? AND step_name = ? AND status = 'in_progress'
+                 AND updated_at < ?""",
+            (now, job_id, step, stale_threshold),
         )
     count = cur.rowcount
     if count:
-        logger.info("Reset %d stale in_progress files for job %s step %s", count, job_id, step)
+        logger.info("Reset %d stale in_progress files (>%ds old) for job %s step %s",
+                     count, stale_after_seconds, job_id, step)
     return count

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -4195,15 +4195,33 @@ def report_download(request: Request) -> HTMLResponse:
 class ConsolidationStartRequest(BaseModel):
     source_remotes: list[str] = []
     local_roots: list[str] = []
-    dest_remote: str = "gws-backup"
-    dest_path: str = "GML-Consolidated"
+    dest_remote: str = Field(default="gws-backup", min_length=1, max_length=100)
+    dest_path: str = Field(default="GML-Consolidated", min_length=1, max_length=500)
     disk_path: str = "/Volumes/4TB/GML-Library"
     structure_pattern: str = "year_month"
     dedup_strategy: str = "richness"
-    verify_pct: int = 100
+    verify_pct: int = Field(default=100, ge=0, le=100)
     bwlimit: str | None = None
     dry_run: bool = False
     media_only: bool = True
+
+    @field_validator("dest_remote", "dest_path")
+    @classmethod
+    def no_dangerous_chars(cls, v: str) -> str:
+        if "\x00" in v or "\n" in v or "\r" in v:
+            raise ValueError("Contains invalid characters (null/newline)")
+        if ".." in v:
+            raise ValueError("Path traversal (..) not allowed")
+        return v
+
+    @field_validator("bwlimit")
+    @classmethod
+    def validate_bwlimit(cls, v: str | None) -> str | None:
+        if v is not None:
+            import re
+            if not re.match(r"^\d+[KMGkmg]?$", v):
+                raise ValueError("bwlimit must be like '10M', '1G', '512K' or a number")
+        return v
 
 
 def _consolidation_progress_dict(p) -> dict:
@@ -4277,7 +4295,22 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
 
     Recommended: run /consolidation/preview first to see what will happen.
     """
-    from ..consolidation import run_consolidation, ConsolidationConfig
+    from ..consolidation import run_consolidation, ConsolidationConfig, get_consolidation_status
+
+    # Guard: prevent starting a second consolidation while one is running
+    catalog_path_str = str(request.app.state.catalog_path)
+    try:
+        status = get_consolidation_status(catalog_path_str)
+        if status.get("has_active_job"):
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=409,
+                detail="Consolidation job is already running. Pause it first or wait for completion.",
+            )
+    except Exception as exc:
+        if hasattr(exc, "status_code"):  # Re-raise HTTPException
+            raise
+        logger.warning("Could not check active consolidation: %s", exc)
 
     task = _create_task("consolidation:ultimate")
     catalog_path = str(request.app.state.catalog_path)

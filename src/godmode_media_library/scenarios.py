@@ -588,9 +588,9 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "scan":
         from .scanner import incremental_scan
-        from .config import GMLConfig
-        cfg = GMLConfig.load()
-        roots = config.get("roots") or [str(r) for r in cfg.roots]
+        from .config import load_config
+        cfg = load_config()
+        roots = config.get("roots") or cfg.prefer_roots
         workers = config.get("workers", 4)
         stats = incremental_scan(
             roots=[Path(r) for r in roots] if roots else [],
