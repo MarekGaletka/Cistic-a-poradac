@@ -20,12 +20,13 @@ Phases:
   1. Wait for sources — probe all remotes, wait for connectivity
   2. Cloud catalog scan — paginated metadata scan, write to files table
   3. Local scan — incremental scan of local roots
-  4. Cross-source dedup — SHA256-based + size+name heuristic for cloud files
-  5. Stream cloud→cloud — checkpoint-resumable, verified, bandwidth-limited
-  6. Retry failed — second pass with longer timeout for failed transfers
-  7. Verify integrity — check ALL transferred files (not just sample)
-  8. Sync to disk — rclone sync from cloud to external drive
-  9. Final report — summary of everything
+  4. Pre-transfer dedup — SHA256-based for files with real hashes (local)
+  5. Stream cloud→cloud — ALL cloud files, checkpoint-resumable, verified
+  6. Post-transfer dedup — rclone dedupe on destination (100% accurate, real hashes)
+  7. Retry failed — second pass with longer timeout for failed transfers
+  8. Verify integrity — check ALL transferred files (not just sample)
+  9. Sync to disk — rclone sync from cloud to external drive
+ 10. Final report — summary of everything
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from .cloud import (
     list_remotes,
     rclone_check_file,
     rclone_copyto,
+    rclone_dedupe,
     rclone_is_reachable,
     rclone_ls,
     rclone_ls_paginated,
@@ -115,7 +117,7 @@ class ConsolidationProgress:
     phase: str = "idle"
     phase_label: str = ""
     current_step: int = 0
-    total_steps: int = 9
+    total_steps: int = 10
     files_cataloged: int = 0
     files_unique: int = 0
     files_duplicate: int = 0
@@ -215,7 +217,7 @@ def run_consolidation(
     cat = Catalog(catalog_path)
     cat.open()
 
-    progress = ConsolidationProgress(total_steps=9, dry_run=config.dry_run)
+    progress = ConsolidationProgress(total_steps=10, dry_run=config.dry_run)
     stream_start_time = 0.0
     job = None  # declare early for exception handler
 
@@ -441,112 +443,59 @@ def run_consolidation(
             local_scanned = 0
 
         # ══════════════════════════════════════════════════════════
-        # Phase 4: Cross-source deduplication
+        # Phase 4: Pre-transfer dedup (real hashes only)
         # ══════════════════════════════════════════════════════════
+        # Only deduplicate files where we have REAL SHA256 hashes (local files,
+        # or remotes that provide content hashes). Cloud files with surrogate
+        # hashes are NOT deduplicated here — they ALL get transferred to the
+        # destination. Cross-source dedup happens in Phase 6 via `rclone dedupe`
+        # on the destination, where Google Drive provides real MD5 hashes.
+        # This is the safest approach: better to transfer 20% extra than to
+        # lose a unique file due to heuristic misclassification.
         if not _phase_done("dedup"):
-            _report("dedup", "Cross-source deduplikace…", 4)
+            _report("dedup", "Pre-transfer deduplikace (reálné hashe)…", 4)
             ckpt.update_job(cat, job.job_id, current_step="dedup")
 
             conn = cat.conn
             conn.row_factory = sqlite3.Row
 
-            # ── Step 4a: SHA256-based dedup (works for real hashes) ──
+            # Count duplicate groups with real SHA256 (local files)
             cur = conn.execute("""
-                SELECT sha256, COUNT(*) as cnt, MAX(metadata_richness) as best_richness
-                FROM files
-                WHERE sha256 IS NOT NULL
-                GROUP BY sha256
-                HAVING cnt > 1
-            """)
-            dedup_groups_sha = cur.fetchall()
-
-            # ── Step 4b: Cross-source heuristic dedup ──
-            # Surrogate hashes (SHA256 of "remote:path:size") are unique per source
-            # by definition, so they can NEVER match cross-source. We need to find
-            # duplicates by (normalized_basename, extension, size) when real hashes
-            # are not available.
-            #
-            # Strategy: group all cloud files by (basename_lower, size) where size > 0.
-            # If a group has files from MULTIPLE sources, they're likely the same file.
-            # Unify their sha256 to the "primary" file's hash (best metadata_richness).
-            # This makes Phase 5's GROUP BY sha256 automatically deduplicate them.
-            _report("dedup", "Cross-source heuristická deduplikace (název+velikost)…", 4)
-
-            # Find candidate groups: same basename + same size, from different sources
-            cross_source_cur = conn.execute("""
-                SELECT
-                    LOWER(REPLACE(path, RTRIM(path, REPLACE(path, '/', '')), '')) AS basename,
-                    size,
-                    GROUP_CONCAT(DISTINCT source_remote) AS remotes,
-                    COUNT(*) AS cnt
-                FROM files
-                WHERE sha256 IS NOT NULL
-                  AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
-                  AND size > 0
-                GROUP BY basename, size
-                HAVING cnt > 1 AND remotes LIKE '%,%'
-            """)
-            cross_groups = cross_source_cur.fetchall()
-
-            cross_source_unified = 0
-            for group in cross_groups:
-                basename = group["basename"]
-                size = group["size"]
-
-                # Get all files in this group, ordered by quality
-                members = conn.execute("""
-                    SELECT sha256, path, source_remote, metadata_richness, size
-                    FROM files
-                    WHERE LOWER(REPLACE(path, RTRIM(path, REPLACE(path, '/', '')), '')) = ?
-                      AND size = ?
-                      AND sha256 IS NOT NULL
-                      AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
-                    ORDER BY metadata_richness DESC NULLS LAST, path
-                """, (basename, size)).fetchall()
-
-                if len(members) < 2:
-                    continue
-
-                # Primary = first (best metadata_richness)
-                primary_hash = members[0]["sha256"]
-
-                # Unify: set all other members' sha256 to the primary's hash
-                for m in members[1:]:
-                    if m["sha256"] != primary_hash:
-                        conn.execute(
-                            "UPDATE files SET sha256 = ? WHERE sha256 = ? AND path = ?",
-                            (primary_hash, m["sha256"], m["path"]),
-                        )
-                        cross_source_unified += 1
-
-            if cross_source_unified:
-                conn.commit()
-                logger.info("Cross-source dedup: unified %d files by (basename, size) heuristic",
-                           cross_source_unified)
-
-            # ── Final counts after both dedup passes ──
-            cur_final = conn.execute("""
                 SELECT sha256, COUNT(*) as cnt
                 FROM files
                 WHERE sha256 IS NOT NULL
+                  AND (source_remote IS NULL OR source_remote = '' OR source_remote = 'local')
                 GROUP BY sha256
                 HAVING cnt > 1
             """)
-            all_dedup_groups = cur_final.fetchall()
-            total_duplicates = sum(row["cnt"] - 1 for row in all_dedup_groups)
+            local_dedup_groups = cur.fetchall()
+            local_duplicates = sum(row["cnt"] - 1 for row in local_dedup_groups)
 
-            cur2 = conn.execute("SELECT COUNT(DISTINCT sha256) as uniq FROM files WHERE sha256 IS NOT NULL")
+            # Total unique per source (for info)
+            cur2 = conn.execute("""
+                SELECT COUNT(DISTINCT sha256) as uniq
+                FROM files WHERE sha256 IS NOT NULL
+            """)
             total_unique = cur2.fetchone()["uniq"]
 
+            # Count cloud files that will ALL be transferred (deduped later on dest)
+            cur3 = conn.execute("""
+                SELECT COUNT(*) as cnt
+                FROM files
+                WHERE sha256 IS NOT NULL
+                  AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
+            """)
+            cloud_files_total = cur3.fetchone()["cnt"]
+
             results["dedup"] = {
-                "unique_files": total_unique,
-                "duplicate_groups": len(all_dedup_groups),
-                "total_duplicates": total_duplicates,
-                "sha256_dedup_groups": len(dedup_groups_sha),
-                "cross_source_unified": cross_source_unified,
+                "unique_hashes": total_unique,
+                "local_duplicate_groups": len(local_dedup_groups),
+                "local_duplicates_skipped": local_duplicates,
+                "cloud_files_to_transfer": cloud_files_total,
+                "note": "Cross-source dedup proběhne po přenosu na cíl (Phase 6, rclone dedupe)",
             }
-            _report("dedup", "Deduplikace hotová", 4,
-                    files_unique=total_unique, files_duplicate=total_duplicates)
+            _report("dedup", "Pre-transfer deduplikace hotová", 4,
+                    files_unique=total_unique, files_duplicate=local_duplicates)
             _finish_phase("dedup")
         else:
             logger.info("Phase dedup already done, skipping")
@@ -565,7 +514,9 @@ def run_consolidation(
         conn = cat.conn
         conn.row_factory = sqlite3.Row
 
-        # Get the BEST file per sha256 group (highest metadata_richness, prefer local)
+        # Get ALL cloud files for transfer (no pre-grouping by sha256!)
+        # Cross-source dedup happens AFTER transfer via rclone dedupe (Phase 6).
+        # This ensures we never lose a unique file due to surrogate hash collision.
         cur = conn.execute("""
             SELECT sha256, path, source_remote, size, date_original,
                    metadata_richness
@@ -573,11 +524,8 @@ def run_consolidation(
             WHERE sha256 IS NOT NULL
               AND source_remote IS NOT NULL
               AND source_remote != ''
-            GROUP BY sha256
-            ORDER BY
-                metadata_richness DESC NULLS LAST,
-                CASE WHEN source_remote = 'local' OR source_remote IS NULL THEN 0 ELSE 1 END,
-                size DESC
+              AND source_remote != 'local'
+            ORDER BY source_remote, path
         """)
         unique_cloud_files = cur.fetchall()
 
@@ -783,13 +731,57 @@ def run_consolidation(
             }
 
         # ══════════════════════════════════════════════════════════
-        # Phase 6: Retry failed files
+        # Phase 6: Post-transfer deduplication (rclone dedupe)
+        # ══════════════════════════════════════════════════════════
+        # Now that ALL cloud files are on the destination, Google Drive
+        # provides real MD5 hashes. rclone dedupe uses these for 100%
+        # accurate content-based dedup — no false positives possible.
+        if not config.dry_run and not _phase_done("post_transfer_dedup"):
+            _report("post_transfer_dedup", "Post-transfer deduplikace na cíli…", 6)
+            ckpt.update_job(cat, job.job_id, current_step="post_transfer_dedup")
+
+            if rclone_is_reachable(config.dest_remote):
+                dedup_result = rclone_dedupe(
+                    config.dest_remote,
+                    config.dest_path,
+                    mode="newest",  # keep newest copy among duplicates
+                    dry_run=False,
+                    timeout=3600,
+                )
+
+                results["post_transfer_dedup"] = {
+                    "success": dedup_result["success"],
+                    "duplicates_removed": dedup_result.get("duplicates_removed", 0),
+                    "bytes_freed": dedup_result.get("bytes_freed", 0),
+                }
+
+                if dedup_result["success"]:
+                    logger.info("Post-transfer dedupe: removed %d duplicates, freed %d bytes",
+                               dedup_result.get("duplicates_removed", 0),
+                               dedup_result.get("bytes_freed", 0))
+                else:
+                    logger.warning("Post-transfer dedupe had issues: %s", dedup_result.get("error", ""))
+
+                _report("post_transfer_dedup", "Post-transfer deduplikace hotová", 6)
+            else:
+                results["post_transfer_dedup"] = {
+                    "note": "Cílové úložiště nedostupné pro deduplikaci"
+                }
+            _finish_phase("post_transfer_dedup")
+        elif config.dry_run:
+            results["post_transfer_dedup"] = {
+                "dry_run": True,
+                "note": "Deduplikace proběhne po přenosu pomocí rclone dedupe (mode=newest)",
+            }
+
+        # ══════════════════════════════════════════════════════════
+        # Phase 7: Retry failed files
         # ══════════════════════════════════════════════════════════
         if not config.dry_run and not _phase_done("retry_failed"):
             failed_files = ckpt.get_failed_files(cat, job.job_id, "stream", limit=5000)
 
             if failed_files:
-                _report("retry_failed", f"Opakování {len(failed_files)} neúspěšných přenosů…", 6)
+                _report("retry_failed", f"Opakování {len(failed_files)} neúspěšných přenosů…", 7)
                 ckpt.update_job(cat, job.job_id, current_step="retry_failed")
 
                 retried_ok = 0
@@ -869,7 +861,7 @@ def run_consolidation(
                         )
                         retried_fail += 1
 
-                    _report("retry_failed", f"Retry: {retried_ok} OK, {retried_fail} fail", 6,
+                    _report("retry_failed", f"Retry: {retried_ok} OK, {retried_fail} fail", 7,
                             files_retried=retried_ok)
 
                 results["retry"] = {"retried_ok": retried_ok, "retried_fail": retried_fail}
@@ -879,10 +871,10 @@ def run_consolidation(
             _finish_phase("retry_failed")
 
         # ══════════════════════════════════════════════════════════
-        # Phase 7: Verify integrity on destination
+        # Phase 8: Verify integrity on destination
         # ══════════════════════════════════════════════════════════
         if not config.dry_run and not _phase_done("verify"):
-            _report("verify", "Ověřování integrity na cíli…", 7)
+            _report("verify", "Ověřování integrity na cíli…", 8)
             ckpt.update_job(cat, job.job_id, current_step="verify")
 
             if rclone_is_reachable(config.dest_remote):
@@ -922,7 +914,7 @@ def run_consolidation(
                                      dest_loc, check["exists"], check.get("size_match"))
 
                     if (idx + 1) % 50 == 0:
-                        _report("verify", f"Ověřeno {idx + 1}/{total_to_verify}…", 7,
+                        _report("verify", f"Ověřeno {idx + 1}/{total_to_verify}…", 8,
                                 files_verified=verified_ok, errors=verified_fail)
 
                 results["verify"] = {
@@ -930,7 +922,7 @@ def run_consolidation(
                     "verified_ok": verified_ok,
                     "verified_fail": verified_fail,
                 }
-                _report("verify", "Ověření hotové", 7,
+                _report("verify", "Ověření hotové", 8,
                         files_verified=verified_ok, errors=verified_fail)
             else:
                 results["verify"] = {"note": "Cílové úložiště nedostupné pro ověření"}
@@ -938,10 +930,10 @@ def run_consolidation(
             _finish_phase("verify")
 
         # ══════════════════════════════════════════════════════════
-        # Phase 8: Sync to disk
+        # Phase 9: Sync to disk
         # ══════════════════════════════════════════════════════════
         if not config.dry_run and not _phase_done("sync_to_disk"):
-            _report("sync_to_disk", "Synchronizace na disk…", 8)
+            _report("sync_to_disk", "Synchronizace na disk…", 9)
             ckpt.update_job(cat, job.job_id, current_step="sync_to_disk")
 
             if check_volume_mounted(config.disk_path):
@@ -951,7 +943,7 @@ def run_consolidation(
                     rclone_copy(
                         config.dest_remote, config.dest_path, config.disk_path,
                         progress_fn=lambda p: _report("sync_to_disk",
-                            f"Synchronizace na disk… {p.get('progress_pct', 0)}%", 8),
+                            f"Synchronizace na disk… {p.get('progress_pct', 0)}%", 9),
                     )
                     results["sync"] = {"synced": True, "disk_path": config.disk_path}
                     _finish_phase("sync_to_disk")
@@ -971,9 +963,9 @@ def run_consolidation(
             results["sync"] = {"dry_run": True, "disk_path": config.disk_path}
 
         # ══════════════════════════════════════════════════════════
-        # Phase 9: Final report
+        # Phase 10: Final report
         # ══════════════════════════════════════════════════════════
-        _report("report", "Generování závěrečného reportu…", 9)
+        _report("report", "Generování závěrečného reportu…", 10)
         ckpt.update_job(cat, job.job_id, current_step="report")
 
         final_progress = ckpt.get_job_progress(cat, job.job_id, "stream")
@@ -985,7 +977,9 @@ def run_consolidation(
             "sources_unavailable_names": unavailable,
             "files_cataloged": results.get("catalog", {}).get("total_cataloged", 0) + local_scanned,
             "unique_files": total_unique,
-            "duplicate_groups": results.get("dedup", {}).get("duplicate_groups", 0),
+            "local_duplicate_groups": results.get("dedup", {}).get("local_duplicate_groups", 0),
+            "post_transfer_dedup_removed": results.get("post_transfer_dedup", {}).get("duplicates_removed", 0),
+            "post_transfer_dedup_bytes_freed": results.get("post_transfer_dedup", {}).get("bytes_freed", 0),
             "files_transferred": final_progress.get("completed", 0),
             "bytes_transferred": final_progress.get("bytes_transferred", 0),
             "transfer_failures": final_progress.get("failed", 0),
@@ -1013,7 +1007,7 @@ def run_consolidation(
                                   error=f"{still_failed} souborů se nepodařilo přenést")
             else:
                 ckpt.complete_job(cat, job.job_id)
-            _report("complete", "Konsolidace dokončena", 9)
+            _report("complete", "Konsolidace dokončena", 10)
 
         return results
 

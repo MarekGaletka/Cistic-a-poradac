@@ -1259,6 +1259,77 @@ def rclone_verify_transfer(
     return result
 
 
+def rclone_dedupe(
+    remote: str,
+    path: str = "",
+    mode: str = "newest",
+    dry_run: bool = False,
+    timeout: int = 3600,
+) -> dict:
+    """Run rclone dedupe on a remote path to remove duplicate files.
+
+    Uses the remote's native hashes (e.g. MD5 on Google Drive) for 100% accurate
+    content-based deduplication. This is the safest post-transfer dedup strategy.
+
+    Args:
+        remote: rclone remote name
+        path: path within the remote (empty = root)
+        mode: dedupe strategy — "newest" (keep newest), "oldest", "largest",
+              "smallest", "rename" (keep all, rename dupes), "first"
+        dry_run: if True, only report what would be done
+        timeout: max seconds to wait
+
+    Returns:
+        dict with success, duplicates_removed, bytes_freed, output
+    """
+    if not check_rclone():
+        return {"success": False, "error": "rclone not found"}
+
+    remote_path = f"{remote}:{path}" if path else f"{remote}:"
+    cmd = [_rclone_bin(), "dedupe", "--dedupe-mode", mode, remote_path, "-v"]
+    if dry_run:
+        cmd.append("--dry-run")
+
+    logger.info("Running rclone dedupe (mode=%s, dry_run=%s) on %s", mode, dry_run, remote_path)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+        # Parse output for stats
+        output = result.stderr + result.stdout
+        duplicates_removed = 0
+        bytes_freed = 0
+
+        for line in output.splitlines():
+            # rclone dedupe outputs lines like "Duplicate set of N files..."
+            if "Duplicate" in line and "files" in line:
+                duplicates_removed += 1
+            # Look for "Deleted: X" in stats
+            if "Deleted:" in line:
+                import re
+                m = re.search(r"Deleted:\s+(\d+)", line)
+                if m:
+                    duplicates_removed = max(duplicates_removed, int(m.group(1)))
+            if "Freed:" in line:
+                import re
+                m = re.search(r"Freed:\s+(\d+)", line)
+                if m:
+                    bytes_freed = int(m.group(1))
+
+        return {
+            "success": result.returncode == 0,
+            "duplicates_removed": duplicates_removed,
+            "bytes_freed": bytes_freed,
+            "dry_run": dry_run,
+            "output": output[-2000:] if len(output) > 2000 else output,
+            "error": None if result.returncode == 0 else output[-500:],
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": f"Dedupe timeout after {timeout}s", "duplicates_removed": 0}
+    except OSError as exc:
+        return {"success": False, "error": str(exc), "duplicates_removed": 0}
+
+
 def rclone_is_reachable(remote: str, timeout: int = 20) -> bool:
     """Quick check if remote is accessible."""
     if not check_rclone():

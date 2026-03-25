@@ -441,10 +441,10 @@ def get_templates() -> list[dict]:
             "name": "Ultimátní konsolidace \U0001f30d\U0001f680",
             "description": (
                 "GOD MODE: Napojí VŠECHNY zdroje (disk, cloudy, telefon, aplikace). "
-                "Paginovaná katalogizace bez stahování. Cross-source deduplikace "
-                "(SHA256 + heuristika název+velikost). "
-                "Streaming unikátů cloud\u2192cloud na Google Workspace 6TB "
+                "Paginovaná katalogizace bez stahování. "
+                "Streaming VŠECH souborů cloud\u2192cloud na Google Workspace 6TB "
                 "(rok/měsíc struktura, collision-safe). "
+                "Post-transfer deduplikace přes rclone dedupe (100% přesná, reálné MD5 hashe). "
                 "100% verifikace po přenosu (velikost + hash). "
                 "Retry fáze pro neúspěšné soubory. Sync na 4TB disk. "
                 "Plně odolný: checkpoint/resume při výpadku internetu, odpojení disku, uspání Macu. "
