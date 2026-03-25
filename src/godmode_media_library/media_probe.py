@@ -24,7 +24,8 @@ def _find_ffprobe() -> str | None:
     global _FFPROBE_BIN  # noqa: PLW0603
     if _FFPROBE_BIN is not None:
         return _FFPROBE_BIN
-    _FFPROBE_BIN = shutil.which("ffprobe")
+    from .deps import resolve_bin
+    _FFPROBE_BIN = resolve_bin("ffprobe")
     return _FFPROBE_BIN
 
 

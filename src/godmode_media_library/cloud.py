@@ -21,6 +21,20 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+def _rclone_bin() -> str:
+    """Return the best rclone binary path.
+
+    On macOS, prefer /usr/local/bin/rclone (official binary with FUSE support)
+    over Homebrew's version which cannot do rclone mount.
+    """
+    if platform.system() == "Darwin":
+        official = "/usr/local/bin/rclone"
+        if Path(official).is_file():
+            return official
+    return shutil.which("rclone") or "rclone"
+
+
 # Known cloud provider configs for rclone
 PROVIDERS = {
     "mega": {
@@ -177,7 +191,7 @@ def create_remote(
         return _start_oauth_flow(provider_key, name, rclone_type)
 
     # Credential-based: build rclone config create command
-    cmd = ["rclone", "config", "create", name, rclone_type]
+    cmd = [_rclone_bin(), "config", "create", name, rclone_type]
     for field in info.get("fields", []):
         key = field["key"]
         value = (credentials or {}).get(key, "")
@@ -211,7 +225,7 @@ def _start_oauth_flow(provider_key: str, name: str, rclone_type: str) -> dict:
 
     try:
         proc = subprocess.Popen(
-            ["rclone", "authorize", rclone_type],
+            [_rclone_bin(), "authorize", rclone_type],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -287,7 +301,7 @@ def finalize_oauth(
 
     rclone_type = info["rclone_type"]
 
-    cmd = ["rclone", "config", "create", name, rclone_type, f"token={token}"]
+    cmd = [_rclone_bin(), "config", "create", name, rclone_type, f"token={token}"]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -305,7 +319,7 @@ def delete_remote(name: str) -> dict:
         return {"success": False, "message": "rclone is not installed"}
     try:
         result = subprocess.run(
-            ["rclone", "config", "delete", name],
+            [_rclone_bin(), "config", "delete", name],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -322,7 +336,7 @@ def test_remote(name: str) -> dict:
         return {"success": False, "message": "rclone is not installed"}
     try:
         result = subprocess.run(
-            ["rclone", "lsd", f"{name}:", "--max-depth", "1"],
+            [_rclone_bin(), "lsd", f"{name}:", "--max-depth", "1"],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode == 0:
@@ -335,8 +349,8 @@ def test_remote(name: str) -> dict:
 
 
 def check_rclone() -> bool:
-    """Return True if rclone is available on PATH."""
-    return shutil.which("rclone") is not None
+    """Return True if rclone is available."""
+    return Path(_rclone_bin()).is_file() or shutil.which("rclone") is not None
 
 
 def rclone_version() -> str | None:
@@ -346,7 +360,7 @@ def rclone_version() -> str | None:
     try:
         # Just get version from first line
         result2 = subprocess.run(
-            ["rclone", "version"],
+            [_rclone_bin(), "version"],
             capture_output=True, text=True, timeout=5,
         )
         first_line = result2.stdout.strip().splitlines()[0] if result2.stdout else ""
@@ -361,7 +375,7 @@ def list_remotes() -> list[RcloneRemote]:
         return []
     try:
         result = subprocess.run(
-            ["rclone", "listremotes", "--long"],
+            [_rclone_bin(), "listremotes", "--long"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -384,7 +398,7 @@ def rclone_ls(remote: str, path: str = "", recursive: bool = False) -> list[dict
         raise RuntimeError("rclone is not installed")
 
     target = f"{remote}:{path}" if path else f"{remote}:"
-    cmd = ["rclone", "lsjson", target]
+    cmd = [_rclone_bin(), "lsjson", target]
     if recursive:
         cmd.append("--recursive")
     try:
@@ -404,7 +418,7 @@ def rclone_size(remote: str, path: str = "") -> dict:
     target = f"{remote}:{path}" if path else f"{remote}:"
     try:
         result = subprocess.run(
-            ["rclone", "size", target, "--json"],
+            [_rclone_bin(), "size", target, "--json"],
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:
@@ -420,7 +434,7 @@ def rclone_about(remote: str) -> dict:
         return {}
     try:
         result = subprocess.run(
-            ["rclone", "about", f"{remote}:", "--json"],
+            [_rclone_bin(), "about", f"{remote}:", "--json"],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
@@ -459,7 +473,7 @@ def rclone_copy(
     Path(local_path).mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "rclone", "copy", source, local_path,
+        _rclone_bin(), "copy", source, local_path,
         "--stats-one-line",
         "--stats", "2s",
         "-v",
@@ -532,7 +546,7 @@ def rclone_upload(
     destination = f"{remote}:{remote_path}" if remote_path else f"{remote}:"
 
     cmd = [
-        "rclone", "copy", local_path, destination,
+        _rclone_bin(), "copy", local_path, destination,
         "--stats-one-line",
         "--stats", "2s",
         "-v",
@@ -608,7 +622,7 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
             )
 
     cmd = [
-        "rclone", "mount", f"{remote}:", mount_point,
+        _rclone_bin(), "mount", f"{remote}:", mount_point,
         "--daemon",
         "--vfs-cache-mode", "full",
         "--vfs-cache-max-age", "24h",
@@ -622,12 +636,17 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
         stderr = result.stderr or ""
         logger.warning("Failed to mount %s: %s", remote, stderr)
         # Detect FUSE-related errors (various rclone error messages)
-        fuse_keywords = ("cannot find FUSE", "macfuse", "fuse", "daemon timed out", "daemon exited")
-        if any(kw in stderr.lower() for kw in fuse_keywords):
+        fuse_keywords = ("cannot find FUSE", "not supported on MacOS when rclone is installed via Homebrew")
+        if any(kw in stderr for kw in fuse_keywords):
             raise RuntimeError(
-                "macFUSE není nainstalovaný nebo nefunguje. Nainstalujte: brew install macfuse "
-                "nebo stáhněte z https://osxfuse.github.io/. "
+                "rclone mount vyžaduje oficiální rclone binárku (ne z Homebrew). "
+                "Stáhněte z https://rclone.org/downloads/ a nainstalujte do /usr/local/bin/rclone. "
                 "Alternativně použijte 'Stáhnout lokálně'."
+            )
+        if "daemon timed out" in stderr.lower() or "daemon exited" in stderr.lower():
+            raise RuntimeError(
+                "macFUSE není nainstalovaný nebo kext není načtený. "
+                "Zkuste: sudo kextload /Library/Filesystems/macfuse.fs/Contents/Extensions/26/macfuse.kext"
             )
         return mount_point, False
     except (subprocess.TimeoutExpired, OSError) as exc:
@@ -977,3 +996,245 @@ def format_cloud_guide() -> str:
         "  S3/GCS:        rclone config → 's3'",
     ]
     return "\n".join(lines)
+
+
+# ── Cloud-to-cloud copy, verification, and retry utilities ──
+
+
+def rclone_copyto(
+    src_remote: str, src_path: str,
+    dst_remote: str, dst_path: str,
+    *,
+    timeout: int = 600,
+) -> dict:
+    """Copy a single file between remotes. Streams through local RAM, no disk write.
+
+    Returns {"success": bool, "bytes": int, "elapsed": float, "error": str|None}
+    """
+    if not check_rclone():
+        return {"success": False, "bytes": 0, "elapsed": 0.0, "error": "rclone is not installed"}
+
+    import re
+    import time
+    start = time.monotonic()
+
+    cmd = [
+        _rclone_bin(), "copyto",
+        f"{src_remote}:{src_path}",
+        f"{dst_remote}:{dst_path}",
+        "--retries", "3",
+        "--low-level-retries", "10",
+        "--stats-one-line",
+        "-v",
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        elapsed = time.monotonic() - start
+
+        if result.returncode != 0:
+            error_msg = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "copyto failed"
+            return {"success": False, "bytes": 0, "elapsed": elapsed, "error": error_msg}
+
+        # Parse bytes transferred from stderr stats line
+        bytes_transferred = 0
+        for line in (result.stderr or "").splitlines():
+            # e.g. "Transferred:   1.234 MiB / 1.234 MiB, 100%, 500 KiB/s, ETA 0s"
+            m = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
+            if m:
+                value = float(m.group(1))
+                unit = m.group(2).lower()
+                multipliers = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
+                bytes_transferred = int(value * multipliers.get(unit, 1))
+
+        return {"success": True, "bytes": bytes_transferred, "elapsed": elapsed, "error": None}
+
+    except subprocess.TimeoutExpired:
+        elapsed = time.monotonic() - start
+        logger.warning("rclone copyto timed out after %.1fs: %s:%s -> %s:%s",
+                        elapsed, src_remote, src_path, dst_remote, dst_path)
+        return {"success": False, "bytes": 0, "elapsed": elapsed, "error": f"Timed out after {timeout}s"}
+    except OSError as exc:
+        elapsed = time.monotonic() - start
+        logger.error("rclone copyto OS error: %s", exc)
+        return {"success": False, "bytes": 0, "elapsed": elapsed, "error": str(exc)}
+
+
+def rclone_check_file(
+    remote: str, path: str,
+    expected_size: int | None = None,
+) -> dict:
+    """Check if a file exists on remote, optionally verify size.
+
+    Returns {"exists": bool, "size": int|None, "size_match": bool|None}
+    """
+    if not check_rclone():
+        return {"exists": False, "size": None, "size_match": None}
+
+    cmd = [_rclone_bin(), "lsjson", f"{remote}:{path}"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return {"exists": False, "size": None, "size_match": None}
+
+        items = json.loads(result.stdout)
+        if not items:
+            return {"exists": False, "size": None, "size_match": None}
+
+        # lsjson on a single file returns a list with one entry
+        item = items[0]
+        size = item.get("Size")
+        size_match = None
+        if expected_size is not None and size is not None:
+            size_match = size == expected_size
+
+        return {"exists": True, "size": size, "size_match": size_match}
+
+    except subprocess.TimeoutExpired:
+        logger.warning("rclone lsjson timed out for %s:%s", remote, path)
+        return {"exists": False, "size": None, "size_match": None}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("rclone check_file error for %s:%s: %s", remote, path, exc)
+        return {"exists": False, "size": None, "size_match": None}
+
+
+def rclone_hashsum(remote: str, path: str, hash_type: str = "sha256") -> str | None:
+    """Get hash of a remote file without downloading. Returns hex string or None."""
+    if not check_rclone():
+        return None
+
+    cmd = [_rclone_bin(), "hashsum", hash_type, f"{remote}:{path}"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.warning("rclone hashsum failed for %s:%s: %s", remote, path, result.stderr.strip())
+            return None
+
+        # Output format: "<hash>  <filename>"
+        first_line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+        if first_line:
+            return first_line.split()[0]
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.warning("rclone hashsum timed out for %s:%s", remote, path)
+        return None
+    except (OSError, IndexError) as exc:
+        logger.warning("rclone hashsum error for %s:%s: %s", remote, path, exc)
+        return None
+
+
+def rclone_is_reachable(remote: str, timeout: int = 10) -> bool:
+    """Quick check if remote is accessible."""
+    if not check_rclone():
+        return False
+
+    cmd = [_rclone_bin(), "lsd", f"{remote}:", "--max-depth", "0"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def retry_with_backoff(
+    fn,
+    *args,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
+    max_delay: float = 60.0,
+    retryable_exceptions: tuple = (RuntimeError, subprocess.TimeoutExpired, OSError),
+    **kwargs,
+):
+    """Execute fn with exponential backoff retry.
+
+    Args:
+        fn: callable to execute
+        *args: positional arguments for fn
+        max_retries: maximum number of retry attempts
+        base_delay: initial delay in seconds (doubled each retry)
+        max_delay: maximum delay cap in seconds
+        retryable_exceptions: tuple of exception types that trigger a retry
+        **kwargs: keyword arguments for fn
+
+    Returns:
+        The return value of fn on success.
+
+    Raises:
+        The last exception if all retries are exhausted.
+    """
+    import random
+    import time
+
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except retryable_exceptions as exc:
+            last_exc = exc
+            if attempt == max_retries:
+                logger.error("retry_with_backoff: all %d attempts failed for %s: %s",
+                             max_retries + 1, fn.__name__ if hasattr(fn, '__name__') else fn, exc)
+                raise
+            delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+            logger.warning("retry_with_backoff: attempt %d/%d failed for %s (%s), retrying in %.1fs",
+                           attempt + 1, max_retries + 1,
+                           fn.__name__ if hasattr(fn, '__name__') else fn,
+                           exc, delay)
+            time.sleep(delay)
+
+    # Should not reach here, but satisfy type checkers
+    raise last_exc  # type: ignore[misc]
+
+
+def check_volume_mounted(path: str) -> bool:
+    """Check if a path on a mounted volume is accessible.
+
+    For /Volumes/ paths, checks that the volume mount point exists.
+    For other paths, simply checks path existence.
+    """
+    p = Path(path)
+    if path.startswith("/Volumes/"):
+        parts = path.split("/")
+        if len(parts) >= 3:
+            volume_root = Path("/") / parts[1] / parts[2]
+            return volume_root.exists()
+        return False
+    return p.exists()
+
+
+def wait_for_connectivity(
+    remote: str,
+    timeout: int = 300,
+    poll_interval: int = 10,
+    progress_fn=None,
+) -> bool:
+    """Block until remote is reachable or timeout. Returns True if connected.
+
+    Args:
+        remote: rclone remote name
+        timeout: maximum wait time in seconds
+        poll_interval: seconds between connectivity checks
+        progress_fn: optional callback(elapsed_seconds, timeout) for progress updates
+    """
+    import time
+
+    start = time.monotonic()
+    while True:
+        if rclone_is_reachable(remote, timeout=min(poll_interval, 10)):
+            logger.info("wait_for_connectivity: %s is reachable after %.1fs",
+                        remote, time.monotonic() - start)
+            return True
+
+        elapsed = time.monotonic() - start
+        if elapsed >= timeout:
+            logger.warning("wait_for_connectivity: %s not reachable after %.1fs (timeout=%ds)",
+                           remote, elapsed, timeout)
+            return False
+
+        if progress_fn is not None:
+            with contextlib.suppress(Exception):
+                progress_fn(elapsed, timeout)
+
+        remaining = timeout - elapsed
+        time.sleep(min(poll_interval, remaining))

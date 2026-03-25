@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .catalog import Catalog
-from .cloud import list_remotes, rclone_about
+from .cloud import list_remotes, rclone_about, _rclone_bin
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ def probe_targets(catalog: Catalog) -> list[BackupTarget]:
             # Check for crypt overlay using rclone listremotes with type filter
             try:
                 all_config = subprocess.run(
-                    ["rclone", "config", "dump"],
+                    [_rclone_bin(), "config", "dump"],
                     capture_output=True, text=True, timeout=5,
                 )
                 if all_config.returncode == 0:
@@ -511,7 +511,7 @@ def execute_backup_plan(
 
                 # Upload individual file using rclone copy
                 cmd = [
-                    "rclone",
+                    _rclone_bin(),
                     "copy",
                     file_path,
                     f"{upload_remote}:{upload_path}/",
@@ -702,7 +702,7 @@ def verify_backups(
 
         try:
             result = subprocess.run(
-                ["rclone", "ls", f"{rname}:{rpath}/{fname}"],
+                [_rclone_bin(), "ls", f"{rname}:{rpath}/{fname}"],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -755,7 +755,7 @@ def auto_heal(catalog: Catalog, progress_fn: Callable | None = None) -> dict:
             continue
         try:
             result = subprocess.run(
-                ["rclone", "lsd", f"{t.remote_name}:", "--max-depth", "1"],
+                [_rclone_bin(), "lsd", f"{t.remote_name}:", "--max-depth", "1"],
                 capture_output=True, text=True, timeout=15,
             )
             if result.returncode == 0:

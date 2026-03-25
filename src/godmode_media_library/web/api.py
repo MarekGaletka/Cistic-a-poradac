@@ -812,27 +812,32 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             import subprocess
             import tempfile
 
+            from ..deps import resolve_bin
+            _ffmpeg = resolve_bin("ffmpeg") or "ffmpeg"
+
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
                 tmp_path = tmp.name
 
-            result = subprocess.run(
-                [
-                    "ffmpeg", "-y", "-i", str(full_path),
-                    "-ss", "00:00:01", "-frames:v", "1",
-                    "-vf", f"scale={size}:{size}:force_original_aspect_ratio=decrease",
-                    tmp_path,
-                ],
-                capture_output=True,
-                timeout=10,
-            )
-            if result.returncode != 0 or not Path(tmp_path).exists():
-                raise HTTPException(status_code=500, detail="Failed to extract video frame")
+            try:
+                result = subprocess.run(
+                    [
+                        _ffmpeg, "-y", "-i", str(full_path),
+                        "-ss", "00:00:01", "-frames:v", "1",
+                        "-vf", f"scale={size}:{size}:force_original_aspect_ratio=decrease",
+                        tmp_path,
+                    ],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if result.returncode != 0 or not Path(tmp_path).exists():
+                    raise HTTPException(status_code=500, detail="Failed to extract video frame")
 
-            with Image.open(tmp_path) as img:
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=80)
-                thumb_bytes = buf.getvalue()
-            Path(tmp_path).unlink(missing_ok=True)
+                with Image.open(tmp_path) as img:
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=80)
+                    thumb_bytes = buf.getvalue()
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
             _thumb_cache_put(str(full_path), size, thumb_bytes)
             return StreamingResponse(
                 io.BytesIO(thumb_bytes),
@@ -4182,3 +4187,108 @@ def report_download(request: Request) -> HTMLResponse:
         content=html,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Ultimate Consolidation ────────────────────────────────────────────
+
+
+class ConsolidationStartRequest(BaseModel):
+    source_remotes: list[str] = []
+    local_roots: list[str] = []
+    dest_remote: str = "gws-backup"
+    dest_path: str = "GML-Consolidated"
+    disk_path: str = "/Volumes/4TB/GML-Library"
+    structure_pattern: str = "year_month"
+    dedup_strategy: str = "richness"
+    verify_sample_pct: int = 10
+
+
+@router.get("/consolidation/status")
+def consolidation_status(request: Request):
+    """Get current consolidation status."""
+    from ..consolidation import get_consolidation_status
+    catalog_path = str(request.app.state.catalog_path)
+    return get_consolidation_status(catalog_path)
+
+
+@router.post("/consolidation/start")
+def consolidation_start(body: ConsolidationStartRequest, request: Request, background_tasks: BackgroundTasks):
+    """Start or resume the Ultimate Consolidation pipeline."""
+    from ..consolidation import run_consolidation, ConsolidationConfig
+
+    task = _create_task("consolidation:ultimate")
+    catalog_path = str(request.app.state.catalog_path)
+    cfg = ConsolidationConfig(
+        source_remotes=body.source_remotes,
+        local_roots=body.local_roots,
+        dest_remote=body.dest_remote,
+        dest_path=body.dest_path,
+        disk_path=body.disk_path,
+        structure_pattern=body.structure_pattern,
+        dedup_strategy=body.dedup_strategy,
+        verify_sample_pct=body.verify_sample_pct,
+    )
+
+    def run():
+        try:
+            result = run_consolidation(
+                catalog_path=catalog_path,
+                config=cfg,
+                progress_fn=lambda p: _update_progress(task.id, {
+                    "phase": p.phase,
+                    "phase_label": p.phase_label,
+                    "current_step": p.current_step,
+                    "total_steps": p.total_steps,
+                    "files_transferred": p.files_transferred,
+                    "bytes_transferred": p.bytes_transferred,
+                    "errors": p.errors,
+                    "paused": p.paused,
+                }),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("Consolidation failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/consolidation/pause")
+def consolidation_pause(request: Request):
+    """Pause an active consolidation job."""
+    from ..consolidation import pause_consolidation
+    catalog_path = str(request.app.state.catalog_path)
+    return pause_consolidation(catalog_path)
+
+
+@router.post("/consolidation/resume")
+def consolidation_resume(request: Request, background_tasks: BackgroundTasks):
+    """Resume a paused consolidation job."""
+    from ..consolidation import resume_consolidation
+
+    task = _create_task("consolidation:resume")
+    catalog_path = str(request.app.state.catalog_path)
+
+    def run():
+        try:
+            result = resume_consolidation(
+                catalog_path=catalog_path,
+                progress_fn=lambda p: _update_progress(task.id, {
+                    "phase": p.phase,
+                    "phase_label": p.phase_label,
+                    "current_step": p.current_step,
+                    "total_steps": p.total_steps,
+                    "files_transferred": p.files_transferred,
+                    "bytes_transferred": p.bytes_transferred,
+                    "errors": p.errors,
+                    "paused": p.paused,
+                }),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("Consolidation resume failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "resuming"}

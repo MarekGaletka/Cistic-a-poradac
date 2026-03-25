@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from .cloud import _rclone_bin
+
 logger = logging.getLogger(__name__)
 
 _MONITOR_STATE_PATH = Path.home() / ".config" / "gml" / "backup_monitor_state.json"
@@ -83,7 +85,7 @@ def check_remote_health(remote_name: str) -> HealthCheck:
     try:
         # 1. Test accessibility with rclone lsd (fast, read-only)
         result = subprocess.run(
-            ["rclone", "lsd", f"{remote_name}:", "--max-depth", "1"],
+            [_rclone_bin(), "lsd", f"{remote_name}:", "--max-depth", "1"],
             capture_output=True, text=True, timeout=30,
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -98,28 +100,28 @@ def check_remote_health(remote_name: str) -> HealthCheck:
         # 2. Test write access
         test_content = f"gml-health-{now}"
         write_result = subprocess.run(
-            ["rclone", "rcat", f"{remote_name}:.gml_health_check.txt"],
+            [_rclone_bin(), "rcat", f"{remote_name}:.gml_health_check.txt"],
             input=test_content, capture_output=True, text=True, timeout=30,
         )
         if write_result.returncode == 0:
             check.write_ok = True
             # 3. Test read back
             read_result = subprocess.run(
-                ["rclone", "cat", f"{remote_name}:.gml_health_check.txt"],
+                [_rclone_bin(), "cat", f"{remote_name}:.gml_health_check.txt"],
                 capture_output=True, text=True, timeout=30,
             )
             if read_result.returncode == 0 and test_content in read_result.stdout:
                 check.read_ok = True
             # Clean up
             subprocess.run(
-                ["rclone", "deletefile", f"{remote_name}:.gml_health_check.txt"],
+                [_rclone_bin(), "deletefile", f"{remote_name}:.gml_health_check.txt"],
                 capture_output=True, timeout=15,
             )
 
         # 4. Check free space
         try:
             about = subprocess.run(
-                ["rclone", "about", f"{remote_name}:", "--json"],
+                [_rclone_bin(), "about", f"{remote_name}:", "--json"],
                 capture_output=True, text=True, timeout=30,
             )
             if about.returncode == 0:

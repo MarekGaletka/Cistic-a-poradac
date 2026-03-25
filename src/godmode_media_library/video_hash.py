@@ -26,7 +26,8 @@ def is_video_ext(ext: str) -> bool:
 
 def _find_ffmpeg() -> str | None:
     """Return ffmpeg binary path or None."""
-    return shutil.which("ffmpeg")
+    from .deps import resolve_bin
+    return resolve_bin("ffmpeg")
 
 
 def extract_keyframes(

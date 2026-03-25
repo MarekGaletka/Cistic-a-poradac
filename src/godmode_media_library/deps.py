@@ -12,6 +12,7 @@ import os
 import platform
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,11 @@ def _platform() -> str:
 
 _EXTRA_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 
+_HOMEBREW_CELLAR_DIRS = (
+    "/opt/homebrew/Cellar",
+    "/usr/local/Cellar",
+)
+
 
 def _which(name: str) -> str | None:
     """Resolve a binary, falling back to common Homebrew/system paths."""
@@ -55,6 +61,53 @@ def _which(name: str) -> str | None:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+# ── Centralised binary resolver (for .app bundles with minimal PATH) ──
+
+_resolve_cache: dict[str, str | None] = {}
+_resolve_lock = threading.Lock()
+
+
+def resolve_bin(name: str) -> str | None:
+    """Resolve a binary by name, checking common macOS locations first.
+
+    Returns the absolute path to the binary, or None if not found.
+    Results are cached for the lifetime of the process.
+    """
+    with _resolve_lock:
+        if name in _resolve_cache:
+            return _resolve_cache[name]
+
+    # 1. Common fixed locations
+    for prefix in _EXTRA_BIN_DIRS:
+        candidate = os.path.join(prefix, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            with _resolve_lock:
+                _resolve_cache[name] = candidate
+            return candidate
+
+    # 2. Homebrew Cellar (e.g. /opt/homebrew/Cellar/ffmpeg/7.1/bin/ffmpeg)
+    if _platform() == "macos":
+        for cellar in _HOMEBREW_CELLAR_DIRS:
+            formula_dir = os.path.join(cellar, name)
+            if os.path.isdir(formula_dir):
+                try:
+                    versions = sorted(os.listdir(formula_dir), reverse=True)
+                    for ver in versions:
+                        candidate = os.path.join(formula_dir, ver, "bin", name)
+                        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                            with _resolve_lock:
+                                _resolve_cache[name] = candidate
+                            return candidate
+                except OSError:
+                    pass
+
+    # 3. shutil.which (uses PATH)
+    resolved = shutil.which(name)
+    with _resolve_lock:
+        _resolve_cache[name] = resolved
+    return resolved
 
 
 # ── Individual checkers ───────────────────────────────────────────────
@@ -137,7 +190,8 @@ def check_ffmpeg() -> DependencyStatus:
 
 def check_rclone() -> DependencyStatus:
     """Check rclone availability (needed for cloud storage access)."""
-    resolved = _which("rclone")
+    from .cloud import _rclone_bin
+    resolved = _which(_rclone_bin()) or _which("rclone")
     if resolved is None:
         return DependencyStatus(
             name="rclone",

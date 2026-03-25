@@ -13,7 +13,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS files (
     metadata_richness REAL,
     quality_blur REAL,
     quality_brightness REAL,
-    quality_category TEXT
+    quality_category TEXT,
+    source_remote TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_sha256    ON files(sha256);
@@ -172,6 +173,67 @@ CREATE TABLE IF NOT EXISTS shares (
 );
 CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
 CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id);
+
+CREATE TABLE IF NOT EXISTS backup_targets (
+    remote_name TEXT PRIMARY KEY,
+    remote_path TEXT DEFAULT 'GML-Backup',
+    enabled INTEGER DEFAULT 1,
+    priority INTEGER DEFAULT 0,
+    total_bytes INTEGER DEFAULT 0,
+    used_bytes INTEGER DEFAULT 0,
+    free_bytes INTEGER DEFAULT 0,
+    last_probed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS backup_manifest (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    sha256 TEXT,
+    size INTEGER NOT NULL,
+    remote_name TEXT NOT NULL,
+    remote_path TEXT NOT NULL,
+    backed_up_at TEXT NOT NULL,
+    verified INTEGER DEFAULT 0,
+    verified_at TEXT,
+    UNIQUE(file_id, remote_name)
+);
+CREATE INDEX IF NOT EXISTS idx_bm_file ON backup_manifest(file_id);
+CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name);
+CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256);
+
+CREATE TABLE IF NOT EXISTS consolidation_jobs (
+    job_id TEXT PRIMARY KEY,
+    scenario_id TEXT,
+    job_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'created',
+    current_step TEXT DEFAULT '',
+    total_steps INTEGER DEFAULT 0,
+    config_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS consolidation_file_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES consolidation_jobs(job_id),
+    file_hash TEXT NOT NULL,
+    source_location TEXT NOT NULL,
+    step_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    dest_location TEXT,
+    dest_verified INTEGER DEFAULT 0,
+    bytes_transferred INTEGER DEFAULT 0,
+    attempt_count INTEGER DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(job_id, file_hash, step_name)
+);
+CREATE INDEX IF NOT EXISTS idx_cfs_job_step ON consolidation_file_state(job_id, step_name);
+CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status);
 """
 
 
@@ -226,8 +288,8 @@ class ScanStats:
 class Catalog:
     """SQLite-backed persistent catalog."""
 
-    def __init__(self, db_path: Path, *, exclusive: bool = False) -> None:
-        self._db_path = db_path
+    def __init__(self, db_path: Path | str, *, exclusive: bool = False) -> None:
+        self._db_path = Path(db_path) if not isinstance(db_path, Path) else db_path
         self._conn: sqlite3.Connection | None = None
         self._lock_fd: int | None = None
         self._exclusive = exclusive
@@ -440,6 +502,48 @@ class Catalog:
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_file ON backup_manifest(file_id)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256)")
+            self._conn.commit()
+        if from_version < 10:
+            logger.info("Migrating catalog schema v%d -> v10: adding source_remote column + consolidation tables", from_version)
+            # Add source_remote to files table (tracks which remote/source a file came from)
+            with contextlib.suppress(Exception):
+                self._conn.execute("ALTER TABLE files ADD COLUMN source_remote TEXT")
+            # Consolidation tables (managed by checkpoint.py, created here for schema completeness)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS consolidation_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    scenario_id TEXT,
+                    job_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'created',
+                    current_step TEXT DEFAULT '',
+                    total_steps INTEGER DEFAULT 0,
+                    config_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    error TEXT
+                )
+            """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS consolidation_file_state (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL REFERENCES consolidation_jobs(job_id),
+                    file_hash TEXT NOT NULL,
+                    source_location TEXT NOT NULL,
+                    step_name TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    dest_location TEXT,
+                    dest_verified INTEGER DEFAULT 0,
+                    bytes_transferred INTEGER DEFAULT 0,
+                    attempt_count INTEGER DEFAULT 0,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(job_id, file_hash, step_name)
+                )
+            """)
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_job_step ON consolidation_file_state(job_id, step_name)")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status)")
             self._conn.commit()
 
     def close(self) -> None:

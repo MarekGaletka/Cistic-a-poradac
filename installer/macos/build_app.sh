@@ -75,6 +75,10 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <true/>
     <key>NSSupportsSuddenTermination</key>
     <false/>
+    <key>LSArchitecturePriority</key>
+    <array>
+        <string>arm64</string>
+    </array>
 </dict>
 </plist>
 PLIST
@@ -173,9 +177,14 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-# ── Start server ───────────────────────────────────────────────
-"$GML_BIN" serve --host "$HOST" --port "$PORT" --no-browser \
-    >> "$LOG_FILE" 2>&1 &
+# ── Start server (force arm64 on Apple Silicon) ──────────────
+if [ "$(uname -m)" = "arm64" ]; then
+    arch -arm64 "$GML_BIN" serve --host "$HOST" --port "$PORT" --no-browser \
+        >> "$LOG_FILE" 2>&1 &
+else
+    "$GML_BIN" serve --host "$HOST" --port "$PORT" --no-browser \
+        >> "$LOG_FILE" 2>&1 &
+fi
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 

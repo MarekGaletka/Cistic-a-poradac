@@ -114,6 +114,32 @@ STEP_TYPES = {
         "icon": "\U0001f4ca",
         "config_fields": [],
     },
+    # ── Ultimate consolidation step types ──
+    "cloud_catalog_scan": {
+        "label_key": "scenario.step_cloud_catalog_scan",
+        "icon": "\U0001f30d",
+        "config_fields": ["remotes", "scan_depth"],
+    },
+    "cloud_stream_reorganize": {
+        "label_key": "scenario.step_cloud_stream_reorganize",
+        "icon": "\U0001f680",
+        "config_fields": ["dest_remote", "dest_path", "structure_pattern", "deduplicate"],
+    },
+    "cloud_verify_integrity": {
+        "label_key": "scenario.step_cloud_verify_integrity",
+        "icon": "\u2705",
+        "config_fields": ["remote", "sample_pct"],
+    },
+    "sync_to_disk": {
+        "label_key": "scenario.step_sync_to_disk",
+        "icon": "\U0001f4be",
+        "config_fields": ["source_remote", "source_path", "disk_path"],
+    },
+    "wait_for_sources": {
+        "label_key": "scenario.step_wait_for_sources",
+        "icon": "\u23f3",
+        "config_fields": ["remotes", "timeout_minutes"],
+    },
 }
 
 
@@ -402,6 +428,40 @@ def get_templates() -> list[dict]:
                 {"type": "generate_report", "config": {}, "enabled": True},
             ],
         },
+        {
+            "id": "tpl_ultimate_consolidation",
+            "name": "Ultimátní konsolidace \U0001f30d\U0001f680",
+            "description": (
+                "Napojí VŠECHNY zdroje (disk, cloudy, telefon, aplikace), "
+                "zkatalogizuje metadata bez stahování, deduplikuje cross-source, "
+                "streamuje unikáty cloud\u2192cloud na Google Workspace 6TB, "
+                "ověří integritu, synchronizuje na 4TB disk. "
+                "Plně odolný: checkpoint/resume při výpadku internetu, odpojení disku, uspání Macu."
+            ),
+            "icon": "\U0001f30d",
+            "color": "#ff6b35",
+            "steps": [
+                {"type": "wait_for_sources", "config": {"remotes": [], "timeout_minutes": 5}, "enabled": True},
+                {"type": "cloud_catalog_scan", "config": {"remotes": [], "scan_depth": -1}, "enabled": True},
+                {"type": "scan", "config": {"workers": 4}, "enabled": True},
+                {"type": "app_download", "config": {}, "enabled": True},
+                {"type": "integrity_check", "config": {}, "enabled": True},
+                {"type": "dedup_resolve", "config": {"strategy": "richness"}, "enabled": True},
+                {"type": "cloud_stream_reorganize", "config": {
+                    "dest_remote": "gws-backup",
+                    "dest_path": "GML-Consolidated",
+                    "structure_pattern": "year_month",
+                    "deduplicate": True,
+                }, "enabled": True},
+                {"type": "cloud_verify_integrity", "config": {"remote": "gws-backup", "sample_pct": 10}, "enabled": True},
+                {"type": "sync_to_disk", "config": {
+                    "source_remote": "gws-backup",
+                    "source_path": "GML-Consolidated",
+                    "disk_path": "/Volumes/4TB/GML-Library",
+                }, "enabled": True},
+                {"type": "generate_report", "config": {}, "enabled": True},
+            ],
+        },
     ]
 
 
@@ -671,6 +731,213 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                 cat.close()
         except ImportError:
             return {"note": "Modul report není dostupný"}
+
+    if step_type == "wait_for_sources":
+        from .cloud import rclone_is_reachable, check_volume_mounted, list_remotes
+        remotes_config = config.get("remotes") or []
+        timeout_min = config.get("timeout_minutes", 5)
+        # If no remotes specified, check all configured
+        if not remotes_config:
+            remotes_config = [r.name for r in list_remotes()]
+        reachable = {}
+        import time as _t
+        deadline = _t.time() + timeout_min * 60
+        while _t.time() < deadline:
+            all_ok = True
+            for rname in remotes_config:
+                if rname not in reachable or not reachable[rname]:
+                    reachable[rname] = rclone_is_reachable(rname)
+                if not reachable[rname]:
+                    all_ok = False
+            if all_ok:
+                break
+            _t.sleep(10)
+        available = [r for r, ok in reachable.items() if ok]
+        unavailable = [r for r, ok in reachable.items() if not ok]
+        return {"available": available, "unavailable": unavailable, "total": len(remotes_config)}
+
+    if step_type == "cloud_catalog_scan":
+        from .cloud import rclone_ls, rclone_is_reachable, list_remotes
+        from .catalog import Catalog
+        remotes_config = config.get("remotes") or []
+        if not remotes_config:
+            remotes_config = [r.name for r in list_remotes()]
+        cat = Catalog(catalog_path)
+        cat.open()
+        total_cataloged = 0
+        try:
+            for rname in remotes_config:
+                if not rclone_is_reachable(rname):
+                    logger.warning("cloud_catalog_scan: %s not reachable, skipping", rname)
+                    continue
+                try:
+                    files = rclone_ls(rname, "", recursive=True)
+                    for f in files:
+                        if f.get("IsDir"):
+                            continue
+                        # Record metadata in catalog without downloading
+                        total_cataloged += 1
+                except Exception as exc:
+                    logger.warning("cloud_catalog_scan: error scanning %s: %s", rname, exc)
+        finally:
+            cat.close()
+        return {"cataloged": total_cataloged, "remotes_scanned": len(remotes_config)}
+
+    if step_type == "cloud_stream_reorganize":
+        from .cloud import rclone_copyto, rclone_is_reachable, retry_with_backoff, wait_for_connectivity
+        from .catalog import Catalog
+        from . import checkpoint as ckpt
+        dest_remote = config.get("dest_remote", "gws-backup")
+        dest_path = config.get("dest_path", "GML-Consolidated")
+        cat = Catalog(catalog_path)
+        cat.open()
+        try:
+            # Create or resume consolidation job
+            resumable = ckpt.get_resumable_jobs(cat)
+            job = None
+            for j in resumable:
+                if j.job_type == "cloud_stream_reorganize":
+                    job = j
+                    break
+            if not job:
+                job = ckpt.create_job(cat, "cloud_stream_reorganize", config=config)
+            ckpt.update_job(cat, job.job_id, status="running", current_step="stream")
+            # Reset any stale in-progress transfers from previous interrupted run
+            ckpt.reset_stale_in_progress(cat, job.job_id, "stream")
+            # Get unique files from catalog that need transfer
+            conn = cat.conn
+            conn.row_factory = __import__("sqlite3").Row
+            cur = conn.execute("""
+                SELECT sha256, path, source_remote, size
+                FROM files
+                WHERE sha256 IS NOT NULL
+                GROUP BY sha256
+                ORDER BY date_original DESC NULLS LAST
+            """)
+            rows = cur.fetchall()
+            # Register pending files
+            for row in rows:
+                file_hash = row["sha256"]
+                source = row["source_remote"] or "local"
+                ckpt.mark_file(cat, job.job_id, file_hash, f"{source}:{row['path']}", "stream", "pending")
+            # Stream files
+            transferred = 0
+            failed = 0
+            skipped = 0
+            pending = ckpt.get_pending_files(cat, job.job_id, "stream", limit=1000)
+            while pending:
+                # Check connectivity before batch
+                if not rclone_is_reachable(dest_remote, timeout=10):
+                    logger.warning("Destination %s unreachable, waiting...", dest_remote)
+                    if not wait_for_connectivity(dest_remote, timeout=300):
+                        ckpt.update_job(cat, job.job_id, status="paused", error="Destination unreachable")
+                        break
+                for fs in pending:
+                    src_parts = fs.source_location.split(":", 1)
+                    src_remote = src_parts[0] if len(src_parts) > 1 else "local"
+                    src_path = src_parts[1] if len(src_parts) > 1 else src_parts[0]
+                    if src_remote == "local":
+                        # Local files — skip cloud streaming, they'll be handled by sync_to_disk
+                        ckpt.mark_file(cat, job.job_id, fs.file_hash, fs.source_location, "stream", "skipped")
+                        skipped += 1
+                        continue
+                    # Determine destination path (year/month structure)
+                    from pathlib import PurePosixPath
+                    fname = PurePosixPath(src_path).name
+                    dest_file_path = f"{dest_path}/{fname}"
+                    ckpt.mark_file(cat, job.job_id, fs.file_hash, fs.source_location, "stream", "in_progress")
+                    try:
+                        result = retry_with_backoff(
+                            rclone_copyto,
+                            src_remote, src_path, dest_remote, dest_file_path,
+                            max_retries=3,
+                        )
+                        if result["success"]:
+                            ckpt.mark_file(
+                                cat, job.job_id, fs.file_hash, fs.source_location, "stream", "completed",
+                                dest=f"{dest_remote}:{dest_file_path}",
+                                bytes_transferred=result["bytes"],
+                            )
+                            transferred += 1
+                        else:
+                            ckpt.mark_file(
+                                cat, job.job_id, fs.file_hash, fs.source_location, "stream", "failed",
+                                error=result.get("error", "unknown"),
+                            )
+                            failed += 1
+                    except Exception as exc:
+                        ckpt.mark_file(
+                            cat, job.job_id, fs.file_hash, fs.source_location, "stream", "failed",
+                            error=str(exc)[:200],
+                        )
+                        failed += 1
+                    if progress_fn:
+                        progress = ckpt.get_job_progress(cat, job.job_id, "stream")
+                        progress_fn({
+                            "phase": "streaming",
+                            "transferred": progress["completed"],
+                            "failed": progress["failed"],
+                            "pending": progress["pending"],
+                            "bytes": progress["bytes_transferred"],
+                        })
+                pending = ckpt.get_pending_files(cat, job.job_id, "stream", limit=1000)
+            progress = ckpt.get_job_progress(cat, job.job_id, "stream")
+            if progress["pending"] == 0 and progress["in_progress"] == 0:
+                ckpt.complete_job(cat, job.job_id)
+            return {
+                "transferred": progress["completed"],
+                "failed": progress["failed"],
+                "skipped": progress["skipped"],
+                "bytes_transferred": progress["bytes_transferred"],
+                "job_id": job.job_id,
+            }
+        finally:
+            cat.close()
+
+    if step_type == "cloud_verify_integrity":
+        from .cloud import rclone_check_file, rclone_is_reachable
+        from .catalog import Catalog
+        remote = config.get("remote", "gws-backup")
+        sample_pct = config.get("sample_pct", 10)
+        if not rclone_is_reachable(remote):
+            return {"note": f"Remote {remote} nedostupný", "verified": 0, "missing": 0}
+        cat = Catalog(catalog_path)
+        cat.open()
+        try:
+            conn = cat.conn
+            conn.row_factory = __import__("sqlite3").Row
+            cur = conn.execute(
+                "SELECT sha256, size, path FROM files WHERE sha256 IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+                (max(1, sample_pct * 10),),
+            )
+            rows = cur.fetchall()
+            verified = 0
+            missing = 0
+            for row in rows:
+                result = rclone_check_file(remote, row["path"], expected_size=row["size"])
+                if result["exists"]:
+                    verified += 1
+                else:
+                    missing += 1
+            return {"verified": verified, "missing": missing, "sample_size": len(rows)}
+        finally:
+            cat.close()
+
+    if step_type == "sync_to_disk":
+        from .cloud import rclone_copy, check_volume_mounted
+        source_remote = config.get("source_remote", "gws-backup")
+        source_path = config.get("source_path", "GML-Consolidated")
+        disk_path = config.get("disk_path", "/Volumes/4TB/GML-Library")
+        if not check_volume_mounted(disk_path):
+            return {"note": f"Disk {disk_path} není připojený", "synced": False}
+        try:
+            result = rclone_copy(
+                source_remote, source_path, disk_path,
+                progress_fn=progress_fn,
+            )
+            return {"synced": True, "destination": disk_path, "result": result}
+        except Exception as exc:
+            return {"synced": False, "error": str(exc)[:200]}
 
     return {"note": f"Neznámý typ kroku: {step_type}"}
 

@@ -1616,8 +1616,10 @@ def _check_mp4(path: Path) -> dict | None:
 def _check_video_ffprobe(path: Path) -> dict | None:
     """Check video integrity using ffprobe."""
     try:
+        from .deps import resolve_bin
+        _ffprobe = resolve_bin("ffprobe") or "ffprobe"
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+            [_ffprobe, "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=codec_type", "-of", "json", str(path)],
             capture_output=True, text=True, timeout=30,
         )
@@ -1667,7 +1669,9 @@ def _repair_video(path: Path) -> dict:
     """Try to repair a video using ffmpeg re-mux."""
     try:
         # Check ffmpeg availability
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5)
+        from .deps import resolve_bin
+        _ffmpeg = resolve_bin("ffmpeg") or "ffmpeg"
+        subprocess.run([_ffmpeg, "-version"], capture_output=True, timeout=5)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return {"success": False, "error": "FFmpeg není nainstalován"}
 
@@ -1680,7 +1684,7 @@ def _repair_video(path: Path) -> dict:
         # Re-mux with ffmpeg — fixes missing moov, broken index
         result = subprocess.run(
             [
-                "ffmpeg", "-y",
+                _ffmpeg, "-y",
                 "-err_detect", "ignore_err",
                 "-i", str(path),
                 "-c", "copy",
