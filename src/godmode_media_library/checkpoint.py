@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -56,8 +55,8 @@ CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status);
 CREATE INDEX IF NOT EXISTS idx_cfs_job_step_status ON consolidation_file_state(job_id, step_name, status);
 """
 
-# Use WeakKeyDictionary to avoid false cache hits after GC reuses object IDs
-_tables_cache: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+# Cache keyed by connection id() — cleared when ensure_tables sees a new connection
+_tables_cache: dict[int, bool] = {}
 
 
 def _now() -> str:
@@ -105,13 +104,14 @@ class FileTransferState:
 # ---------------------------------------------------------------------------
 
 def ensure_tables(conn: sqlite3.Connection) -> None:
-    if conn in _tables_cache:
+    cid = id(conn)
+    if cid in _tables_cache:
         return
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")  # WAL for concurrent reads + crash safety
     conn.executescript(_CHECKPOINT_SQL)
-    _tables_cache[conn] = True
+    _tables_cache[cid] = True
 
 
 def _ensure(catalog: Catalog) -> None:
