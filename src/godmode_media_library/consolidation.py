@@ -410,7 +410,7 @@ def _phase_2_cloud_catalog_scan(ctx: PhaseContext) -> None:
                         effective_hash, rname, now_str, now_str,
                         mod_time[:10] if mod_time else None,
                     ))
-                except Exception as exc:
+                except (sqlite3.IntegrityError, sqlite3.OperationalError) as exc:
                     logger.debug("catalog insert error for %s:%s: %s", rname, fpath, exc)
                     continue
 
@@ -424,7 +424,7 @@ def _phase_2_cloud_catalog_scan(ctx: PhaseContext) -> None:
 
             conn.commit()
 
-        except Exception as exc:
+        except (OSError, RuntimeError) as exc:
             logger.warning("cloud_catalog_scan: %s error: %s", rname, exc)
             conn.rollback()
 
@@ -456,7 +456,9 @@ def _phase_3_local_scan(ctx: PhaseContext) -> None:
                 workers=ctx.config.scan_workers,
             )
             local_scanned = getattr(stats, "total_files", 0) if stats else 0
-        except Exception as exc:
+        except PermissionError as exc:
+            logger.warning("Local scan permission error (skipping): %s", exc)
+        except (OSError, RuntimeError) as exc:
             logger.warning("Local scan error: %s", exc)
 
     ctx.local_scanned = local_scanned
@@ -609,6 +611,7 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                      len(dest_paths_used))
 
     pending = ckpt.get_pending_files(ctx.cat, ctx.job.job_id, Phase.STREAM, limit=STREAM_BATCH_SIZE)
+    _wal_counter = 0  # WAL checkpoint every 500 files (4.4)
 
     while pending:
         # Check if job was paused externally (via API)
@@ -771,6 +774,11 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                     Phase.STREAM, FileStatus.FAILED, error=str(exc)[:ERROR_TRUNCATE_LEN],
                 )
                 source_failures[src_remote] = source_failures.get(src_remote, 0) + 1
+
+            # WAL checkpoint every 500 files (4.4)
+            _wal_counter += 1
+            if _wal_counter % 500 == 0:
+                ckpt.wal_checkpoint(ctx.cat)
 
             # Progress update with EMA-smoothed speed (3.5)
             p = ckpt.get_job_progress(ctx.cat, ctx.job.job_id, Phase.STREAM)
@@ -1239,6 +1247,10 @@ def run_consolidation(
     job = None
 
     try:
+        # DB integrity check on resume (4.5)
+        if not ckpt.check_db_integrity(cat):
+            logger.error("DB integrity check failed — proceeding with caution")
+
         # Find or create job
         resumable = ckpt.get_resumable_jobs(cat)
         for j in resumable:

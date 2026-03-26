@@ -109,6 +109,7 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
         return
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA journal_mode=WAL")  # WAL for concurrent reads + crash safety
     conn.executescript(_CHECKPOINT_SQL)
     _tables_cache[conn] = True
 
@@ -404,27 +405,36 @@ def get_resumable_jobs(catalog: Catalog) -> list[ConsolidationJob]:
 
 
 def mark_phase_done(catalog: Catalog, job_id: str, phase: str) -> None:
-    """Record that a phase has completed (stored in config_json)."""
+    """Record that a phase has completed (stored in config_json).
+
+    Uses BEGIN IMMEDIATE to prevent read-modify-write races on config_json.
+    """
     _ensure(catalog)
     conn = catalog.conn
     conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
-    config = {}
-    if row and row["config_json"]:
-        try:
-            config = json.loads(row["config_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
-    completed = config.get("completed_phases", [])
-    if phase not in completed:
-        completed.append(phase)
-    config["completed_phases"] = completed
-    now = _now()
-    with conn:
+    # Atomic read-modify-write with BEGIN IMMEDIATE
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        config = {}
+        if row and row["config_json"]:
+            try:
+                config = json.loads(row["config_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        completed = config.get("completed_phases", [])
+        if phase not in completed:
+            completed.append(phase)
+        config["completed_phases"] = completed
+        now = _now()
         conn.execute(
             "UPDATE consolidation_jobs SET config_json = ?, updated_at = ? WHERE job_id = ?",
             (json.dumps(config), now, job_id),
         )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     logger.info("Phase '%s' marked done for job %s", phase, job_id)
 
 
@@ -515,3 +525,41 @@ def reset_stale_in_progress(
         logger.info("Reset %d stale in_progress files (>%ds old) for job %s step %s",
                      count, stale_after_seconds, job_id, step)
     return count
+
+
+# ---------------------------------------------------------------------------
+# WAL checkpoint (4.4) — call periodically during long jobs
+# ---------------------------------------------------------------------------
+
+def wal_checkpoint(catalog: Catalog) -> None:
+    """Trigger a WAL checkpoint to keep the WAL file from growing unbounded.
+
+    Safe to call during a running job — uses PASSIVE mode (non-blocking).
+    """
+    _ensure(catalog)
+    try:
+        catalog.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+    except sqlite3.OperationalError as exc:
+        logger.debug("WAL checkpoint skipped: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# DB integrity check (4.5) — run on resume
+# ---------------------------------------------------------------------------
+
+def check_db_integrity(catalog: Catalog) -> bool:
+    """Quick integrity check on the checkpoint tables.
+
+    Returns True if DB is healthy. Logs warnings on issues.
+    """
+    _ensure(catalog)
+    conn = catalog.conn
+    try:
+        result = conn.execute("PRAGMA integrity_check(1)").fetchone()
+        if result and result[0] == "ok":
+            return True
+        logger.error("DB integrity check FAILED: %s", result)
+        return False
+    except sqlite3.DatabaseError as exc:
+        logger.error("DB integrity check error: %s", exc)
+        return False

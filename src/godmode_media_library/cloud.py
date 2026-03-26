@@ -501,36 +501,55 @@ def rclone_copy(
     if dry_run:
         cmd.append("--dry-run")
 
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=3600,
-        )
-        elapsed = time.monotonic() - start
+    import re
+    import time as _time
 
-        # Parse stats from stderr.
-        # rclone -v outputs TWO "Transferred:" lines:
-        #   Transferred:   5.000 MiB / 5.000 MiB, 100%, 2.500 MiB/s, ETA 0s  (bytes)
-        #   Transferred:            42 / 42, 100%                               (files)
-        import re
+    try:
+        # Use Popen for streaming progress (4.8)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
+
         files_transferred = 0
         bytes_transferred = 0
         errors = 0
         size_multipliers = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
-        for line in (result.stderr or "").splitlines():
+        deadline = _time.monotonic() + 3600
+
+        for line in proc.stdout:
             if "Transferred:" in line:
                 m = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
                 if m:
                     unit = m.group(2).lower()
                     if unit in size_multipliers:
-                        # Bytes line (has a size unit like MiB, GiB, etc.)
                         bytes_transferred = int(float(m.group(1)) * size_multipliers[unit])
                     else:
-                        # File count line (no size unit — first token is a number)
                         with contextlib.suppress(ValueError):
                             files_transferred = int(m.group(1).split(".")[0])
             if "Errors:" in line:
                 with contextlib.suppress(ValueError, IndexError):
                     errors = int(line.split(":")[1].strip())
+
+            # Real-time progress callback
+            if progress_fn and ("Transferred:" in line or "%" in line):
+                pct_match = re.search(r"(\d+)%", line)
+                progress_fn({
+                    "files_transferred": files_transferred,
+                    "bytes_transferred": bytes_transferred,
+                    "progress_pct": int(pct_match.group(1)) if pct_match else 0,
+                })
+
+            if _time.monotonic() > deadline:
+                proc.kill()
+                proc.wait()
+                return SyncResult(
+                    remote=remote, remote_path=remote_path, local_path=local_path,
+                    errors=1, elapsed_seconds=time.monotonic() - start,
+                )
+
+        proc.wait()
+        elapsed = time.monotonic() - start
 
         return SyncResult(
             remote=remote,
@@ -541,7 +560,7 @@ def rclone_copy(
             errors=errors,
             elapsed_seconds=elapsed,
         )
-    except subprocess.TimeoutExpired:
+    except OSError:
         return SyncResult(
             remote=remote, remote_path=remote_path, local_path=local_path,
             errors=1, elapsed_seconds=time.monotonic() - start,
@@ -1372,11 +1391,15 @@ def rclone_dedupe(
     mode: str = "newest",
     dry_run: bool = False,
     timeout: int = 3600,
+    progress_fn: Any = None,
 ) -> dict:
     """Run rclone dedupe on a remote path to remove duplicate files.
 
+    Uses streaming Popen to avoid buffering the entire output in memory
+    and to provide real-time progress via *progress_fn*.
+
     Uses the remote's native hashes (e.g. MD5 on Google Drive) for 100% accurate
-    content-based deduplication. This is the safest post-transfer dedup strategy.
+    content-based deduplication.
 
     Args:
         remote: rclone remote name
@@ -1385,12 +1408,16 @@ def rclone_dedupe(
               "smallest", "rename" (keep all, rename dupes), "first"
         dry_run: if True, only report what would be done
         timeout: max seconds to wait
+        progress_fn: optional callback(dict) for real-time progress
 
     Returns:
         dict with success, duplicates_removed, bytes_freed, output
     """
     if not check_rclone():
         return {"success": False, "error": "rclone not found"}
+
+    import re
+    import time as _time
 
     remote_path = f"{remote}:{path}" if path else f"{remote}:"
     cmd = [_rclone_bin(), "dedupe", "--dedupe-mode", mode, remote_path, "-v"]
@@ -1400,40 +1427,54 @@ def rclone_dedupe(
     logger.info("Running rclone dedupe (mode=%s, dry_run=%s) on %s", mode, dry_run, remote_path)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
 
-        # Parse output for stats
-        output = result.stderr + result.stdout
+        output_lines: list[str] = []
         duplicates_removed = 0
         bytes_freed = 0
+        deadline = _time.monotonic() + timeout
 
-        for line in output.splitlines():
-            # rclone dedupe outputs lines like "Duplicate set of N files..."
+        for line in proc.stdout:
+            output_lines.append(line)
+            # Keep only last 200 lines to avoid memory growth
+            if len(output_lines) > 200:
+                output_lines = output_lines[-100:]
+
             if "Duplicate" in line and "files" in line:
                 duplicates_removed += 1
-            # Look for "Deleted: X" in stats
             if "Deleted:" in line:
-                import re
                 m = re.search(r"Deleted:\s+(\d+)", line)
                 if m:
                     duplicates_removed = max(duplicates_removed, int(m.group(1)))
             if "Freed:" in line:
-                import re
                 m = re.search(r"Freed:\s+(\d+)", line)
                 if m:
                     bytes_freed = int(m.group(1))
 
+            if progress_fn:
+                progress_fn({"duplicates_removed": duplicates_removed, "bytes_freed": bytes_freed})
+
+            if _time.monotonic() > deadline:
+                proc.kill()
+                proc.wait()
+                return {"success": False, "error": f"Dedupe timeout after {timeout}s",
+                        "duplicates_removed": duplicates_removed, "bytes_freed": bytes_freed,
+                        "dry_run": dry_run, "output": "".join(output_lines[-50:])}
+
+        proc.wait()
+        output = "".join(output_lines)
+
         return {
-            "success": result.returncode == 0,
+            "success": proc.returncode == 0,
             "duplicates_removed": duplicates_removed,
             "bytes_freed": bytes_freed,
             "dry_run": dry_run,
             "output": output[-2000:] if len(output) > 2000 else output,
-            "error": None if result.returncode == 0 else output[-500:],
+            "error": None if proc.returncode == 0 else output[-500:],
         }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": f"Dedupe timeout after {timeout}s",
-                "duplicates_removed": 0, "bytes_freed": 0, "dry_run": dry_run, "output": ""}
     except OSError as exc:
         return {"success": False, "error": str(exc),
                 "duplicates_removed": 0, "bytes_freed": 0, "dry_run": dry_run, "output": ""}
