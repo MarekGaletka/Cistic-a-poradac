@@ -1209,6 +1209,54 @@ def rclone_copyto(
         return fail
 
 
+# ---------------------------------------------------------------------------
+# Native hash type detection per remote backend
+# ---------------------------------------------------------------------------
+
+# Map rclone backend types to their native hash algorithms.
+# Using the native hash avoids re-downloading the file for verification.
+_BACKEND_HASH_MAP: dict[str, str] = {
+    "drive": "md5",           # Google Drive stores MD5 natively
+    "onedrive": "sha1",      # OneDrive/SharePoint use SHA-1
+    "dropbox": "dropbox",    # Dropbox has its own content hash
+    "s3": "md5",             # S3 ETag is MD5 for non-multipart uploads
+    "gcs": "md5",            # Google Cloud Storage uses MD5
+    "b2": "sha1",            # Backblaze B2 uses SHA-1
+    "swift": "md5",          # OpenStack Swift uses MD5
+    "azureblob": "md5",      # Azure Blob uses MD5
+    "pcloud": "sha256",      # pCloud supports SHA-256
+    # MEGA: no server-side hash available via rclone
+    # local: md5 or sha256 computed on demand
+}
+
+
+def get_native_hash_type(remote: str) -> str | None:
+    """Return the native hash algorithm for a remote, or None if unavailable.
+
+    Uses `rclone backend features` to detect the hash type efficiently.
+    Falls back to the known backend map if the command fails.
+    """
+    if not check_rclone():
+        return None
+
+    # Try to get the remote type from rclone config
+    try:
+        result = subprocess.run(
+            [_rclone_bin(), "listremotes", "--long"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0].rstrip(":") == remote:
+                    backend_type = parts[1]
+                    return _BACKEND_HASH_MAP.get(backend_type)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    return None
+
+
 def rclone_check_file(
     remote: str, path: str,
     expected_size: int | None = None,

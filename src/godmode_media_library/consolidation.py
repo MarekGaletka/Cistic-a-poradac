@@ -47,10 +47,12 @@ from .cloud import (
     RcloneTransferError,
     _dynamic_timeout,
     check_volume_mounted,
+    get_native_hash_type,
     list_remotes,
     rclone_check_file,
     rclone_copyto,
     rclone_dedupe,
+    rclone_hashsum,
     rclone_is_reachable,
     rclone_ls_paginated,
     rclone_verify_transfer,
@@ -541,6 +543,12 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
     ctx.stream_start_time = time.monotonic()
     total_stream_bytes = 0
 
+    # Detect native hash type for destination (e.g. MD5 on Google Drive)
+    dest_hash_type = get_native_hash_type(ctx.config.dest_remote)
+    if dest_hash_type:
+        logger.info("Destination %s supports native %s hashes — will use for verification",
+                     ctx.config.dest_remote, dest_hash_type)
+
     # Rebuild dest_paths_used from checkpoint DB (survive resume!)
     dest_paths_used: set[str] = set()
     completed_dests = conn.execute("""
@@ -618,11 +626,16 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 dest_path = _make_collision_safe(dest_path, fs.file_hash, dest_paths_used)
             dest_paths_used.add(dest_path)
 
-            # Get file size for dynamic timeout
+            # Get file size and source hash for verification
             file_size_row = conn.execute(
                 "SELECT size FROM files WHERE sha256 = ? LIMIT 1", (fs.file_hash,),
             ).fetchone()
             file_size = file_size_row["size"] if file_size_row else None
+
+            # Get source hash for post-transfer comparison (if dest supports it)
+            source_hash = None
+            if dest_hash_type:
+                source_hash = rclone_hashsum(src_remote, src_path, hash_type=dest_hash_type)
 
             # Transfer
             ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash,
@@ -643,7 +656,10 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
                 if result["success"]:
                     verify = rclone_verify_transfer(
-                        ctx.config.dest_remote, dest_path, expected_size=file_size,
+                        ctx.config.dest_remote, dest_path,
+                        expected_size=file_size,
+                        expected_hash=source_hash,
+                        hash_type=dest_hash_type or "sha256",
                     )
                     if verify["verified"]:
                         ckpt.mark_file(
@@ -746,6 +762,9 @@ def _phase_6_retry_failed(ctx: PhaseContext) -> None:
         conn = ctx.conn
         conn.row_factory = sqlite3.Row
 
+        # Detect native hash type for destination
+        dest_hash_type = get_native_hash_type(ctx.config.dest_remote)
+
         for fs in failed_files:
             if fs.attempt_count >= MAX_RETRY_ATTEMPTS:
                 logger.warning("Skipping %s: too many attempts (%d)", fs.source_location, fs.attempt_count)
@@ -798,8 +817,16 @@ def _phase_6_retry_failed(ctx: PhaseContext) -> None:
                 )
 
                 if result["success"]:
+                    # Get source hash for comparison
+                    retry_source_hash = None
+                    if dest_hash_type:
+                        retry_source_hash = rclone_hashsum(src_remote, src_path, hash_type=dest_hash_type)
+
                     verify = rclone_verify_transfer(
-                        ctx.config.dest_remote, dest_path, expected_size=file_size,
+                        ctx.config.dest_remote, dest_path,
+                        expected_size=file_size,
+                        expected_hash=retry_source_hash,
+                        hash_type=dest_hash_type or "sha256",
                     )
                     if verify["verified"]:
                         ckpt.mark_file(
@@ -860,16 +887,20 @@ def _phase_7_verify(ctx: PhaseContext) -> None:
     conn = ctx.conn
     conn.row_factory = sqlite3.Row
     completed_transfers = conn.execute("""
-        SELECT file_hash, dest_location, bytes_transferred
-        FROM consolidation_file_state
-        WHERE job_id = ? AND step_name = ? AND status = ?
-          AND dest_location IS NOT NULL
+        SELECT cfs.file_hash, cfs.dest_location, cfs.bytes_transferred, cfs.source_location
+        FROM consolidation_file_state cfs
+        WHERE cfs.job_id = ? AND cfs.step_name = ? AND cfs.status = ?
+          AND cfs.dest_location IS NOT NULL
     """, (ctx.job.job_id, Phase.STREAM, FileStatus.COMPLETED)).fetchall()
 
     if ctx.config.verify_pct < 100:
         import random
         sample_size = max(1, len(completed_transfers) * ctx.config.verify_pct // 100)
         completed_transfers = random.sample(completed_transfers, min(sample_size, len(completed_transfers)))
+
+    # Detect native hash type for hash-based verification
+    dest_hash_type = get_native_hash_type(ctx.config.dest_remote)
+    hash_verified_count = 0
 
     verified_ok = 0
     verified_fail = 0
@@ -883,20 +914,61 @@ def _phase_7_verify(ctx: PhaseContext) -> None:
         remote, path = dest_loc.split(":", 1)
         expected_bytes = row["bytes_transferred"]
 
+        # Step 1: Size check (fast)
         check = rclone_check_file(remote, path, expected_size=expected_bytes)
-        if check["exists"] and (check.get("size_match") is not False):
-            verified_ok += 1
-        else:
+        if not check["exists"]:
             verified_fail += 1
-            file_hash = row["file_hash"]
-            reason = "missing" if not check["exists"] else "size_mismatch"
             ckpt.mark_file(
-                ctx.cat, ctx.job.job_id, file_hash, dest_loc,
+                ctx.cat, ctx.job.job_id, row["file_hash"], dest_loc,
                 Phase.STREAM, FileStatus.FAILED,
-                error=f"verify_{reason}: exists={check['exists']}, size_match={check.get('size_match')}",
+                error=f"verify_missing: file not found on destination",
             )
-            logger.error("VERIFY FAIL: %s (exists=%s, size_match=%s)",
-                         dest_loc, check["exists"], check.get("size_match"))
+            logger.error("VERIFY FAIL: %s — file missing", dest_loc)
+            continue
+
+        if check.get("size_match") is False:
+            verified_fail += 1
+            ckpt.mark_file(
+                ctx.cat, ctx.job.job_id, row["file_hash"], dest_loc,
+                Phase.STREAM, FileStatus.FAILED,
+                error=f"verify_size_mismatch: expected={expected_bytes}, got={check.get('size')}",
+            )
+            logger.error("VERIFY FAIL: %s — size mismatch (expected=%s, got=%s)",
+                         dest_loc, expected_bytes, check.get("size"))
+            continue
+
+        # Step 2: Hash check (definitive, if native hash available)
+        if dest_hash_type:
+            # Get hash from source for comparison
+            src_loc = row["source_location"]
+            src_parts = src_loc.split(":", 1) if src_loc else []
+            src_remote_name = src_parts[0] if len(src_parts) > 1 else None
+            src_path_name = src_parts[1] if len(src_parts) > 1 else None
+
+            dest_hash = rclone_hashsum(remote, path, hash_type=dest_hash_type)
+            source_hash = None
+            if src_remote_name and src_path_name:
+                source_hash = rclone_hashsum(src_remote_name, src_path_name, hash_type=dest_hash_type)
+
+            if dest_hash and source_hash:
+                if dest_hash.lower() == source_hash.lower():
+                    verified_ok += 1
+                    hash_verified_count += 1
+                else:
+                    verified_fail += 1
+                    ckpt.mark_file(
+                        ctx.cat, ctx.job.job_id, row["file_hash"], dest_loc,
+                        Phase.STREAM, FileStatus.FAILED,
+                        error=f"verify_hash_mismatch: src={source_hash[:16]}..., dest={dest_hash[:16]}...",
+                    )
+                    logger.error("VERIFY FAIL: %s — %s hash mismatch", dest_loc, dest_hash_type)
+                continue
+            # If either hash unavailable, fall through to size-only pass
+            logger.debug("Hash unavailable for %s (dest=%s, src=%s), relying on size check",
+                         dest_loc, dest_hash, source_hash)
+
+        # Size check passed (and hash not available or not comparable)
+        verified_ok += 1
 
         if (idx + 1) % VERIFY_REPORT_INTERVAL == 0:
             ctx.report(Phase.VERIFY, f"Overeno {idx + 1}/{total_to_verify}...", 7,
@@ -906,9 +978,14 @@ def _phase_7_verify(ctx: PhaseContext) -> None:
         "total_checked": total_to_verify,
         "verified_ok": verified_ok,
         "verified_fail": verified_fail,
+        "hash_verified": hash_verified_count,
+        "hash_type": dest_hash_type,
     }
     ctx.report(Phase.VERIFY, "Overeni hotové", 7,
                files_verified=verified_ok, errors=verified_fail)
+    if hash_verified_count:
+        logger.info("VERIFY: %d/%d files verified by %s hash (strongest guarantee)",
+                     hash_verified_count, verified_ok, dest_hash_type)
 
     # Pause before dedupe if significant verification failures
     if verified_fail > 0 and total_to_verify > 0:
