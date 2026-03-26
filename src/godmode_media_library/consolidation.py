@@ -108,6 +108,8 @@ class ConsolidationConfig:
     api_delay: float = 0.5
     retry_timeout_multiplier: float = 3.0
     media_only: bool = True
+    # Session 3: skip disk sync if disk not needed
+    skip_disk_sync: bool = False
 
 
 @dataclass
@@ -134,6 +136,10 @@ class ConsolidationProgress:
     dry_run: bool = False
     sources_available: list[str] = field(default_factory=list)
     sources_unavailable: list[str] = field(default_factory=list)
+    # Session 3: current file being processed (for operator visibility)
+    current_file: str = ""
+    # EMA-smoothed speed (alpha=0.3)
+    _ema_speed: float = 0.0
 
 
 @dataclass
@@ -252,10 +258,49 @@ def _make_collision_safe(
 
 
 def _estimate_speed(bytes_transferred: int, elapsed: float) -> float:
-    """Bytes per second, smoothed."""
+    """Bytes per second (raw, for use when EMA not applicable)."""
     if elapsed <= 0:
         return 0.0
     return bytes_transferred / elapsed
+
+
+# EMA smoothing constant for speed/ETA (0.3 = responsive but not jittery)
+_EMA_ALPHA = 0.3
+
+
+def _ema_speed(prev_ema: float, instant_speed: float) -> float:
+    """Exponential moving average for transfer speed."""
+    if prev_ema <= 0:
+        return instant_speed
+    return _EMA_ALPHA * instant_speed + (1 - _EMA_ALPHA) * prev_ema
+
+
+def _check_disk_space(disk_path: str, required_bytes: int) -> dict:
+    """Pre-check available disk space before sync.
+
+    Returns {"ok": bool, "available_bytes": int, "required_bytes": int, "error": str|None}
+    """
+    import shutil
+    try:
+        usage = shutil.disk_usage(disk_path)
+        available = usage.free
+        ok = available >= required_bytes
+        return {
+            "ok": ok,
+            "available_bytes": available,
+            "required_bytes": required_bytes,
+            "error": None if ok else (
+                f"Nedostatek mista na disku: potreba {required_bytes / 1e9:.1f} GB, "
+                f"dostupné {available / 1e9:.1f} GB — uvolni misto a spust resume"
+            ),
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "available_bytes": 0,
+            "required_bytes": required_bytes,
+            "error": f"Nelze zjistit misto na disku {disk_path}: {exc}",
+        }
 
 
 # ── Phase functions ──────────────────────────────────────────────────
@@ -588,9 +633,20 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
         source_failures: dict[str, int] = {}
 
         for fs in pending:
+            # Per-file pause check (3.4) — responsive to user pause requests
+            _job_check_inner = ckpt.get_job(ctx.cat, ctx.job.job_id)
+            if _job_check_inner and _job_check_inner.status == JobStatus.PAUSED:
+                logger.info("Job %s paused (per-file check), stopping", ctx.job.job_id)
+                ctx.progress.paused = True
+                ctx.report(Phase.STREAM, "Pozastaveno uzivatelem", 5)
+                break
+
             parts = fs.source_location.split(":", 1)
             src_remote = parts[0]
             src_path = parts[1] if len(parts) > 1 else parts[0]
+
+            # Report current file being processed (3.1)
+            ctx.progress.current_file = PurePosixPath(src_path).name
 
             if src_remote == "local":
                 ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash,
@@ -716,18 +772,20 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 )
                 source_failures[src_remote] = source_failures.get(src_remote, 0) + 1
 
-            # Progress update
+            # Progress update with EMA-smoothed speed (3.5)
             p = ckpt.get_job_progress(ctx.cat, ctx.job.job_id, Phase.STREAM)
             elapsed = time.monotonic() - ctx.stream_start_time
-            speed = _estimate_speed(total_stream_bytes, elapsed)
+            instant_speed = _estimate_speed(total_stream_bytes, elapsed)
+            ctx.progress._ema_speed = _ema_speed(ctx.progress._ema_speed, instant_speed)
+            smoothed_speed = ctx.progress._ema_speed
             remaining_bytes = total_bytes_estimate - total_stream_bytes
-            eta = int(remaining_bytes / speed) if speed > 0 else 0
+            eta = int(remaining_bytes / smoothed_speed) if smoothed_speed > 0 else 0
 
-            ctx.report(Phase.STREAM, "Streaming cloud->cloud...", 5,
+            ctx.report(Phase.STREAM, f"Streaming: {ctx.progress.current_file}", 5,
                        files_transferred=p[FileStatus.COMPLETED],
                        bytes_transferred=p["bytes_transferred"],
                        errors=p[FileStatus.FAILED],
-                       transfer_speed_bps=speed,
+                       transfer_speed_bps=smoothed_speed,
                        eta_seconds=eta)
 
         if ctx.progress.paused:
@@ -1060,6 +1118,13 @@ def _phase_9_sync_to_disk(ctx: PhaseContext) -> None:
     if ctx.phase_done(Phase.SYNC_TO_DISK):
         return
 
+    # Skip Phase 9 if configured (3.8)
+    if ctx.config.skip_disk_sync:
+        ctx.results["sync"] = {"skipped": True, "note": "Preskoceno (skip_disk_sync=True)"}
+        logger.info("Phase sync_to_disk skipped (skip_disk_sync=True)")
+        ctx.finish_phase(Phase.SYNC_TO_DISK)
+        return
+
     ctx.report(Phase.SYNC_TO_DISK, "Synchronizace na disk...", 9)
     ckpt.update_job(ctx.cat, ctx.job.job_id, current_step=Phase.SYNC_TO_DISK)
 
@@ -1072,6 +1137,19 @@ def _phase_9_sync_to_disk(ctx: PhaseContext) -> None:
                         error=f"Disk {ctx.config.disk_path} neni pripojený")
         ctx.progress.paused = True
         return
+
+    # Disk space pre-check (3.6)
+    stream_progress = ckpt.get_job_progress(ctx.cat, ctx.job.job_id, Phase.STREAM)
+    required_bytes = stream_progress.get("bytes_transferred", 0)
+    if required_bytes > 0:
+        space_check = _check_disk_space(ctx.config.disk_path, required_bytes)
+        if not space_check["ok"]:
+            ctx.results["sync"] = {"synced": False, "error": space_check["error"]}
+            ckpt.update_job(ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED,
+                            error=space_check["error"][:ERROR_TRUNCATE_LEN])
+            ctx.progress.paused = True
+            logger.error("Disk space check failed: %s", space_check["error"])
+            return
 
     from .cloud import rclone_copy
     try:
@@ -1248,6 +1326,22 @@ def get_consolidation_status(catalog_path: str | Path) -> dict[str, Any]:
             "total_jobs": len(consolidation_jobs),
             "jobs": [],
         }
+
+        # Check source availability for active jobs (3.7)
+        sources_available: list[str] = []
+        sources_unavailable: list[str] = []
+        if active:
+            active_config = active[0].config or {}
+            source_remotes = active_config.get("source_remotes", [])
+            if not source_remotes:
+                source_remotes = [r.name for r in list_remotes()]
+            for rname in source_remotes:
+                if rclone_is_reachable(rname, timeout=5):
+                    sources_available.append(rname)
+                else:
+                    sources_unavailable.append(rname)
+        result["sources_available"] = sources_available
+        result["sources_unavailable"] = sources_unavailable
 
         for j in consolidation_jobs[:10]:
             progress = ckpt.get_job_progress(cat, j.job_id)
