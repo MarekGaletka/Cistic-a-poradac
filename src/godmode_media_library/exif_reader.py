@@ -13,8 +13,19 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _EXIF_EXTS = {
-    "jpg", "jpeg", "tiff", "tif", "png", "webp",
-    "heic", "heif", "avif", "dng", "cr2", "nef", "arw",
+    "jpg",
+    "jpeg",
+    "tiff",
+    "tif",
+    "png",
+    "webp",
+    "heic",
+    "heif",
+    "avif",
+    "dng",
+    "cr2",
+    "nef",
+    "arw",
 }
 
 # Standard EXIF tag IDs
@@ -72,6 +83,7 @@ def read_exif(path: Path) -> ExifMeta | None:
     if ext in ("heic", "heif", "avif"):
         try:
             import pillow_heif
+
             pillow_heif.register_heif_opener()
         except ImportError:
             logger.debug("pillow-heif not installed, cannot read %s EXIF", ext)

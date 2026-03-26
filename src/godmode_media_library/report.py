@@ -65,10 +65,7 @@ def _collect_data(cat: Any) -> dict:
 
     # Sources (scan roots)
     sources = []
-    for row in conn.execute(
-        "SELECT root, COUNT(*) as cnt, MAX(finished_at) as last "
-        "FROM scans GROUP BY root ORDER BY cnt DESC"
-    ):
+    for row in conn.execute("SELECT root, COUNT(*) as cnt, MAX(finished_at) as last FROM scans GROUP BY root ORDER BY cnt DESC"):
         sources.append({"path": row[0], "scan_count": row[1], "last_scan": row[2]})
 
     # Count files per source root
@@ -98,8 +95,7 @@ def _collect_data(cat: Any) -> dict:
     savings = 0
     if removable > 0:
         row = conn.execute(
-            "SELECT COALESCE(SUM(f.size), 0) FROM duplicates d "
-            "JOIN files f ON d.file_id = f.id WHERE d.is_primary = 0"
+            "SELECT COALESCE(SUM(f.size), 0) FROM duplicates d JOIN files f ON d.file_id = f.id WHERE d.is_primary = 0"
         ).fetchone()
         savings = row[0] if row else 0
 
@@ -121,15 +117,12 @@ def _collect_data(cat: Any) -> dict:
     # Top 5 cameras
     top_cameras = []
     for row in conn.execute(
-        "SELECT camera_model, COUNT(*) as cnt FROM files "
-        "WHERE camera_model IS NOT NULL GROUP BY camera_model ORDER BY cnt DESC LIMIT 5"
+        "SELECT camera_model, COUNT(*) as cnt FROM files WHERE camera_model IS NOT NULL GROUP BY camera_model ORDER BY cnt DESC LIMIT 5"
     ):
         top_cameras.append((row[0], row[1]))
 
     # Metadata richness average
-    richness_row = conn.execute(
-        "SELECT AVG(metadata_richness) FROM files WHERE metadata_richness IS NOT NULL"
-    ).fetchone()
+    richness_row = conn.execute("SELECT AVG(metadata_richness) FROM files WHERE metadata_richness IS NOT NULL").fetchone()
     avg_richness = richness_row[0] if richness_row and richness_row[0] else 0
 
     data["metadata"] = {
@@ -143,9 +136,7 @@ def _collect_data(cat: Any) -> dict:
     }
 
     # ── Time coverage ─────────────────────────────────────────────
-    date_rows = conn.execute(
-        "SELECT date_original FROM files WHERE date_original IS NOT NULL ORDER BY date_original"
-    ).fetchall()
+    date_rows = conn.execute("SELECT date_original FROM files WHERE date_original IS NOT NULL ORDER BY date_original").fetchall()
     dates_parsed = []
     for (d,) in date_rows:
         try:
@@ -161,8 +152,7 @@ def _collect_data(cat: Any) -> dict:
     quality_data = {}
     try:
         # Check for media_scores table or quality columns
-        image_exts = ("jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif",
-                      "raw", "cr2", "nef", "arw", "dng")
+        image_exts = ("jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif", "raw", "cr2", "nef", "arw", "dng")
         video_exts = ("mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp")
         screenshot_exts = ("png",)
 
@@ -218,6 +208,7 @@ def _collect_data(cat: Any) -> dict:
     cloud_data = []
     try:
         from .cloud import list_remotes
+
         remotes = list_remotes()
         cloud_data = remotes.get("remotes", [])
     except (ImportError, OSError) as exc:
@@ -291,12 +282,14 @@ def _build_recommendations(data: dict) -> list[dict]:
 
     dup = data.get("duplicates", {})
     if dup.get("removable", 0) > 0:
-        recs.append({
-            "icon": "&#128203;",
-            "text": f"{dup['removable']} duplicit k odstraneni",
-            "detail": f"Usporite {_fmt_size(dup['savings_bytes'])}",
-            "severity": "warning",
-        })
+        recs.append(
+            {
+                "icon": "&#128203;",
+                "text": f"{dup['removable']} duplicit k odstraneni",
+                "detail": f"Usporite {_fmt_size(dup['savings_bytes'])}",
+                "severity": "warning",
+            }
+        )
 
     meta = data.get("metadata", {})
     total = meta.get("total_files", 0)
@@ -304,49 +297,59 @@ def _build_recommendations(data: dict) -> list[dict]:
         no_date = total - meta.get("exif_date_count", 0)
         if no_date > 0:
             pct = round(no_date / total * 100)
-            recs.append({
-                "icon": "&#128197;",
-                "text": f"{no_date} souboru bez data porizeni ({pct}%)",
-                "detail": "Doporuceno doplnit metadata",
-                "severity": "info",
-            })
+            recs.append(
+                {
+                    "icon": "&#128197;",
+                    "text": f"{no_date} souboru bez data porizeni ({pct}%)",
+                    "detail": "Doporuceno doplnit metadata",
+                    "severity": "info",
+                }
+            )
 
         no_hash = total - meta.get("hashed_count", 0)
         if no_hash > 0:
-            recs.append({
-                "icon": "&#128274;",
-                "text": f"{no_hash} souboru bez SHA-256 hashe",
-                "detail": "Spustte pipeline pro doplneni",
-                "severity": "info",
-            })
+            recs.append(
+                {
+                    "icon": "&#128274;",
+                    "text": f"{no_hash} souboru bez SHA-256 hashe",
+                    "detail": "Spustte pipeline pro doplneni",
+                    "severity": "info",
+                }
+            )
 
     quality = data.get("quality", {})
     screenshots = quality.get("screenshots", 0)
     if screenshots > 50:
-        recs.append({
-            "icon": "&#128248;",
-            "text": f"{screenshots} screenshotu k provereni",
-            "detail": "Zvazit archivaci nebo smazani",
-            "severity": "info",
-        })
+        recs.append(
+            {
+                "icon": "&#128248;",
+                "text": f"{screenshots} screenshotu k provereni",
+                "detail": "Zvazit archivaci nebo smazani",
+                "severity": "info",
+            }
+        )
 
     coverage = data.get("coverage", {})
     gaps = coverage.get("gaps", [])
     if len(gaps) > 3:
-        recs.append({
-            "icon": "&#128197;",
-            "text": f"{len(gaps)} mezer v casovem pokryti",
-            "detail": "Chybi data za nektera obdobi",
-            "severity": "info",
-        })
+        recs.append(
+            {
+                "icon": "&#128197;",
+                "text": f"{len(gaps)} mezer v casovem pokryti",
+                "detail": "Chybi data za nektera obdobi",
+                "severity": "info",
+            }
+        )
 
     if not recs:
-        recs.append({
-            "icon": "&#9989;",
-            "text": "Knihovna je v dobrem stavu",
-            "detail": "Zadna nutna akce",
-            "severity": "ok",
-        })
+        recs.append(
+            {
+                "icon": "&#9989;",
+                "text": "Knihovna je v dobrem stavu",
+                "detail": "Zadna nutna akce",
+                "severity": "ok",
+            }
+        )
 
     return recs
 
@@ -355,11 +358,11 @@ def _fmt_size(b: int | float) -> str:
     """Format bytes to human-readable string."""
     if b < 1024:
         return f"{b} B"
-    if b < 1024 ** 2:
+    if b < 1024**2:
         return f"{b / 1024:.1f} KB"
-    if b < 1024 ** 3:
-        return f"{b / 1024 ** 2:.1f} MB"
-    return f"{b / 1024 ** 3:.2f} GB"
+    if b < 1024**3:
+        return f"{b / 1024**2:.1f} MB"
+    return f"{b / 1024**3:.2f} GB"
 
 
 def _pct(part: int, total: int) -> str:
@@ -377,7 +380,7 @@ def _bar_html(label: str, value: int, max_value: int, color: str = "#3b82f6") ->
         f'<span class="bar-label">{label}</span>'
         f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;background:{color}"></div></div>'
         f'<span class="bar-value">{value:,}</span>'
-        f'</div>'
+        f"</div>"
     )
 
 
@@ -399,7 +402,7 @@ def _render_html(data: dict) -> str:
     # Overview section
     sources_html = ""
     for src in overview["sources"]:
-        sources_html += f'<tr><td>{src["path"]}</td><td>{src["file_count"]:,}</td><td>{src.get("last_scan", "-")}</td></tr>'
+        sources_html += f"<tr><td>{src['path']}</td><td>{src['file_count']:,}</td><td>{src.get('last_scan', '-')}</td></tr>"
 
     date_range = ""
     d_min, d_max = overview["date_range_original"]
@@ -407,6 +410,7 @@ def _render_html(data: dict) -> str:
         date_range = f"{d_min[:10]} &mdash; {d_max[:10]}"
     elif overview["date_range_mtime"][0]:
         from datetime import datetime as dt
+
         try:
             t_min = dt.fromtimestamp(overview["date_range_mtime"][0]).strftime("%Y-%m-%d")
             t_max = dt.fromtimestamp(overview["date_range_mtime"][1]).strftime("%Y-%m-%d")
@@ -423,23 +427,27 @@ def _render_html(data: dict) -> str:
           <div class="kpi-label">Celkem souboru</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{_fmt_size(overview['total_size'])}</div>
+          <div class="kpi-value">{_fmt_size(overview["total_size"])}</div>
           <div class="kpi-label">Celkova velikost</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{date_range or '-'}</div>
+          <div class="kpi-value">{date_range or "-"}</div>
           <div class="kpi-label">Casovy rozsah</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{overview['last_scan'] or '-'}</div>
+          <div class="kpi-value">{overview["last_scan"] or "-"}</div>
           <div class="kpi-label">Posledni sken</div>
         </div>
       </div>
-      {f'''<h3>Zdroje</h3>
+      {
+        f'''<h3>Zdroje</h3>
       <table class="data-table">
         <thead><tr><th>Cesta</th><th>Souboru</th><th>Posledni sken</th></tr></thead>
         <tbody>{sources_html}</tbody>
-      </table>''' if sources_html else ''}
+      </table>'''
+        if sources_html
+        else ""
+    }
     </section>
     """
 
@@ -449,15 +457,15 @@ def _render_html(data: dict) -> str:
       <h2>Duplicity</h2>
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="kpi-value">{dup['groups']:,}</div>
+          <div class="kpi-value">{dup["groups"]:,}</div>
           <div class="kpi-label">Skupin duplicit</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{dup['removable']:,}</div>
+          <div class="kpi-value">{dup["removable"]:,}</div>
           <div class="kpi-label">Souboru k odstraneni</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{_fmt_size(dup['savings_bytes'])}</div>
+          <div class="kpi-value">{_fmt_size(dup["savings_bytes"])}</div>
           <div class="kpi-label">Mozna uspora</div>
         </div>
       </div>
@@ -466,13 +474,13 @@ def _render_html(data: dict) -> str:
         <div class="comparison-col">
           <div class="comparison-label">Nyni</div>
           <div class="comparison-value">{total:,} souboru</div>
-          <div class="comparison-value">{_fmt_size(overview['total_size'])}</div>
+          <div class="comparison-value">{_fmt_size(overview["total_size"])}</div>
         </div>
         <div class="comparison-arrow">&rarr;</div>
         <div class="comparison-col">
           <div class="comparison-label">Po deduplikaci</div>
-          <div class="comparison-value">{dup['after_files']:,} souboru</div>
-          <div class="comparison-value">{_fmt_size(dup['after_size'])}</div>
+          <div class="comparison-value">{dup["after_files"]:,} souboru</div>
+          <div class="comparison-value">{_fmt_size(dup["after_size"])}</div>
         </div>
       </div>
     </section>
@@ -490,23 +498,23 @@ def _render_html(data: dict) -> str:
       <h2>Metadata</h2>
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="kpi-value">{meta['exif_date_count']:,} <small>({_pct(meta['exif_date_count'], total)})</small></div>
+          <div class="kpi-value">{meta["exif_date_count"]:,} <small>({_pct(meta["exif_date_count"], total)})</small></div>
           <div class="kpi-label">S EXIF datem</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{meta['gps_count']:,} <small>({_pct(meta['gps_count'], total)})</small></div>
+          <div class="kpi-value">{meta["gps_count"]:,} <small>({_pct(meta["gps_count"], total)})</small></div>
           <div class="kpi-label">S GPS</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{meta['camera_count']:,} <small>({_pct(meta['camera_count'], total)})</small></div>
+          <div class="kpi-value">{meta["camera_count"]:,} <small>({_pct(meta["camera_count"], total)})</small></div>
           <div class="kpi-label">S info o fotoaparatu</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">{round(meta['avg_richness'] * 100) if meta['avg_richness'] else 0}%</div>
+          <div class="kpi-value">{round(meta["avg_richness"] * 100) if meta["avg_richness"] else 0}%</div>
           <div class="kpi-label">Prumerna bohatost metadat</div>
         </div>
       </div>
-      {f'<h3>Top 5 fotoaparatu</h3><div class="bar-chart">{cameras_html}</div>' if cameras_html else ''}
+      {f'<h3>Top 5 fotoaparatu</h3><div class="bar-chart">{cameras_html}</div>' if cameras_html else ""}
     </section>
     """
 
@@ -525,16 +533,16 @@ def _render_html(data: dict) -> str:
           <h2>Casove pokryti</h2>
           <div class="kpi-grid">
             <div class="kpi-card">
-              <div class="kpi-value">{coverage['first']}</div>
+              <div class="kpi-value">{coverage["first"]}</div>
               <div class="kpi-label">Prvni zaznam</div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-value">{coverage['last']}</div>
+              <div class="kpi-value">{coverage["last"]}</div>
               <div class="kpi-label">Posledni zaznam</div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-value">{coverage['percentage']}%</div>
-              <div class="kpi-label">Pokryti ({coverage['covered_months']}/{coverage['total_months']} mesicu)</div>
+              <div class="kpi-value">{coverage["percentage"]}%</div>
+              <div class="kpi-label">Pokryti ({coverage["covered_months"]}/{coverage["total_months"]} mesicu)</div>
             </div>
           </div>
           {gaps_html}
@@ -575,11 +583,11 @@ def _render_html(data: dict) -> str:
           <h2>Obliceje</h2>
           <div class="kpi-grid">
             <div class="kpi-card">
-              <div class="kpi-value">{faces['total_faces']:,}</div>
+              <div class="kpi-value">{faces["total_faces"]:,}</div>
               <div class="kpi-label">Detekovanych obliceju</div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-value">{faces['total_persons']:,}</div>
+              <div class="kpi-value">{faces["total_persons"]:,}</div>
               <div class="kpi-label">Identifikovanych osob</div>
             </div>
           </div>
@@ -610,10 +618,10 @@ def _render_html(data: dict) -> str:
         severity_class = f"rec-{rec['severity']}"
         recs_html += f"""
         <div class="rec-card {severity_class}">
-          <span class="rec-icon">{rec['icon']}</span>
+          <span class="rec-icon">{rec["icon"]}</span>
           <div class="rec-text">
-            <strong>{rec['text']}</strong>
-            <span class="rec-detail">{rec['detail']}</span>
+            <strong>{rec["text"]}</strong>
+            <span class="rec-detail">{rec["detail"]}</span>
           </div>
         </div>
         """

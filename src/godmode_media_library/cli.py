@@ -379,11 +379,7 @@ def cmd_delete_plan(args: argparse.Namespace) -> int:
     roots = _parse_roots(args.roots)
     plan_path = Path(args.out).expanduser().resolve()
     ensure_dir(plan_path.parent)
-    summary_path = (
-        Path(args.summary_out).expanduser().resolve()
-        if args.summary_out
-        else (plan_path.parent / "delete_plan_summary.json")
-    )
+    summary_path = Path(args.summary_out).expanduser().resolve() if args.summary_out else (plan_path.parent / "delete_plan_summary.json")
 
     select_paths = Path(args.select_paths).expanduser().resolve() if args.select_paths else None
     recommendations = Path(args.recommendations).expanduser().resolve() if args.recommendations else None
@@ -437,6 +433,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if not args.no_browser:
         import threading
         import webbrowser
+
         threading.Timer(1.0, lambda: webbrowser.open(f"http://{args.host}:{args.port}")).start()
 
     print("GOD MODE Media Library — Web UI")
@@ -680,10 +677,7 @@ def cmd_metadata_diff(args: argparse.Namespace) -> int:
                 "partial_tags": len(diff.partial),
                 "conflict_tags": len(diff.conflicts),
                 "partial_details": {tag: list(paths.keys()) for tag, paths in diff.partial.items()},
-                "conflict_details": {
-                    tag: {p: str(v) for p, v in paths.items()}
-                    for tag, paths in diff.conflicts.items()
-                },
+                "conflict_details": {tag: {p: str(v) for p, v in paths.items()} for tag, paths in diff.conflicts.items()},
             }
             report.append(group_report)
 
@@ -888,14 +882,36 @@ def cmd_export(args: argparse.Namespace) -> int:
     with catalog:
         if args.what == "files":
             rows = catalog.query_files(limit=args.limit)
-            headers = ["path", "size", "ext", "sha256", "date_original", "camera_make", "camera_model",
-                       "width", "height", "gps_latitude", "gps_longitude"]
+            headers = [
+                "path",
+                "size",
+                "ext",
+                "sha256",
+                "date_original",
+                "camera_make",
+                "camera_model",
+                "width",
+                "height",
+                "gps_latitude",
+                "gps_longitude",
+            ]
             data = []
             for r in rows:
-                data.append([r.path, r.size, r.ext, r.sha256 or "", r.date_original or "",
-                             r.camera_make or "", r.camera_model or "",
-                             r.width or "", r.height or "",
-                             r.gps_latitude or "", r.gps_longitude or ""])
+                data.append(
+                    [
+                        r.path,
+                        r.size,
+                        r.ext,
+                        r.sha256 or "",
+                        r.date_original or "",
+                        r.camera_make or "",
+                        r.camera_model or "",
+                        r.width or "",
+                        r.height or "",
+                        r.gps_latitude or "",
+                        r.gps_longitude or "",
+                    ]
+                )
         elif args.what == "duplicates":
             groups = catalog.query_duplicates()
             headers = ["group_id", "path", "size", "is_primary"]
@@ -966,9 +982,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gml",
         description="GOD MODE media organizer with metadata-first safety",
+        allow_abbrev=False,
     )
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v INFO, -vv DEBUG)")
     parser.add_argument("--log-file", default=None, help="Path for JSON-formatted log file")
+    parser.add_argument("--logfile-max-mb", type=int, default=10, help="Max log file size in MB before rotation (default 10)")
+    parser.add_argument("--logfile-backups", type=int, default=3, help="Number of rotated log backup files (default 3)")
     parser.add_argument("--lang", choices=["en", "cs"], default=None, help="Language (en/cs)")
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1172,7 +1191,8 @@ def build_parser() -> argparse.ArgumentParser:
     papl.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
     papl.add_argument("--reverse-geocode", action="store_true", help="Resolve GPS to city/country labels via Nominatim")
     papl.add_argument(
-        "--gdpr-consent", action="store_true",
+        "--gdpr-consent",
+        action="store_true",
         help="Acknowledge GDPR implications of sending GPS to external API",
     )
     papl.add_argument("--geocode-cache", default=None, help="Optional JSON cache path for reverse geocoding")
@@ -1252,7 +1272,12 @@ def main() -> int:
         if args.lang:
             set_lang(args.lang)
         log_file = Path(args.log_file) if args.log_file else None
-        setup_logging(verbosity=args.verbose, log_file=log_file)
+        setup_logging(
+            verbosity=args.verbose,
+            log_file=log_file,
+            log_max_bytes=args.logfile_max_mb * 1024 * 1024,
+            log_backup_count=args.logfile_backups,
+        )
         logger.debug("command=%s args=%s", args.command, vars(args))
         return int(args.func(args))
     except KeyboardInterrupt:

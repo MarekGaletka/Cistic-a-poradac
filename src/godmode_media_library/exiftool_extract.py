@@ -36,7 +36,10 @@ def exiftool_available(bin_path: str = "exiftool") -> str | None:
         return None
     try:
         result = subprocess.run(
-            [resolved, "-ver"], capture_output=True, text=True, timeout=10,
+            [resolved, "-ver"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )  # noqa: S603
         if result.returncode == 0:
             return resolved
@@ -80,12 +83,14 @@ def extract_all_metadata(
     for chunk in _chunks(paths, _CHUNK_SIZE):
         cmd = [
             binary,
-            "-j",               # JSON output
-            "-n",               # Numeric values (GPS as float, not DMS)
-            "-G1",              # Group 1 prefixes (EXIF:, XMP:, IPTC:, etc.)
-            "-q", "-q",         # Suppress all warnings
-            "-api", "LargeFileSupport=1",
-            "-b",               # Include binary tag indicators
+            "-j",  # JSON output
+            "-n",  # Numeric values (GPS as float, not DMS)
+            "-G1",  # Group 1 prefixes (EXIF:, XMP:, IPTC:, etc.)
+            "-q",
+            "-q",  # Suppress all warnings
+            "-api",
+            "LargeFileSupport=1",
+            "-b",  # Include binary tag indicators
             "--ThumbnailImage",  # Exclude large binary blobs
             "--PreviewImage",
             "--JpgFromRaw",
@@ -95,7 +100,10 @@ def extract_all_metadata(
 
         try:
             proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )  # noqa: S603
         except subprocess.TimeoutExpired:
             logger.warning("ExifTool timeout for batch of %d files", len(chunk))

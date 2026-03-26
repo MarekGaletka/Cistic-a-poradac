@@ -20,6 +20,7 @@ CHUNK_SIZE = 1 << 16  # 64 KB
 @dataclass
 class BitrotResult:
     """Result of a bit rot scan."""
+
     total_checked: int = 0
     healthy: int = 0
     corrupted: int = 0
@@ -93,14 +94,16 @@ def scan_bitrot(
 
     for i, (file_id, path, stored_hash, size) in enumerate(rows):
         if progress_fn and i % 50 == 0:
-            progress_fn({
-                "phase": "verifying",
-                "current": i,
-                "total": total,
-                "progress_pct": int((i / max(total, 1)) * 100),
-                "healthy": result.healthy,
-                "corrupted": result.corrupted,
-            })
+            progress_fn(
+                {
+                    "phase": "verifying",
+                    "current": i,
+                    "total": total,
+                    "progress_pct": int((i / max(total, 1)) * 100),
+                    "healthy": result.healthy,
+                    "corrupted": result.corrupted,
+                }
+            )
 
         if not os.path.isfile(path):
             result.missing += 1
@@ -124,13 +127,15 @@ def scan_bitrot(
             )
         else:
             result.corrupted += 1
-            result.corrupted_files.append({
-                "id": file_id,
-                "path": path,
-                "size": size,
-                "stored_hash": stored_hash,
-                "actual_hash": computed,
-            })
+            result.corrupted_files.append(
+                {
+                    "id": file_id,
+                    "path": path,
+                    "size": size,
+                    "stored_hash": stored_hash,
+                    "actual_hash": computed,
+                }
+            )
             logger.warning("BIT ROT DETECTED: %s (stored=%s, actual=%s)", path, stored_hash[:12], computed[:12])
 
         # Commit every 100 files
@@ -141,13 +146,15 @@ def scan_bitrot(
     result.elapsed_seconds = round(time.monotonic() - start, 2)
 
     if progress_fn:
-        progress_fn({
-            "phase": "complete",
-            "progress_pct": 100,
-            "total_checked": result.total_checked,
-            "corrupted": result.corrupted,
-            "missing": result.missing,
-        })
+        progress_fn(
+            {
+                "phase": "complete",
+                "progress_pct": 100,
+                "total_checked": result.total_checked,
+                "corrupted": result.corrupted,
+                "missing": result.missing,
+            }
+        )
 
     return result
 
@@ -159,14 +166,10 @@ def get_verification_stats(catalog) -> dict:
     never_verified = total - verified
 
     # Oldest verification
-    oldest = catalog.conn.execute(
-        "SELECT MIN(last_verified) FROM files WHERE last_verified IS NOT NULL"
-    ).fetchone()[0]
+    oldest = catalog.conn.execute("SELECT MIN(last_verified) FROM files WHERE last_verified IS NOT NULL").fetchone()[0]
 
     # Average verify count
-    avg_count = catalog.conn.execute(
-        "SELECT AVG(COALESCE(verify_count, 0)) FROM files WHERE sha256 IS NOT NULL"
-    ).fetchone()[0] or 0
+    avg_count = catalog.conn.execute("SELECT AVG(COALESCE(verify_count, 0)) FROM files WHERE sha256 IS NOT NULL").fetchone()[0] or 0
 
     return {
         "total_files": total,

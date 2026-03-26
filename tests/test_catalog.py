@@ -169,7 +169,7 @@ def test_start_finish_scan(tmp_path: Path) -> None:
         assert row is not None
         assert row[3] is not None  # finished_at
         assert row[4] == 10  # files_scanned
-        assert row[5] == 5   # files_new
+        assert row[5] == 5  # files_new
 
 
 # ── Duplicate tracking ───────────────────────────────────────────────

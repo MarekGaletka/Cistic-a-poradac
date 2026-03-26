@@ -118,15 +118,9 @@ def ensure_backup_tables(catalog: Catalog) -> None:
             UNIQUE(file_id, remote_name)
         )
     """)
-    catalog.conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bm_file ON backup_manifest(file_id)"
-    )
-    catalog.conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name)"
-    )
-    catalog.conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256)"
-    )
+    catalog.conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_file ON backup_manifest(file_id)")
+    catalog.conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name)")
+    catalog.conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256)")
     catalog.conn.commit()
 
 
@@ -159,15 +153,14 @@ def probe_targets(catalog: Catalog) -> list[BackupTarget]:
             try:
                 all_config = subprocess.run(
                     [_rclone_bin(), "config", "dump"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 if all_config.returncode == 0:
                     config_data = json.loads(all_config.stdout)
                     for crypt_name, crypt_cfg in config_data.items():
-                        if (
-                            crypt_cfg.get("type") == "crypt"
-                            and crypt_cfg.get("remote", "").startswith(f"{r.name}:")
-                        ):
+                        if crypt_cfg.get("type") == "crypt" and crypt_cfg.get("remote", "").startswith(f"{r.name}:"):
                             target.encrypted = True
                             target.crypt_remote = crypt_name
                             break
@@ -228,9 +221,7 @@ def get_targets(catalog: Catalog) -> list[BackupTarget]:
     ]
 
 
-def set_target_enabled(
-    catalog: Catalog, remote_name: str, enabled: bool
-) -> None:
+def set_target_enabled(catalog: Catalog, remote_name: str, enabled: bool) -> None:
     """Enable or disable a remote as backup target."""
     ensure_backup_tables(catalog)
     catalog.conn.execute(
@@ -240,9 +231,7 @@ def set_target_enabled(
     catalog.conn.commit()
 
 
-def set_target_priority(
-    catalog: Catalog, remote_name: str, priority: int
-) -> None:
+def set_target_priority(catalog: Catalog, remote_name: str, priority: int) -> None:
     """Set fill priority for a target (lower = fill first)."""
     ensure_backup_tables(catalog)
     catalog.conn.execute(
@@ -362,9 +351,7 @@ def create_backup_plan(catalog: Catalog) -> BackupPlan:
     - Each file assigned to the target with most free space that can fit it
     - 500MB reserve kept on each target
     """
-    targets = [
-        t for t in get_targets(catalog) if t.enabled and t.available_bytes > 0
-    ]
+    targets = [t for t in get_targets(catalog) if t.enabled and t.available_bytes > 0]
     if not targets:
         return BackupPlan()
 
@@ -461,9 +448,7 @@ def execute_backup_plan(
 
     # Build mapping of remote_name -> crypt_remote from targets
     targets_list = get_targets(catalog)
-    crypt_map: dict[str, str] = {
-        t.remote_name: t.crypt_remote for t in targets_list if t.crypt_remote
-    }
+    crypt_map: dict[str, str] = {t.remote_name: t.crypt_remote for t in targets_list if t.crypt_remote}
 
     # Group entries by (remote, remote_path) for batch uploads
     groups: dict[tuple[str, str], list[dict]] = {}
@@ -517,9 +502,7 @@ def execute_backup_plan(
                     f"{upload_remote}:{upload_path}/",
                     "--no-traverse",
                 ]
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=300
-                )
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
                 if result.returncode == 0:
                     # Record in manifest
@@ -546,9 +529,7 @@ def execute_backup_plan(
                     bytes_uploaded += entry["size"]
                     if remote in crypt_map:
                         encrypted_files += 1
-                    logger.info(
-                        "Backed up: %s -> %s:%s", file_path, upload_remote, upload_path
-                    )
+                    logger.info("Backed up: %s -> %s:%s", file_path, upload_remote, upload_path)
                 else:
                     errors += 1
                     logger.error(
@@ -594,15 +575,9 @@ def get_backup_stats(catalog: Catalog) -> BackupStats:
     """Get overall backup health statistics."""
     ensure_backup_tables(catalog)
 
-    total = catalog.conn.execute(
-        "SELECT COUNT(*) FROM files WHERE sha256 IS NOT NULL"
-    ).fetchone()[0]
-    backed_up = catalog.conn.execute(
-        "SELECT COUNT(DISTINCT file_id) FROM backup_manifest"
-    ).fetchone()[0]
-    total_size = catalog.conn.execute(
-        "SELECT COALESCE(SUM(size), 0) FROM backup_manifest"
-    ).fetchone()[0]
+    total = catalog.conn.execute("SELECT COUNT(*) FROM files WHERE sha256 IS NOT NULL").fetchone()[0]
+    backed_up = catalog.conn.execute("SELECT COUNT(DISTINCT file_id) FROM backup_manifest").fetchone()[0]
+    total_size = catalog.conn.execute("SELECT COALESCE(SUM(size), 0) FROM backup_manifest").fetchone()[0]
 
     # Per-remote breakdown
     remote_rows = catalog.conn.execute("""
@@ -615,9 +590,7 @@ def get_backup_stats(catalog: Catalog) -> BackupStats:
         files_by_remote[r[0]] = {"files": r[1], "size": r[2] or 0}
 
     # Last backup time
-    last = catalog.conn.execute(
-        "SELECT MAX(backed_up_at) FROM backup_manifest"
-    ).fetchone()[0]
+    last = catalog.conn.execute("SELECT MAX(backed_up_at) FROM backup_manifest").fetchone()[0]
 
     # Count healthy remotes (those that are still accessible)
     targets = get_targets(catalog)
@@ -709,16 +682,13 @@ def verify_backups(
             )
             if result.returncode == 0 and result.stdout.strip():
                 catalog.conn.execute(
-                    "UPDATE backup_manifest SET verified = 1, "
-                    "verified_at = datetime('now') WHERE id = ?",
+                    "UPDATE backup_manifest SET verified = 1, verified_at = datetime('now') WHERE id = ?",
                     (manifest_id,),
                 )
                 verified += 1
             else:
                 missing += 1
-                logger.warning(
-                    "Backup missing: %s on %s:%s", fname, rname, rpath
-                )
+                logger.warning("Backup missing: %s on %s:%s", fname, rname, rpath)
         except Exception as e:
             errors += 1
             logger.error("Verify error: %s", e)
@@ -756,7 +726,9 @@ def auto_heal(catalog: Catalog, progress_fn: Callable | None = None) -> dict:
         try:
             result = subprocess.run(
                 [_rclone_bin(), "lsd", f"{t.remote_name}:", "--max-depth", "1"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             if result.returncode == 0:
                 healthy_remotes.add(t.remote_name)
@@ -770,10 +742,13 @@ def auto_heal(catalog: Catalog, progress_fn: Callable | None = None) -> dict:
 
     # 2. Find affected files
     placeholders = ",".join("?" for _ in unhealthy_remotes)
-    affected = catalog.conn.execute(f"""
+    affected = catalog.conn.execute(
+        f"""
         SELECT id, file_id, remote_name FROM backup_manifest
         WHERE remote_name IN ({placeholders})
-    """, list(unhealthy_remotes)).fetchall()
+    """,
+        list(unhealthy_remotes),
+    ).fetchall()
 
     if not affected:
         return {"status": "ok", "message": "\u017d\u00e1dn\u00e9 soubory na nezdrav\u00fdch remotech", "healed": 0}
@@ -798,9 +773,7 @@ def auto_heal(catalog: Catalog, progress_fn: Callable | None = None) -> dict:
     }
 
 
-def remove_backup_entry(
-    catalog: Catalog, file_id: int, remote_name: str
-) -> bool:
+def remove_backup_entry(catalog: Catalog, file_id: int, remote_name: str) -> bool:
     """Remove a backup manifest entry (doesn't delete the remote file)."""
     ensure_backup_tables(catalog)
     catalog.conn.execute(

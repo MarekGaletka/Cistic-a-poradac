@@ -130,9 +130,7 @@ def validate_config(config: GMLConfig) -> None:
         errors.append(f"dedup_similarity_threshold must be 1-64, got {config.dedup_similarity_threshold}")
 
     if errors:
-        raise ConfigValidationError(
-            "Invalid configuration:\n" + "\n".join(f"  - {e}" for e in errors)
-        )
+        raise ConfigValidationError("Invalid configuration:\n" + "\n".join(f"  - {e}" for e in errors))
 
 
 def format_config(config: GMLConfig) -> str:

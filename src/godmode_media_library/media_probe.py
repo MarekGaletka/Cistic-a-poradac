@@ -13,8 +13,23 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _MEDIA_EXTS = {
-    "mov", "mp4", "m4v", "avi", "mkv", "wmv", "flv", "webm", "3gp",
-    "mp3", "m4a", "wav", "flac", "ogg", "aac", "wma", "opus",
+    "mov",
+    "mp4",
+    "m4v",
+    "avi",
+    "mkv",
+    "wmv",
+    "flv",
+    "webm",
+    "3gp",
+    "mp3",
+    "m4a",
+    "wav",
+    "flac",
+    "ogg",
+    "aac",
+    "wma",
+    "opus",
 }
 
 _FFPROBE_BIN: str | None = None
@@ -25,6 +40,7 @@ def _find_ffprobe() -> str | None:
     if _FFPROBE_BIN is not None:
         return _FFPROBE_BIN
     from .deps import resolve_bin
+
     _FFPROBE_BIN = resolve_bin("ffprobe")
     return _FFPROBE_BIN
 
@@ -64,8 +80,10 @@ def probe_file(path: Path, *, ffprobe_bin: str | None = None, timeout: float = 3
 
     cmd = [
         bin_path,
-        "-v", "quiet",
-        "-print_format", "json",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
         "-show_format",
         "-show_streams",
         str(path),

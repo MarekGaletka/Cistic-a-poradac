@@ -133,25 +133,29 @@ def detect_sources() -> list[dict]:
     # Well-known user directories
     for name, path, src_type in _WELL_KNOWN_DIRS:
         available = path.is_dir()
-        sources.append({
-            "name": name,
-            "path": path,
-            "icon": _icon_for(src_type),
-            "type": src_type,
-            "available": available,
-            "file_count": _quick_file_count(path) if available else 0,
-        })
+        sources.append(
+            {
+                "name": name,
+                "path": path,
+                "icon": _icon_for(src_type),
+                "type": src_type,
+                "available": available,
+                "file_count": _quick_file_count(path) if available else 0,
+            }
+        )
 
     # iCloud Mobile Documents
     if _ICLOUD_DIR.is_dir():
-        sources.append({
-            "name": "iCloud Drive",
-            "path": _ICLOUD_DIR,
-            "icon": _icon_for("icloud"),
-            "type": "icloud",
-            "available": True,
-            "file_count": _quick_file_count(_ICLOUD_DIR),
-        })
+        sources.append(
+            {
+                "name": "iCloud Drive",
+                "path": _ICLOUD_DIR,
+                "icon": _icon_for("icloud"),
+                "type": "icloud",
+                "available": True,
+                "file_count": _quick_file_count(_ICLOUD_DIR),
+            }
+        )
 
     # External / mounted volumes
     if _VOLUMES.is_dir():
@@ -162,14 +166,16 @@ def detect_sources() -> list[dict]:
                 if not vol.is_dir():
                     continue
                 vol_type = "iphone" if _looks_like_iphone(vol) else "external"
-                sources.append({
-                    "name": vol.name,
-                    "path": vol,
-                    "icon": _icon_for(vol_type),
-                    "type": vol_type,
-                    "available": True,
-                    "file_count": _quick_file_count(vol),
-                })
+                sources.append(
+                    {
+                        "name": vol.name,
+                        "path": vol,
+                        "icon": _icon_for(vol_type),
+                        "type": vol_type,
+                        "available": True,
+                        "file_count": _quick_file_count(vol),
+                    }
+                )
         except PermissionError:
             logger.warning("Cannot list /Volumes — permission denied")
 
@@ -193,6 +199,7 @@ def _looks_like_iphone(vol: Path) -> bool:
 # ---------------------------------------------------------------------------
 # Plan generation
 # ---------------------------------------------------------------------------
+
 
 def _should_exclude(path: Path, patterns: list[str]) -> bool:
     """Return True if *path* matches any exclude pattern."""
@@ -355,33 +362,34 @@ def plan_reorganization(
 
         if effective_workers > 1 and total_hash > 0:
             with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-                futures = {
-                    pool.submit(_hash_one, idx, entry): idx
-                    for idx, entry in hashable
-                }
+                futures = {pool.submit(_hash_one, idx, entry): idx for idx, entry in hashable}
                 for future in as_completed(futures):
                     idx, digest = future.result()
                     entries[idx].sha256 = digest
                     hashed_count += 1
                     if progress_fn and hashed_count % 50 == 0:
-                        progress_fn({
-                            "phase": "hashing",
-                            "current": hashed_count,
-                            "total": total_hash,
-                            "current_file": str(entries[idx].source_path),
-                        })
+                        progress_fn(
+                            {
+                                "phase": "hashing",
+                                "current": hashed_count,
+                                "total": total_hash,
+                                "current_file": str(entries[idx].source_path),
+                            }
+                        )
         else:
             for idx, entry in hashable:
                 _, digest = _hash_one(idx, entry)
                 entries[idx].sha256 = digest
                 hashed_count += 1
                 if progress_fn and hashed_count % 50 == 0:
-                    progress_fn({
-                        "phase": "hashing",
-                        "current": hashed_count,
-                        "total": total_hash,
-                        "current_file": str(entry.source_path),
-                    })
+                    progress_fn(
+                        {
+                            "phase": "hashing",
+                            "current": hashed_count,
+                            "total": total_hash,
+                            "current_file": str(entry.source_path),
+                        }
+                    )
 
         if progress_fn:
             progress_fn({"phase": "hashing", "current": total_hash, "total": total_hash, "current_file": ""})
@@ -431,19 +439,23 @@ def plan_reorganization(
         planned += 1
 
         if progress_fn and planned % 200 == 0:
-            progress_fn({
-                "phase": "planning",
-                "current": planned,
-                "total": plan.unique_files,
-                "current_file": str(entry.source_path),
-            })
+            progress_fn(
+                {
+                    "phase": "planning",
+                    "current": planned,
+                    "total": plan.unique_files,
+                    "current_file": str(entry.source_path),
+                }
+            )
 
     if progress_fn:
         progress_fn({"phase": "planning", "current": plan.unique_files, "total": plan.unique_files, "current_file": ""})
 
     logger.info(
         "Plan ready: %d total, %d unique, %d duplicates, %s total size",
-        plan.total_files, plan.unique_files, plan.duplicate_files,
+        plan.total_files,
+        plan.unique_files,
+        plan.duplicate_files,
         _human_size(plan.total_size),
     )
     return plan
@@ -452,6 +464,7 @@ def plan_reorganization(
 # ---------------------------------------------------------------------------
 # Plan execution
 # ---------------------------------------------------------------------------
+
 
 def execute_reorganization(
     plan: ReorganizePlan,
@@ -478,12 +491,14 @@ def execute_reorganization(
             entry.status = "planned"
             result.files_skipped += 1
             if progress_fn and (idx + 1) % 50 == 0:
-                progress_fn({
-                    "phase": "executing",
-                    "current": idx + 1,
-                    "total": total,
-                    "current_file": str(entry.source_path),
-                })
+                progress_fn(
+                    {
+                        "phase": "executing",
+                        "current": idx + 1,
+                        "total": total,
+                        "current_file": str(entry.source_path),
+                    }
+                )
             continue
 
         src = entry.source_path
@@ -534,12 +549,14 @@ def execute_reorganization(
             result.files_skipped += 1
 
         if progress_fn and (idx + 1) % 50 == 0:
-            progress_fn({
-                "phase": "executing",
-                "current": idx + 1,
-                "total": total,
-                "current_file": str(entry.source_path),
-            })
+            progress_fn(
+                {
+                    "phase": "executing",
+                    "current": idx + 1,
+                    "total": total,
+                    "current_file": str(entry.source_path),
+                }
+            )
 
     if progress_fn:
         progress_fn({"phase": "executing", "current": total, "total": total, "current_file": ""})
@@ -563,20 +580,24 @@ def execute_reorganization(
                 result.errors.append(f"Cannot delete original {entry.source_path}: {exc}")
 
             if progress_fn and (idx + 1) % 50 == 0:
-                progress_fn({
-                    "phase": "cleanup",
-                    "current": idx + 1,
-                    "total": len(successfully_copied),
-                    "current_file": str(entry.source_path),
-                })
+                progress_fn(
+                    {
+                        "phase": "cleanup",
+                        "current": idx + 1,
+                        "total": len(successfully_copied),
+                        "current_file": str(entry.source_path),
+                    }
+                )
 
         if progress_fn:
-            progress_fn({
-                "phase": "cleanup",
-                "current": len(successfully_copied),
-                "total": len(successfully_copied),
-                "current_file": "",
-            })
+            progress_fn(
+                {
+                    "phase": "cleanup",
+                    "current": len(successfully_copied),
+                    "total": len(successfully_copied),
+                    "current_file": "",
+                }
+            )
 
     # Count space saved from dedup (skipped duplicates)
     if config.deduplicate:
@@ -584,8 +605,11 @@ def execute_reorganization(
 
     logger.info(
         "Reorganization complete: %d processed, %d copied, %d skipped, %d deleted, %s saved",
-        result.files_processed, result.files_copied, result.files_skipped,
-        result.originals_deleted, _human_size(result.space_saved),
+        result.files_processed,
+        result.files_copied,
+        result.files_skipped,
+        result.originals_deleted,
+        _human_size(result.space_saved),
     )
     return result
 
@@ -593,6 +617,7 @@ def execute_reorganization(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _human_size(size_bytes: int) -> str:
     """Format bytes as human-readable string."""

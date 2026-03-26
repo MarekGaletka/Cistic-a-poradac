@@ -18,8 +18,10 @@ def test_check_exiftool_found():
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.stdout = "12.76\n"
-    with patch("godmode_media_library.deps.shutil.which", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", return_value=mock_proc):
+    with (
+        patch("godmode_media_library.deps.shutil.which", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
         status = check_exiftool()
     assert status.available is True
     assert status.version == "12.76"
@@ -37,8 +39,7 @@ def test_check_ffprobe_found():
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.stdout = "ffprobe version 6.1 Copyright (c) ...\n"
-    with patch("godmode_media_library.deps.shutil.which", return_value="/usr/bin/ffprobe"), \
-         patch("subprocess.run", return_value=mock_proc):
+    with patch("godmode_media_library.deps.shutil.which", return_value="/usr/bin/ffprobe"), patch("subprocess.run", return_value=mock_proc):
         status = check_ffprobe()
     assert status.available is True
     assert status.version is not None

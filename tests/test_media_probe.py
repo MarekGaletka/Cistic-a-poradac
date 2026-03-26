@@ -109,8 +109,10 @@ def test_probe_file_ffprobe_failure():
     mock_result = MagicMock()
     mock_result.returncode = 1
     mock_result.stderr = "error"
-    with patch("godmode_media_library.media_probe._find_ffprobe", return_value="/usr/bin/ffprobe"), \
-         patch("subprocess.run", return_value=mock_result):
+    with (
+        patch("godmode_media_library.media_probe._find_ffprobe", return_value="/usr/bin/ffprobe"),
+        patch("subprocess.run", return_value=mock_result),
+    ):
         result = probe_file(Path("/tmp/test.mp4"))
         assert result is None
 
@@ -118,15 +120,19 @@ def test_probe_file_ffprobe_failure():
 def test_probe_file_success():
     import json
 
-    ffprobe_output = json.dumps({
-        "format": {"duration": "10.0", "bit_rate": "1000000"},
-        "streams": [{"codec_type": "video", "codec_name": "h264", "width": 640, "height": 480, "r_frame_rate": "25/1"}],
-    })
+    ffprobe_output = json.dumps(
+        {
+            "format": {"duration": "10.0", "bit_rate": "1000000"},
+            "streams": [{"codec_type": "video", "codec_name": "h264", "width": 640, "height": 480, "r_frame_rate": "25/1"}],
+        }
+    )
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = ffprobe_output
-    with patch("godmode_media_library.media_probe._find_ffprobe", return_value="/usr/bin/ffprobe"), \
-         patch("subprocess.run", return_value=mock_result):
+    with (
+        patch("godmode_media_library.media_probe._find_ffprobe", return_value="/usr/bin/ffprobe"),
+        patch("subprocess.run", return_value=mock_result),
+    ):
         result = probe_file(Path("/tmp/test.mp4"))
         assert result is not None
         assert result.duration_seconds == 10.0

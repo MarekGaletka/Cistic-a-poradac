@@ -144,8 +144,15 @@ STEP_TYPES = {
         "label_key": "scenario.step_ultimate_consolidation",
         "icon": "\U0001f30d",
         "config_fields": [
-            "source_remotes", "dest_remote", "dest_path", "disk_path",
-            "structure_pattern", "verify_pct", "bwlimit", "dry_run", "media_only",
+            "source_remotes",
+            "dest_remote",
+            "dest_path",
+            "disk_path",
+            "structure_pattern",
+            "verify_pct",
+            "bwlimit",
+            "dry_run",
+            "media_only",
         ],
     },
 }
@@ -155,9 +162,11 @@ STEP_TYPES = {
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ScenarioStep:
     """A single step in a scenario."""
+
     type: str  # one of STEP_TYPES keys
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
@@ -166,6 +175,7 @@ class ScenarioStep:
 @dataclass
 class ScenarioTrigger:
     """Optional trigger condition for auto-running a scenario."""
+
     type: str = "manual"  # manual | volume_mount | schedule
     volume_name: str = ""  # for volume_mount trigger
     schedule_cron: str = ""  # for schedule trigger (future)
@@ -174,6 +184,7 @@ class ScenarioTrigger:
 @dataclass
 class Scenario:
     """A complete reusable scenario."""
+
     id: str = ""
     name: str = ""
     description: str = ""
@@ -195,6 +206,7 @@ class Scenario:
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
+
 
 def _load_scenarios() -> list[Scenario]:
     """Load all scenarios from disk."""
@@ -431,7 +443,11 @@ def get_templates() -> list[dict]:
                 {"type": "metadata_enrich", "config": {}, "enabled": True},
                 {"type": "timeline_analysis", "config": {}, "enabled": True},
                 {"type": "quality_analyze", "config": {}, "enabled": True},
-                {"type": "reorganize", "config": {"structure_pattern": "year_month", "deduplicate": True, "merge_metadata": True}, "enabled": True},
+                {
+                    "type": "reorganize",
+                    "config": {"structure_pattern": "year_month", "deduplicate": True, "merge_metadata": True},
+                    "enabled": True,
+                },
                 {"type": "cloud_backup", "config": {}, "enabled": True},
                 {"type": "generate_report", "config": {}, "enabled": True},
             ],
@@ -453,17 +469,21 @@ def get_templates() -> list[dict]:
             "icon": "\U0001f30d",
             "color": "#ff6b35",
             "steps": [
-                {"type": "ultimate_consolidation", "config": {
-                    "source_remotes": [],
-                    "dest_remote": "gws-backup",
-                    "dest_path": "GML-Consolidated",
-                    "disk_path": "/Volumes/4TB/GML-Library",
-                    "structure_pattern": "year_month",
-                    "verify_pct": 100,
-                    "bwlimit": None,
-                    "dry_run": False,
-                    "media_only": True,
-                }, "enabled": True},
+                {
+                    "type": "ultimate_consolidation",
+                    "config": {
+                        "source_remotes": [],
+                        "dest_remote": "gws-backup",
+                        "dest_path": "GML-Consolidated",
+                        "disk_path": "/Volumes/4TB/GML-Library",
+                        "structure_pattern": "year_month",
+                        "verify_pct": 100,
+                        "bwlimit": None,
+                        "dry_run": False,
+                        "media_only": True,
+                    },
+                    "enabled": True,
+                },
             ],
         },
     ]
@@ -472,6 +492,7 @@ def get_templates() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Execution engine
 # ---------------------------------------------------------------------------
+
 
 def execute_scenario(
     scenario_id: str,
@@ -496,29 +517,35 @@ def execute_scenario(
         step_info = STEP_TYPES.get(step_type, {})
 
         if progress_fn:
-            progress_fn({
-                "phase": "step",
-                "step_index": idx,
-                "total_steps": total_steps,
-                "step_type": step_type,
-                "step_icon": step_info.get("icon", ""),
-                "progress_pct": int((idx / max(total_steps, 1)) * 100),
-            })
+            progress_fn(
+                {
+                    "phase": "step",
+                    "step_index": idx,
+                    "total_steps": total_steps,
+                    "step_type": step_type,
+                    "step_icon": step_info.get("icon", ""),
+                    "progress_pct": int((idx / max(total_steps, 1)) * 100),
+                }
+            )
 
         try:
             result = _execute_step(step_type, step_config, catalog_path, progress_fn)
-            results.append({
-                "step_type": step_type,
-                "status": "completed",
-                "result": result,
-            })
+            results.append(
+                {
+                    "step_type": step_type,
+                    "status": "completed",
+                    "result": result,
+                }
+            )
         except Exception as e:
             logger.exception("Step %s failed", step_type)
-            results.append({
-                "step_type": step_type,
-                "status": "failed",
-                "error": str(e),
-            })
+            results.append(
+                {
+                    "step_type": step_type,
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
             # Continue with next step even if one fails
 
     # Mark the scenario as run
@@ -528,12 +555,14 @@ def execute_scenario(
     failed = sum(1 for r in results if r["status"] == "failed")
 
     if progress_fn:
-        progress_fn({
-            "phase": "complete",
-            "progress_pct": 100,
-            "completed_steps": completed,
-            "failed_steps": failed,
-        })
+        progress_fn(
+            {
+                "phase": "complete",
+                "progress_pct": 100,
+                "completed_steps": completed,
+                "failed_steps": failed,
+            }
+        )
 
     return {
         "scenario_id": scenario_id,
@@ -550,11 +579,13 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "deep_scan":
         from .recovery import deep_scan
+
         result = deep_scan()
         return {"files_found": result.files_found, "total_size": result.total_size}
 
     if step_type == "app_mine":
         from .recovery import mine_app_media
+
         app_ids = config.get("app_ids")
         results = mine_app_media(app_ids=app_ids)
         total_files = sum(r.files_found for r in results)
@@ -564,6 +595,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "app_download":
         from .recovery import mine_app_media, recover_files
+
         app_ids = config.get("app_ids")
         destination = config.get("destination", str(Path.home() / "Desktop" / "GML_Recovery" / "Apps"))
         results = mine_app_media(app_ids=app_ids, progress_fn=progress_fn)
@@ -572,23 +604,36 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             all_paths.extend(f["path"] for f in r.files)
         if all_paths:
             rec = recover_files(all_paths, destination)
-            return {"downloaded": rec["recovered"], "total_size": rec["total_size"], "destination": destination, "errors": len(rec["errors"])}
+            return {
+                "downloaded": rec["recovered"],
+                "total_size": rec["total_size"],
+                "destination": destination,
+                "errors": len(rec["errors"]),
+            }
         return {"downloaded": 0, "total_size": 0, "destination": destination, "errors": 0}
 
     if step_type == "signal_decrypt":
         from .recovery import decrypt_signal_attachments
+
         destination = config.get("destination", str(Path.home() / "Desktop" / "GML_Recovery" / "Signal"))
         result = decrypt_signal_attachments(destination=destination, progress_fn=progress_fn)
-        return {"decrypted": result["decrypted"], "total_size": result["total_size"], "destination": destination, "errors": len(result["errors"])}
+        return {
+            "decrypted": result["decrypted"],
+            "total_size": result["total_size"],
+            "destination": destination,
+            "errors": len(result["errors"]),
+        }
 
     if step_type == "integrity_check":
         from .recovery import check_integrity
+
         result = check_integrity(catalog_path=catalog_path)
         return {"total_checked": result.total_checked, "corrupted": result.corrupted, "healthy": result.healthy}
 
     if step_type == "scan":
         from .scanner import incremental_scan
         from .config import load_config
+
         cfg = load_config()
         roots = config.get("roots") or cfg.prefer_roots
         workers = config.get("workers", 4)
@@ -605,6 +650,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "dedup_resolve":
         from .catalog import Catalog
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
@@ -620,6 +666,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
     if step_type == "quarantine_cleanup":
         from .recovery import list_quarantine, delete_from_quarantine
         import time as _time
+
         older_than_days = config.get("older_than_days", 30)
         entries = list_quarantine()
         old_paths = []
@@ -629,6 +676,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             if e.quarantine_date:
                 try:
                     from datetime import datetime
+
                     dt = datetime.fromisoformat(e.quarantine_date)
                     if dt.timestamp() < cutoff:
                         old_paths.append(e.path)
@@ -638,6 +686,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                 # No date — check file mtime
                 try:
                     from pathlib import Path as _P
+
                     mtime = _P(e.path).stat().st_mtime
                     if mtime < cutoff:
                         old_paths.append(e.path)
@@ -654,22 +703,24 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "cloud_connect":
         from .cloud import list_remotes
+
         remotes = list_remotes()
         return {"remotes_available": len(remotes), "remotes": [r["name"] for r in remotes]}
 
     if step_type == "cloud_download":
         from .cloud import list_remotes, rclone_copy
+
         remotes = list_remotes()
         downloaded = 0
         for r in remotes:
             if r.get("mounted") or r.get("local_path"):
                 downloaded += 1
-        return {"sources_ready": downloaded, "total_sources": len(remotes),
-                "note": "Cloud zdroje připraveny ke stažení"}
+        return {"sources_ready": downloaded, "total_sources": len(remotes), "note": "Cloud zdroje připraveny ke stažení"}
 
     if step_type == "metadata_enrich":
         from .catalog import Catalog
         from .exiftool_extract import extract_all_metadata
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
@@ -682,6 +733,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "timeline_analysis":
         from .catalog import Catalog
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
@@ -704,8 +756,10 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "quality_analyze":
         from .catalog import Catalog
+
         try:
             from .quality import batch_analyze
+
             cat = Catalog(catalog_path)
             cat.open()
             try:
@@ -726,6 +780,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         try:
             from .report import generate_report
             from .catalog import Catalog
+
             cat = Catalog(catalog_path)
             cat.open()
             try:
@@ -738,6 +793,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "wait_for_sources":
         from .cloud import rclone_is_reachable, check_volume_mounted, list_remotes
+
         remotes_config = config.get("remotes") or []
         timeout_min = config.get("timeout_minutes", 5)
         # If no remotes specified, check all configured
@@ -745,6 +801,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             remotes_config = [r.name for r in list_remotes()]
         reachable = {}
         import time as _t
+
         deadline = _t.time() + timeout_min * 60
         while _t.time() < deadline:
             all_ok = True
@@ -763,6 +820,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
     if step_type == "cloud_catalog_scan":
         from .cloud import rclone_ls, rclone_is_reachable, list_remotes
         from .catalog import Catalog
+
         remotes_config = config.get("remotes") or []
         if not remotes_config:
             remotes_config = [r.name for r in list_remotes()]
@@ -792,10 +850,15 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         from .catalog import Catalog
         from . import checkpoint as ckpt
         from .consolidation_types import (
-            ERROR_TRUNCATE_LEN, FileStatus, JobStatus, Phase, JOB_TYPE_CLOUD_STREAM,
+            ERROR_TRUNCATE_LEN,
+            FileStatus,
+            JobStatus,
+            Phase,
+            JOB_TYPE_CLOUD_STREAM,
         )
         from pathlib import PurePosixPath
         import sqlite3 as _sqlite3
+
         dest_remote = config.get("dest_remote", "gws-backup")
         dest_path = config.get("dest_path", "GML-Consolidated")
         cat = Catalog(catalog_path)
@@ -849,45 +912,70 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                     try:
                         result = retry_with_backoff(
                             rclone_copyto,
-                            src_remote, src_path, dest_remote, dest_file_path,
+                            src_remote,
+                            src_path,
+                            dest_remote,
+                            dest_file_path,
                             max_retries=3,
                             retryable_exceptions=(RcloneTransferError, RuntimeError, OSError),
                             raise_on_failure=True,
                         )
                         if result["success"]:
                             ckpt.mark_file(
-                                cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.COMPLETED,
+                                cat,
+                                job.job_id,
+                                fs.file_hash,
+                                fs.source_location,
+                                Phase.STREAM,
+                                FileStatus.COMPLETED,
                                 dest=f"{dest_remote}:{dest_file_path}",
                                 bytes_transferred=result["bytes"],
                             )
                             transferred += 1
                         else:
                             ckpt.mark_file(
-                                cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.FAILED,
+                                cat,
+                                job.job_id,
+                                fs.file_hash,
+                                fs.source_location,
+                                Phase.STREAM,
+                                FileStatus.FAILED,
                                 error=result.get("error", "unknown"),
                             )
                             failed += 1
                     except RcloneTransferError as exc:
                         ckpt.mark_file(
-                            cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.FAILED,
+                            cat,
+                            job.job_id,
+                            fs.file_hash,
+                            fs.source_location,
+                            Phase.STREAM,
+                            FileStatus.FAILED,
                             error=str(exc)[:ERROR_TRUNCATE_LEN],
                         )
                         failed += 1
                     except Exception as exc:
                         ckpt.mark_file(
-                            cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.FAILED,
+                            cat,
+                            job.job_id,
+                            fs.file_hash,
+                            fs.source_location,
+                            Phase.STREAM,
+                            FileStatus.FAILED,
                             error=str(exc)[:ERROR_TRUNCATE_LEN],
                         )
                         failed += 1
                     if progress_fn:
                         progress = ckpt.get_job_progress(cat, job.job_id, Phase.STREAM)
-                        progress_fn({
-                            "phase": "streaming",
-                            "transferred": progress[FileStatus.COMPLETED],
-                            "failed": progress[FileStatus.FAILED],
-                            "pending": progress[FileStatus.PENDING],
-                            "bytes": progress["bytes_transferred"],
-                        })
+                        progress_fn(
+                            {
+                                "phase": "streaming",
+                                "transferred": progress[FileStatus.COMPLETED],
+                                "failed": progress[FileStatus.FAILED],
+                                "pending": progress[FileStatus.PENDING],
+                                "bytes": progress["bytes_transferred"],
+                            }
+                        )
                 pending = ckpt.get_pending_files(cat, job.job_id, Phase.STREAM, limit=1000)
             progress = ckpt.get_job_progress(cat, job.job_id, Phase.STREAM)
             if progress[FileStatus.PENDING] == 0 and progress[FileStatus.IN_PROGRESS] == 0:
@@ -905,6 +993,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
     if step_type == "cloud_verify_integrity":
         from .cloud import rclone_check_file, rclone_is_reachable
         from .catalog import Catalog
+
         remote = config.get("remote", "gws-backup")
         sample_pct = config.get("sample_pct", 10)
         if not rclone_is_reachable(remote):
@@ -933,6 +1022,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "sync_to_disk":
         from .cloud import rclone_copy, check_volume_mounted
+
         source_remote = config.get("source_remote", "gws-backup")
         source_path = config.get("source_path", "GML-Consolidated")
         disk_path = config.get("disk_path", "/Volumes/4TB/GML-Library")
@@ -940,7 +1030,9 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             return {"note": f"Disk {disk_path} není připojený", "synced": False}
         try:
             result = rclone_copy(
-                source_remote, source_path, disk_path,
+                source_remote,
+                source_path,
+                disk_path,
                 progress_fn=progress_fn,
             )
             return {"synced": True, "destination": disk_path, "result": result}
@@ -949,6 +1041,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "ultimate_consolidation":
         from .consolidation import ConsolidationConfig, run_consolidation
+
         cfg = ConsolidationConfig(
             source_remotes=config.get("source_remotes", []),
             dest_remote=config.get("dest_remote", "gws-backup"),
@@ -963,12 +1056,18 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         result = run_consolidation(
             catalog_path,
             config=cfg,
-            progress_fn=lambda p: progress_fn({
-                "phase": p.phase,
-                "step_type": "ultimate_consolidation",
-                "progress_pct": int((p.current_step / max(p.total_steps, 1)) * 100),
-                "detail": p.phase_label,
-            }) if progress_fn else None,
+            progress_fn=lambda p: (
+                progress_fn(
+                    {
+                        "phase": p.phase,
+                        "step_type": "ultimate_consolidation",
+                        "progress_pct": int((p.current_step / max(p.total_steps, 1)) * 100),
+                        "detail": p.phase_label,
+                    }
+                )
+                if progress_fn
+                else None
+            ),
         )
         return result
 
@@ -978,6 +1077,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 # ---------------------------------------------------------------------------
 # Volume mount detection (macOS)
 # ---------------------------------------------------------------------------
+
 
 def check_volume_triggers() -> list[dict]:
     """Check if any mounted volumes match scenario triggers.
@@ -1005,6 +1105,7 @@ def check_volume_triggers() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _scenario_to_dict(sc: Scenario) -> dict:
     return {

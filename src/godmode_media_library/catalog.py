@@ -305,13 +305,13 @@ class Catalog:
             self._lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
             try:
                 import fcntl
+
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 os.close(self._lock_fd)
                 self._lock_fd = None
                 raise RuntimeError(
-                    f"Another process holds an exclusive lock on {self._db_path}. "
-                    "Wait for it to finish or remove the lock file."
+                    f"Another process holds an exclusive lock on {self._db_path}. Wait for it to finish or remove the lock file."
                 ) from None
         conn = sqlite3.connect(str(self._db_path))
         try:
@@ -610,6 +610,7 @@ class Catalog:
         if self._lock_fd is not None:
             try:
                 import fcntl
+
                 fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
             except ImportError:
                 pass  # Windows — no flock needed
@@ -638,9 +639,18 @@ class Catalog:
         existing = cur.fetchone()
 
         media_cols = (
-            row.duration_seconds, row.width, row.height, row.video_codec,
-            row.audio_codec, row.bitrate, row.phash, row.date_original,
-            row.camera_make, row.camera_model, row.gps_latitude, row.gps_longitude,
+            row.duration_seconds,
+            row.width,
+            row.height,
+            row.video_codec,
+            row.audio_codec,
+            row.bitrate,
+            row.phash,
+            row.date_original,
+            row.camera_make,
+            row.camera_model,
+            row.gps_latitude,
+            row.gps_longitude,
         )
 
         if existing:
@@ -656,9 +666,20 @@ class Catalog:
                     camera_make=?, camera_model=?, gps_latitude=?, gps_longitude=?
                 WHERE id=?""",
                 (
-                    row.size, row.mtime, row.ctime, row.birthtime, row.ext, row.sha256,
-                    row.inode, row.device, row.nlink, row.asset_key, int(row.asset_component),
-                    row.xattr_count, first_seen, now,
+                    row.size,
+                    row.mtime,
+                    row.ctime,
+                    row.birthtime,
+                    row.ext,
+                    row.sha256,
+                    row.inode,
+                    row.device,
+                    row.nlink,
+                    row.asset_key,
+                    int(row.asset_component),
+                    row.xattr_count,
+                    first_seen,
+                    now,
                     *media_cols,
                     file_id,
                 ),
@@ -675,9 +696,21 @@ class Catalog:
                      camera_make, camera_model, gps_latitude, gps_longitude)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    row.path, row.size, row.mtime, row.ctime, row.birthtime, row.ext, row.sha256,
-                    row.inode, row.device, row.nlink, row.asset_key, int(row.asset_component),
-                    row.xattr_count, now, now,
+                    row.path,
+                    row.size,
+                    row.mtime,
+                    row.ctime,
+                    row.birthtime,
+                    row.ext,
+                    row.sha256,
+                    row.inode,
+                    row.device,
+                    row.nlink,
+                    row.asset_key,
+                    int(row.asset_component),
+                    row.xattr_count,
+                    now,
+                    now,
                     *media_cols,
                 ),
             )
@@ -758,6 +791,7 @@ class Catalog:
     def get_file_metadata(self, path: str) -> dict | None:
         """Retrieve full ExifTool metadata dict for a file. Returns None if not available."""
         import json
+
         cur = self.conn.execute(
             "SELECT fm.raw_json FROM file_metadata fm JOIN files f ON fm.file_id = f.id WHERE f.path = ?",
             (path,),
@@ -785,6 +819,7 @@ class Catalog:
     def get_group_metadata(self, group_id: str) -> list[tuple[str, dict]]:
         """Get full metadata for all files in a duplicate group."""
         import json
+
         cur = self.conn.execute(
             """SELECT f.path, fm.raw_json
                FROM duplicates d
@@ -911,9 +946,7 @@ class Catalog:
 
     def add_tag(self, name: str, color: str = "#58a6ff") -> dict:
         """Create a new tag. Returns the tag dict."""
-        cur = self.conn.execute(
-            "INSERT INTO tags (name, color) VALUES (?, ?)", (name, color)
-        )
+        cur = self.conn.execute("INSERT INTO tags (name, color) VALUES (?, ?)", (name, color))
         self.conn.commit()
         return {"id": cur.lastrowid, "name": name, "color": color, "file_count": 0}
 
@@ -984,9 +1017,7 @@ class Catalog:
     def query_files_by_tag(self, tag_id: int, limit: int = 10000, offset: int = 0) -> list[CatalogFileRow]:
         """Return files that have a specific tag."""
         cur = self.conn.execute(
-            "SELECT f.* FROM files f "
-            "JOIN file_tags ft ON f.id = ft.file_id "
-            "WHERE ft.tag_id = ? ORDER BY f.path LIMIT ? OFFSET ?",
+            "SELECT f.* FROM files f JOIN file_tags ft ON f.id = ft.file_id WHERE ft.tag_id = ? ORDER BY f.path LIMIT ? OFFSET ?",
             (tag_id, limit, offset),
         )
         return [self._row_to_catalog_file(row) for row in cur.fetchall()]
@@ -1019,9 +1050,7 @@ class Catalog:
 
         expires_at = None
         if expires_hours is not None and expires_hours > 0:
-            expires_at = (
-                dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=expires_hours)
-            ).isoformat()
+            expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=expires_hours)).isoformat()
 
         now = utc_stamp()
         cur = self.conn.execute(
@@ -1172,8 +1201,7 @@ class Catalog:
     def get_file_note(self, path: str) -> tuple[str, str] | None:
         """Return (note, updated_at) for a file, or None."""
         cur = self.conn.execute(
-            "SELECT fn.note, fn.updated_at FROM file_notes fn "
-            "JOIN files f ON fn.file_id = f.id WHERE f.path = ?",
+            "SELECT fn.note, fn.updated_at FROM file_notes fn JOIN files f ON fn.file_id = f.id WHERE f.path = ?",
             (path,),
         )
         row = cur.fetchone()
@@ -1226,8 +1254,7 @@ class Catalog:
     def get_file_rating(self, path: str) -> int | None:
         """Return rating (1-5) for a file, or None."""
         cur = self.conn.execute(
-            "SELECT fr.rating FROM file_ratings fr "
-            "JOIN files f ON fr.file_id = f.id WHERE f.path = ?",
+            "SELECT fr.rating FROM file_ratings fr JOIN files f ON fr.file_id = f.id WHERE f.path = ?",
             (path,),
         )
         row = cur.fetchone()
@@ -1241,8 +1268,7 @@ class Catalog:
             return
         file_id = row[0]
         self.conn.execute(
-            "INSERT INTO file_ratings (file_id, rating) VALUES (?, ?) "
-            "ON CONFLICT(file_id) DO UPDATE SET rating=excluded.rating",
+            "INSERT INTO file_ratings (file_id, rating) VALUES (?, ?) ON CONFLICT(file_id) DO UPDATE SET rating=excluded.rating",
             (file_id, rating),
         )
         self.conn.commit()
@@ -1293,8 +1319,7 @@ class Catalog:
                (file_id, face_index, bbox_top, bbox_right, bbox_bottom, bbox_left,
                 encoding, cluster_id, confidence, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (file_id, face_index, bbox[0], bbox[1], bbox[2], bbox[3],
-             encoding_blob, cluster_id, confidence, now),
+            (file_id, face_index, bbox[0], bbox[1], bbox[2], bbox[3], encoding_blob, cluster_id, confidence, now),
         )
         return cur.lastrowid  # type: ignore[return-value]
 
@@ -1309,9 +1334,13 @@ class Catalog:
         )
         return [
             {
-                "id": r[0], "face_index": r[1], "person_id": r[2],
+                "id": r[0],
+                "face_index": r[1],
+                "person_id": r[2],
                 "bbox": {"top": r[3], "right": r[4], "bottom": r[5], "left": r[6]},
-                "cluster_id": r[7], "confidence": r[8], "person_name": r[9] or "",
+                "cluster_id": r[7],
+                "confidence": r[8],
+                "person_name": r[9] or "",
             }
             for r in cur.fetchall()
         ]
@@ -1326,9 +1355,12 @@ class Catalog:
         )
         return [
             {
-                "id": r[0], "file_id": r[1], "face_index": r[2],
+                "id": r[0],
+                "file_id": r[1],
+                "face_index": r[2],
                 "bbox": {"top": r[3], "right": r[4], "bottom": r[5], "left": r[6]},
-                "confidence": r[7], "path": r[8],
+                "confidence": r[7],
+                "path": r[8],
             }
             for r in cur.fetchall()
         ]
@@ -1343,9 +1375,13 @@ class Catalog:
         )
         return [
             {
-                "id": r[0], "file_id": r[1], "face_index": r[2],
+                "id": r[0],
+                "file_id": r[1],
+                "face_index": r[2],
                 "bbox": {"top": r[3], "right": r[4], "bottom": r[5], "left": r[6]},
-                "confidence": r[7], "cluster_id": r[8], "path": r[9],
+                "confidence": r[7],
+                "cluster_id": r[8],
+                "path": r[9],
             }
             for r in cur.fetchall()
         ]
@@ -1370,9 +1406,14 @@ class Catalog:
         if r is None:
             return None
         return {
-            "id": r[0], "file_id": r[1], "face_index": r[2], "person_id": r[3],
+            "id": r[0],
+            "file_id": r[1],
+            "face_index": r[2],
+            "person_id": r[3],
             "bbox": {"top": r[4], "right": r[5], "bottom": r[6], "left": r[7]},
-            "confidence": r[8], "path": r[9], "person_name": r[10] or "",
+            "confidence": r[8],
+            "path": r[9],
+            "person_name": r[10] or "",
         }
 
     def assign_face_to_person(self, face_id: int, person_id: int) -> None:
@@ -1433,8 +1474,7 @@ class Catalog:
                FROM persons p ORDER BY p.face_count DESC, p.name"""
         )
         return [
-            {"id": r[0], "name": r[1], "sample_face_id": r[2],
-             "face_count": r[3], "created_at": r[4], "updated_at": r[5]}
+            {"id": r[0], "name": r[1], "sample_face_id": r[2], "face_count": r[3], "created_at": r[4], "updated_at": r[5]}
             for r in cur.fetchall()
         ]
 
@@ -1446,8 +1486,7 @@ class Catalog:
         r = cur.fetchone()
         if r is None:
             return None
-        return {"id": r[0], "name": r[1], "sample_face_id": r[2],
-                "face_count": r[3], "created_at": r[4], "updated_at": r[5]}
+        return {"id": r[0], "name": r[1], "sample_face_id": r[2], "face_count": r[3], "created_at": r[4], "updated_at": r[5]}
 
     def update_person_name(self, person_id: int, name: str) -> None:
         self.conn.execute(
@@ -1481,14 +1520,10 @@ class Catalog:
         """Recalculate face_count for given persons (or all)."""
         if person_ids:
             for pid in person_ids:
-                cnt = self.conn.execute(
-                    "SELECT COUNT(*) FROM faces WHERE person_id = ?", (pid,)
-                ).fetchone()[0]
+                cnt = self.conn.execute("SELECT COUNT(*) FROM faces WHERE person_id = ?", (pid,)).fetchone()[0]
                 self.conn.execute("UPDATE persons SET face_count = ? WHERE id = ?", (cnt, pid))
                 # Update sample face if needed
-                sample = self.conn.execute(
-                    "SELECT id FROM faces WHERE person_id = ? LIMIT 1", (pid,)
-                ).fetchone()
+                sample = self.conn.execute("SELECT id FROM faces WHERE person_id = ? LIMIT 1", (pid,)).fetchone()
                 if sample:
                     self.conn.execute(
                         "UPDATE persons SET sample_face_id = ? WHERE id = ? "
@@ -1728,18 +1763,33 @@ class Catalog:
         from .utils import write_tsv
 
         header = [
-            "path", "size", "mtime", "ctime", "birthtime", "ext",
-            "meaningful_xattr_count", "asset_key", "asset_component",
+            "path",
+            "size",
+            "mtime",
+            "ctime",
+            "birthtime",
+            "ext",
+            "meaningful_xattr_count",
+            "asset_key",
+            "asset_component",
         ]
         cur = self.conn.execute("SELECT * FROM files ORDER BY path")
         rows = []
         for db_row in cur.fetchall():
             f = self._row_to_catalog_file(db_row)
-            rows.append((
-                f.path, f.size, f"{f.mtime:.6f}", f"{f.ctime:.6f}",
-                "" if f.birthtime is None else f"{f.birthtime:.6f}",
-                f.ext, f.xattr_count, f.asset_key or "", int(f.asset_component),
-            ))
+            rows.append(
+                (
+                    f.path,
+                    f.size,
+                    f"{f.mtime:.6f}",
+                    f"{f.ctime:.6f}",
+                    "" if f.birthtime is None else f"{f.birthtime:.6f}",
+                    f.ext,
+                    f.xattr_count,
+                    f.asset_key or "",
+                    int(f.asset_component),
+                )
+            )
         write_tsv(out_path, header, rows)
         return len(rows)
 

@@ -22,6 +22,7 @@ pytestmark = pytest.mark.integration
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def fixture_root(tmp_path):
     """Copy fixture files into a temp directory and return its path."""
@@ -43,6 +44,7 @@ def catalog(tmp_path):
 
 
 # ── Scan tests ───────────────────────────────────────────────────────
+
 
 def test_scan_real_jpeg(fixture_root, catalog):
     """Scan real JPEG fixtures into catalog."""
@@ -85,6 +87,7 @@ def test_scan_different_content_different_hash(fixture_root, catalog):
 
 # ── Perceptual hash tests ───────────────────────────────────────────
 
+
 def test_phash_computed_for_jpeg(fixture_root, catalog):
     """Perceptual hash should be computed for JPEG files."""
     incremental_scan(catalog, [fixture_root], workers=1)
@@ -96,6 +99,7 @@ def test_phash_computed_for_jpeg(fixture_root, catalog):
 
 
 # ── ExifTool extraction tests ───────────────────────────────────────
+
 
 @pytest.mark.requires_exiftool
 def test_exiftool_extraction(fixture_root, catalog):
@@ -128,6 +132,7 @@ def test_exiftool_camera_info(fixture_root, catalog):
 
 # ── Metadata richness tests ─────────────────────────────────────────
 
+
 @pytest.mark.requires_exiftool
 def test_richness_scoring(fixture_root, catalog):
     """Richness scoring should work on real files after extraction."""
@@ -149,6 +154,7 @@ def test_richness_scoring(fixture_root, catalog):
 
 # ── Duplicate detection tests ────────────────────────────────────────
 
+
 def test_duplicate_detection_with_identical_files(tmp_path, catalog):
     """Identical files should be detected as duplicates."""
     media = tmp_path / "media"
@@ -165,6 +171,7 @@ def test_duplicate_detection_with_identical_files(tmp_path, catalog):
 
 
 # ── Incremental scan tests ──────────────────────────────────────────
+
 
 def test_incremental_scan_no_changes(fixture_root, catalog):
     """Second scan should detect no new/changed files."""
@@ -187,6 +194,7 @@ def test_incremental_scan_detects_new_file(fixture_root, catalog):
 
 
 # ── Video tests (require ffmpeg/ffprobe) ─────────────────────────────
+
 
 @pytest.mark.requires_ffprobe
 def test_scan_video_fixture(tmp_path, catalog):

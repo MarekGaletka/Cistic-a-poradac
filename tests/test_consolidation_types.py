@@ -22,6 +22,7 @@ from godmode_media_library.consolidation_types import (
 
 # ── StrEnum backward compatibility ──
 
+
 def test_job_status_is_string():
     """JobStatus values must be plain strings for DB compatibility."""
     assert JobStatus.RUNNING == "running"
@@ -63,6 +64,7 @@ def test_dedup_strategy_values():
 
 # ── Constants ──
 
+
 def test_media_extensions_contains_common_types():
     assert ".jpg" in MEDIA_EXTENSIONS
     assert ".mp4" in MEDIA_EXTENSIONS
@@ -95,6 +97,7 @@ def test_job_type_constants():
 
 
 # ── StrEnum membership ──
+
 
 def test_file_status_membership():
     """All standard status strings should be valid FileStatus members."""

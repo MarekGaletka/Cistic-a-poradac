@@ -31,9 +31,12 @@ def test_apply_plan_moves_file(tmp_path: Path):
     digest = sha256_file(keep_file)
 
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        (digest, str(len(content)), str(keep_file), str(move_file), "test", "100.0", "50.0"),
-    ])
+    _create_plan_tsv(
+        plan_path,
+        [
+            (digest, str(len(content)), str(keep_file), str(move_file), "test", "100.0", "50.0"),
+        ],
+    )
 
     quarantine = tmp_path / "quarantine"
     executed_log = tmp_path / "executed.tsv"
@@ -61,9 +64,12 @@ def test_apply_plan_dry_run(tmp_path: Path):
     digest = sha256_file(keep_file)
 
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        (digest, str(len(content)), str(keep_file), str(move_file), "test", "100.0", "50.0"),
-    ])
+    _create_plan_tsv(
+        plan_path,
+        [
+            (digest, str(len(content)), str(keep_file), str(move_file), "test", "100.0", "50.0"),
+        ],
+    )
 
     quarantine = tmp_path / "quarantine"
     executed_log = tmp_path / "executed.tsv"
@@ -82,9 +88,12 @@ def test_apply_plan_skip_missing(tmp_path: Path):
     keep_file.write_bytes(b"content")
 
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        ("abc", "100", str(keep_file), str(tmp_path / "nonexistent.jpg"), "test", "100.0", "50.0"),
-    ])
+    _create_plan_tsv(
+        plan_path,
+        [
+            ("abc", "100", str(keep_file), str(tmp_path / "nonexistent.jpg"), "test", "100.0", "50.0"),
+        ],
+    )
 
     quarantine = tmp_path / "quarantine"
     result = apply_plan(plan_path, quarantine, tmp_path / "exec.tsv", tmp_path / "skip.tsv", dry_run=False)
@@ -102,9 +111,12 @@ def test_apply_plan_skip_hash_mismatch(tmp_path: Path):
     move_file.write_bytes(b"CONTENT_B" * 100)  # different content
 
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        ("abc", "900", str(keep_file), str(move_file), "test", "100.0", "50.0"),
-    ])
+    _create_plan_tsv(
+        plan_path,
+        [
+            ("abc", "900", str(keep_file), str(move_file), "test", "100.0", "50.0"),
+        ],
+    )
 
     quarantine = tmp_path / "quarantine"
     result = apply_plan(plan_path, quarantine, tmp_path / "exec.tsv", tmp_path / "skip.tsv", dry_run=False)
@@ -129,9 +141,12 @@ def test_restore_from_log(tmp_path: Path):
     assert not original_path.exists()
 
     log_path = tmp_path / "executed_log.tsv"
-    _create_executed_log_tsv(log_path, [
-        ("abc", "10", str(tmp_path / "keep.jpg"), str(original_path), str(quarantine_path), "test", "abc"),
-    ])
+    _create_executed_log_tsv(
+        log_path,
+        [
+            ("abc", "10", str(tmp_path / "keep.jpg"), str(original_path), str(quarantine_path), "test", "abc"),
+        ],
+    )
 
     restored, skipped = restore_from_log(log_path, dry_run=False)
 
@@ -156,9 +171,12 @@ def test_apply_plan_hash_mismatch_skips(tmp_path: Path):
     digest = sha256_file(keep_file)
 
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        (digest, str(len(b"CONTENT_KEEP" * 50)), str(keep_file), str(move_file), "test", "100.0", "50.0"),
-    ])
+    _create_plan_tsv(
+        plan_path,
+        [
+            (digest, str(len(b"CONTENT_KEEP" * 50)), str(keep_file), str(move_file), "test", "100.0", "50.0"),
+        ],
+    )
 
     quarantine = tmp_path / "quarantine"
     result = apply_plan(plan_path, quarantine, tmp_path / "exec.tsv", tmp_path / "skip.tsv", dry_run=False)
@@ -175,9 +193,12 @@ def test_restore_skips_if_quarantine_missing(tmp_path: Path):
     # Neither file exists — quarantine is missing
 
     log_path = tmp_path / "executed_log.tsv"
-    _create_executed_log_tsv(log_path, [
-        ("abc", "10", str(tmp_path / "keep.jpg"), str(original_path), str(quarantine_path), "test", "abc"),
-    ])
+    _create_executed_log_tsv(
+        log_path,
+        [
+            ("abc", "10", str(tmp_path / "keep.jpg"), str(original_path), str(quarantine_path), "test", "abc"),
+        ],
+    )
 
     restored, skipped = restore_from_log(log_path, dry_run=False)
 
@@ -201,9 +222,12 @@ def test_restore_skips_if_original_exists(tmp_path: Path):
     quarantine_path.write_bytes(b"quarantine data")
 
     log_path = tmp_path / "executed_log.tsv"
-    _create_executed_log_tsv(log_path, [
-        ("abc", "10", str(tmp_path / "keep.jpg"), str(original_path), str(quarantine_path), "test", "abc"),
-    ])
+    _create_executed_log_tsv(
+        log_path,
+        [
+            ("abc", "10", str(tmp_path / "keep.jpg"), str(original_path), str(quarantine_path), "test", "abc"),
+        ],
+    )
 
     restored, skipped = restore_from_log(log_path, dry_run=False)
 
@@ -231,9 +255,12 @@ def test_promote_from_manifest_swaps(tmp_path: Path):
     quarantine.write_bytes(content)
 
     manifest_path = tmp_path / "manifest.tsv"
-    _create_promote_manifest_tsv(manifest_path, [
-        (str(len(content)), str(quarantine), str(quarantine), str(primary)),
-    ])
+    _create_promote_manifest_tsv(
+        manifest_path,
+        [
+            (str(len(content)), str(quarantine), str(quarantine), str(primary)),
+        ],
+    )
 
     backup_root = tmp_path / "backup"
     executed_log = tmp_path / "promote_exec.tsv"
@@ -257,9 +284,12 @@ def test_promote_from_manifest_swaps(tmp_path: Path):
 def test_promote_from_manifest_skips_missing(tmp_path: Path):
     """Promote skips when quarantine or primary path is missing."""
     manifest_path = tmp_path / "manifest.tsv"
-    _create_promote_manifest_tsv(manifest_path, [
-        ("100", str(tmp_path / "gone_from"), str(tmp_path / "gone_q"), str(tmp_path / "gone_p")),
-    ])
+    _create_promote_manifest_tsv(
+        manifest_path,
+        [
+            ("100", str(tmp_path / "gone_from"), str(tmp_path / "gone_q"), str(tmp_path / "gone_p")),
+        ],
+    )
 
     swapped, skipped, _ = promote_from_manifest(
         manifest_path=manifest_path,
@@ -284,9 +314,12 @@ def test_promote_from_manifest_skips_hash_mismatch(tmp_path: Path):
     quarantine.write_bytes(b"QUARANTINE_CONTENT" * 50)
 
     manifest_path = tmp_path / "manifest.tsv"
-    _create_promote_manifest_tsv(manifest_path, [
-        ("100", str(quarantine), str(quarantine), str(primary)),
-    ])
+    _create_promote_manifest_tsv(
+        manifest_path,
+        [
+            ("100", str(quarantine), str(quarantine), str(primary)),
+        ],
+    )
 
     swapped, skipped, _ = promote_from_manifest(
         manifest_path=manifest_path,
@@ -312,9 +345,12 @@ def test_promote_from_manifest_dry_run(tmp_path: Path):
     quarantine.write_bytes(content)
 
     manifest_path = tmp_path / "manifest.tsv"
-    _create_promote_manifest_tsv(manifest_path, [
-        (str(len(content)), str(quarantine), str(quarantine), str(primary)),
-    ])
+    _create_promote_manifest_tsv(
+        manifest_path,
+        [
+            (str(len(content)), str(quarantine), str(quarantine), str(primary)),
+        ],
+    )
 
     swapped, skipped, _ = promote_from_manifest(
         manifest_path=manifest_path,
@@ -355,10 +391,7 @@ def test_apply_plan_rollback_on_error(tmp_path: Path):
     digest = sha256_file(files[0][0])
 
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        (digest, str(len(content)), str(f[0]), str(f[1]), "test", "100.0", "50.0")
-        for f in files
-    ])
+    _create_plan_tsv(plan_path, [(digest, str(len(content)), str(f[0]), str(f[1]), "test", "100.0", "50.0") for f in files])
 
     quarantine = tmp_path / "quarantine"
     executed_log = tmp_path / "executed.tsv"
@@ -399,13 +432,14 @@ def test_apply_plan_result_has_rollback_fields(tmp_path: Path):
 
     digest = sha256_file(keep)
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        (digest, str(len(content)), str(keep), str(move), "test", "100.0", "50.0"),
-    ])
-
-    result = apply_plan(
-        plan_path, tmp_path / "q", tmp_path / "exec.tsv", tmp_path / "skip.tsv"
+    _create_plan_tsv(
+        plan_path,
+        [
+            (digest, str(len(content)), str(keep), str(move), "test", "100.0", "50.0"),
+        ],
     )
+
+    result = apply_plan(plan_path, tmp_path / "q", tmp_path / "exec.tsv", tmp_path / "skip.tsv")
     assert result.rolled_back == 0
     assert result.error is None
 
@@ -433,10 +467,7 @@ def test_selective_restore_last_n(tmp_path: Path):
 
     digest = sha256_file(files[0][0])
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        (digest, str(len(content)), str(f[0]), str(f[1]), "test", "100.0", "50.0")
-        for f in files
-    ])
+    _create_plan_tsv(plan_path, [(digest, str(len(content)), str(f[0]), str(f[1]), "test", "100.0", "50.0") for f in files])
 
     quarantine = tmp_path / "quarantine"
     exec_log = tmp_path / "exec.tsv"
@@ -468,9 +499,12 @@ def test_selective_restore_by_file(tmp_path: Path):
 
     digest = sha256_file(keep)
     plan_path = tmp_path / "plan.tsv"
-    _create_plan_tsv(plan_path, [
-        (digest, str(len(content)), str(keep), str(move), "test", "100.0", "50.0"),
-    ])
+    _create_plan_tsv(
+        plan_path,
+        [
+            (digest, str(len(content)), str(keep), str(move), "test", "100.0", "50.0"),
+        ],
+    )
 
     quarantine = tmp_path / "quarantine"
     exec_log = tmp_path / "exec.tsv"

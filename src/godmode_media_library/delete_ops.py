@@ -59,9 +59,7 @@ def _quarantine_path(quarantine_root: Path, original_path: Path) -> Path:
     # Reject path traversal components to prevent escaping quarantine_root
     rest_parts = Path(rest).parts
     if ".." in rest_parts:
-        raise ValueError(
-            f"Path traversal detected: refusing to quarantine path with '..' components: {original_path}"
-        )
+        raise ValueError(f"Path traversal detected: refusing to quarantine path with '..' components: {original_path}")
 
     if drive:
         result = quarantine_root / "_drive_" / drive / rest
@@ -72,9 +70,7 @@ def _quarantine_path(quarantine_root: Path, original_path: Path) -> Path:
     resolved = result.resolve()
     resolved_root = quarantine_root.resolve()
     if not (resolved == resolved_root or str(resolved).startswith(str(resolved_root) + "/")):
-        raise ValueError(
-            f"Path traversal detected: quarantine destination {resolved} escapes root {resolved_root}"
-        )
+        raise ValueError(f"Path traversal detected: quarantine destination {resolved} escapes root {resolved_root}")
 
     return result
 
@@ -298,12 +294,12 @@ def _format_bytes(n: int) -> str:
     """Format byte count for human-readable display."""
     if n < 1024:
         return f"{n} B"
-    elif n < 1024 ** 2:
+    elif n < 1024**2:
         return f"{n / 1024:.1f} KiB"
-    elif n < 1024 ** 3:
-        return f"{n / 1024 ** 2:.1f} MiB"
+    elif n < 1024**3:
+        return f"{n / 1024**2:.1f} MiB"
     else:
-        return f"{n / 1024 ** 3:.2f} GiB"
+        return f"{n / 1024**3:.2f} GiB"
 
 
 def apply_delete_plan(
@@ -389,10 +385,16 @@ def apply_delete_plan(
                 expected = int(row.get("nlink_expected", "0"))
                 if expected > 0 and current_nlink != expected:
                     skipped += 1
-                    log_rows.append((
-                        inode_id, str(path), action, "skipped", "",
-                        f"nlink_changed:expected={expected},actual={current_nlink}",
-                    ))
+                    log_rows.append(
+                        (
+                            inode_id,
+                            str(path),
+                            action,
+                            "skipped",
+                            "",
+                            f"nlink_changed:expected={expected},actual={current_nlink}",
+                        )
+                    )
                     continue
             except OSError:
                 skipped += 1

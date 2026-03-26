@@ -27,6 +27,7 @@ def is_video_ext(ext: str) -> bool:
 def _find_ffmpeg() -> str | None:
     """Return ffmpeg binary path or None."""
     from .deps import resolve_bin
+
     return resolve_bin("ffmpeg")
 
 
@@ -53,15 +54,22 @@ def extract_keyframes(
     # First get duration via ffprobe-like approach
     cmd = [
         binary,
-        "-i", str(path),
-        "-vf", f"select=not(mod(n\\,max(1\\,floor(N/{n_frames}))))",
-        "-vsync", "vfr",
-        "-frames:v", str(n_frames),
-        "-f", "image2",
-        "-q:v", "2",
+        "-i",
+        str(path),
+        "-vf",
+        f"select=not(mod(n\\,max(1\\,floor(N/{n_frames}))))",
+        "-vsync",
+        "vfr",
+        "-frames:v",
+        str(n_frames),
+        "-f",
+        "image2",
+        "-q:v",
+        "2",
         str(Path(tmp_dir) / "frame_%03d.png"),
         "-y",
-        "-loglevel", "error",
+        "-loglevel",
+        "error",
     ]
 
     try:
@@ -126,8 +134,8 @@ def video_hamming_distance(hash_a: str, hash_b: str, hash_size: int = 8) -> floa
     if not hash_a or not hash_b:
         return float("inf")
 
-    frames_a = [hash_a[i:i + chars_per_frame] for i in range(0, len(hash_a), chars_per_frame)]
-    frames_b = [hash_b[i:i + chars_per_frame] for i in range(0, len(hash_b), chars_per_frame)]
+    frames_a = [hash_a[i : i + chars_per_frame] for i in range(0, len(hash_a), chars_per_frame)]
+    frames_b = [hash_b[i : i + chars_per_frame] for i in range(0, len(hash_b), chars_per_frame)]
 
     n_compare = min(len(frames_a), len(frames_b))
     if n_compare == 0:

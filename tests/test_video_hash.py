@@ -39,8 +39,10 @@ def test_extract_keyframes_with_ffmpeg(tmp_path):
                 (out_pattern.parent / f"frame_{i:03d}.png").write_bytes(b"fake")
         return MagicMock(returncode=0)
 
-    with patch("godmode_media_library.video_hash._find_ffmpeg", return_value="/usr/bin/ffmpeg"), \
-         patch("subprocess.run", side_effect=fake_run):
+    with (
+        patch("godmode_media_library.video_hash._find_ffmpeg", return_value="/usr/bin/ffmpeg"),
+        patch("subprocess.run", side_effect=fake_run),
+    ):
         frames = extract_keyframes(Path("/tmp/video.mp4"), n_frames=3)
     assert len(frames) == 3
 
@@ -60,8 +62,10 @@ def test_video_dhash_success(tmp_path):
 
     fake_hash = "0123456789abcdef"
 
-    with patch("godmode_media_library.video_hash.extract_keyframes") as mock_extract, \
-         patch("godmode_media_library.perceptual_hash.dhash", return_value=fake_hash):
+    with (
+        patch("godmode_media_library.video_hash.extract_keyframes") as mock_extract,
+        patch("godmode_media_library.perceptual_hash.dhash", return_value=fake_hash),
+    ):
         mock_extract.return_value = list(frame_dir.glob("frame_*.png"))
         result = video_dhash(Path("/tmp/video.mp4"), n_frames=3)
 

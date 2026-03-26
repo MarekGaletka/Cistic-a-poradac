@@ -38,24 +38,28 @@ def test_extract_all_metadata_empty_list():
 
 
 def test_extract_all_metadata_success():
-    exiftool_output = json.dumps([
-        {
-            "SourceFile": "/tmp/photo.jpg",
-            "EXIF:Make": "Canon",
-            "EXIF:Model": "EOS R5",
-            "EXIF:DateTimeOriginal": "2024:06:15 10:30:00",
-            "EXIF:GPSLatitude": 50.0875,
-            "EXIF:GPSLongitude": 14.4214,
-            "XMP:Subject": ["landscape", "prague"],
-            "IPTC:Keywords": ["travel"],
-        }
-    ])
+    exiftool_output = json.dumps(
+        [
+            {
+                "SourceFile": "/tmp/photo.jpg",
+                "EXIF:Make": "Canon",
+                "EXIF:Model": "EOS R5",
+                "EXIF:DateTimeOriginal": "2024:06:15 10:30:00",
+                "EXIF:GPSLatitude": 50.0875,
+                "EXIF:GPSLongitude": 14.4214,
+                "XMP:Subject": ["landscape", "prague"],
+                "IPTC:Keywords": ["travel"],
+            }
+        ]
+    )
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.stdout = exiftool_output
 
-    with patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", return_value=mock_proc):
+    with (
+        patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
         result = extract_all_metadata([Path("/tmp/photo.jpg")])
         resolved = Path("/tmp/photo.jpg").expanduser().resolve()
         assert resolved in result
@@ -67,15 +71,15 @@ def test_extract_all_metadata_success():
 
 
 def test_extract_all_metadata_filters_source_file():
-    exiftool_output = json.dumps([
-        {"SourceFile": "/tmp/a.jpg", "EXIF:Make": "Nikon"}
-    ])
+    exiftool_output = json.dumps([{"SourceFile": "/tmp/a.jpg", "EXIF:Make": "Nikon"}])
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.stdout = exiftool_output
 
-    with patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", return_value=mock_proc):
+    with (
+        patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
         result = extract_all_metadata([Path("/tmp/a.jpg")])
         resolved = Path("/tmp/a.jpg").expanduser().resolve()
         meta = result[resolved]
@@ -83,15 +87,15 @@ def test_extract_all_metadata_filters_source_file():
 
 
 def test_extract_all_metadata_excludes_binary_tags():
-    exiftool_output = json.dumps([
-        {"SourceFile": "/tmp/a.jpg", "EXIF:Make": "Canon", "EXIF:ThumbnailImage": "(binary data)"}
-    ])
+    exiftool_output = json.dumps([{"SourceFile": "/tmp/a.jpg", "EXIF:Make": "Canon", "EXIF:ThumbnailImage": "(binary data)"}])
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.stdout = exiftool_output
 
-    with patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", return_value=mock_proc):
+    with (
+        patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
         result = extract_all_metadata([Path("/tmp/a.jpg")])
         resolved = Path("/tmp/a.jpg").expanduser().resolve()
         meta = result[resolved]
@@ -101,8 +105,10 @@ def test_extract_all_metadata_excludes_binary_tags():
 def test_extract_all_metadata_timeout():
     import subprocess
 
-    with patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="exiftool", timeout=120)):
+    with (
+        patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="exiftool", timeout=120)),
+    ):
         result = extract_all_metadata([Path("/tmp/a.jpg")])
         assert result == {}
 
@@ -112,22 +118,24 @@ def test_extract_all_metadata_invalid_json():
     mock_proc.returncode = 0
     mock_proc.stdout = "not valid json"
 
-    with patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", return_value=mock_proc):
+    with (
+        patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
         result = extract_all_metadata([Path("/tmp/a.jpg")])
         assert result == {}
 
 
 def test_extract_single():
-    exiftool_output = json.dumps([
-        {"SourceFile": "/tmp/single.jpg", "EXIF:ISO": 400}
-    ])
+    exiftool_output = json.dumps([{"SourceFile": "/tmp/single.jpg", "EXIF:ISO": 400}])
     mock_proc = MagicMock()
     mock_proc.returncode = 0
     mock_proc.stdout = exiftool_output
 
-    with patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", return_value=mock_proc):
+    with (
+        patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
         meta = extract_single(Path("/tmp/single.jpg"))
         assert meta.get("EXIF:ISO") == 400
 

@@ -31,6 +31,7 @@ def _get_file_status(catalog, job_id, file_hash, step="stream"):
     """Helper to read current status from DB."""
     conn = catalog.conn
     import sqlite3
+
     conn.row_factory = sqlite3.Row
     row = conn.execute(
         "SELECT status, last_error FROM consolidation_file_state WHERE job_id = ? AND file_hash = ? AND step_name = ?",
@@ -111,6 +112,7 @@ class TestAttemptCount:
 
         conn = catalog.conn
         import sqlite3
+
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT attempt_count FROM consolidation_file_state WHERE job_id = ? AND file_hash = ? AND step_name = ?",
@@ -125,6 +127,7 @@ class TestAttemptCount:
 
         conn = catalog.conn
         import sqlite3
+
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT attempt_count, bytes_transferred FROM consolidation_file_state WHERE job_id = ? AND file_hash = ?",

@@ -18,8 +18,10 @@ def client(tmp_path):
 
 
 def test_cloud_status(client):
-    with patch("godmode_media_library.cloud.check_rclone", return_value=False), \
-         patch("godmode_media_library.cloud.detect_native_cloud_paths", return_value=[]):
+    with (
+        patch("godmode_media_library.cloud.check_rclone", return_value=False),
+        patch("godmode_media_library.cloud.detect_native_cloud_paths", return_value=[]),
+    ):
         resp = client.get("/api/cloud/status")
         assert resp.status_code == 200
         data = resp.json()
@@ -39,9 +41,11 @@ def test_cloud_remotes_no_rclone(client):
 
 def test_cloud_remotes_with_rclone(client):
     mock_remotes = [RcloneRemote(name="mega", type="mega")]
-    with patch("godmode_media_library.cloud.check_rclone", return_value=True), \
-         patch("godmode_media_library.cloud.rclone_version", return_value="1.67.0"), \
-         patch("godmode_media_library.cloud.list_remotes", return_value=mock_remotes):
+    with (
+        patch("godmode_media_library.cloud.check_rclone", return_value=True),
+        patch("godmode_media_library.cloud.rclone_version", return_value="1.67.0"),
+        patch("godmode_media_library.cloud.list_remotes", return_value=mock_remotes),
+    ):
         resp = client.get("/api/cloud/remotes")
         assert resp.status_code == 200
         data = resp.json()

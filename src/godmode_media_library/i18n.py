@@ -88,7 +88,6 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Apply deduplication plan",
         "cs": "Aplikovat plán deduplikace",
     },
-
     # ── Output messages ─────────────────────────────────────────────
     "msg.scan_complete": {
         "en": "Scan complete: {scanned} scanned, {new} new, {changed} changed",

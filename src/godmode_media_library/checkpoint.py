@@ -67,6 +67,7 @@ def _now() -> str:
 # Dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ConsolidationJob:
     job_id: str
@@ -103,6 +104,7 @@ class FileTransferState:
 # Table setup
 # ---------------------------------------------------------------------------
 
+
 def ensure_tables(conn: sqlite3.Connection) -> None:
     cid = id(conn)
     if cid in _tables_cache:
@@ -121,6 +123,7 @@ def _ensure(catalog: Catalog) -> None:
 # ---------------------------------------------------------------------------
 # Job row helpers
 # ---------------------------------------------------------------------------
+
 
 def _row_to_job(row: sqlite3.Row) -> ConsolidationJob:
     config = {}
@@ -165,6 +168,7 @@ def _row_to_file_state(row: sqlite3.Row) -> FileTransferState:
 # ---------------------------------------------------------------------------
 # Job CRUD
 # ---------------------------------------------------------------------------
+
 
 def create_job(
     catalog: Catalog,
@@ -279,6 +283,7 @@ def complete_job(catalog: Catalog, job_id: str, error: str | None = None) -> Non
 # File state tracking
 # ---------------------------------------------------------------------------
 
+
 def mark_file(
     catalog: Catalog,
     job_id: str,
@@ -355,6 +360,7 @@ def get_pending_files(
 # ---------------------------------------------------------------------------
 # Progress & resume
 # ---------------------------------------------------------------------------
+
 
 def get_job_progress(
     catalog: Catalog,
@@ -508,6 +514,7 @@ def reset_stale_in_progress(
     """
     _ensure(catalog)
     from datetime import timedelta
+
     now_dt = datetime.now(timezone.utc)
     stale_threshold = (now_dt - timedelta(seconds=stale_after_seconds)).isoformat()
     now = now_dt.isoformat()
@@ -522,14 +529,14 @@ def reset_stale_in_progress(
         )
     count = cur.rowcount
     if count:
-        logger.info("Reset %d stale in_progress files (>%ds old) for job %s step %s",
-                     count, stale_after_seconds, job_id, step)
+        logger.info("Reset %d stale in_progress files (>%ds old) for job %s step %s", count, stale_after_seconds, job_id, step)
     return count
 
 
 # ---------------------------------------------------------------------------
 # WAL checkpoint (4.4) — call periodically during long jobs
 # ---------------------------------------------------------------------------
+
 
 def wal_checkpoint(catalog: Catalog) -> None:
     """Trigger a WAL checkpoint to keep the WAL file from growing unbounded.
@@ -546,6 +553,7 @@ def wal_checkpoint(catalog: Catalog) -> None:
 # ---------------------------------------------------------------------------
 # DB integrity check (4.5) — run on resume
 # ---------------------------------------------------------------------------
+
 
 def check_db_integrity(catalog: Catalog) -> bool:
     """Quick integrity check on the checkpoint tables.

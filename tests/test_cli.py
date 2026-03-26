@@ -37,25 +37,36 @@ def test_parser_audit_args():
 
 def test_parser_tree_plan_args():
     parser = build_parser()
-    args = parser.parse_args([
-        "tree-plan",
-        "--roots", "/tmp/src",
-        "--target-root", "/tmp/dst",
-        "--mode", "time",
-        "--granularity", "month",
-    ])
+    args = parser.parse_args(
+        [
+            "tree-plan",
+            "--roots",
+            "/tmp/src",
+            "--target-root",
+            "/tmp/dst",
+            "--mode",
+            "time",
+            "--granularity",
+            "month",
+        ]
+    )
     assert args.command == "tree-plan"
     assert args.mode == "time"
     assert args.granularity == "month"
 
     # Verify mode choices are enforced
     with pytest.raises(SystemExit):
-        parser.parse_args([
-            "tree-plan",
-            "--roots", "/tmp/src",
-            "--target-root", "/tmp/dst",
-            "--mode", "invalid_mode",
-        ])
+        parser.parse_args(
+            [
+                "tree-plan",
+                "--roots",
+                "/tmp/src",
+                "--target-root",
+                "/tmp/dst",
+                "--mode",
+                "invalid_mode",
+            ]
+        )
 
 
 def test_main_no_args_exits(monkeypatch):
@@ -155,12 +166,17 @@ def test_parser_promote_subcommand():
 
 def test_parser_tree_apply_subcommand():
     parser = build_parser()
-    args = parser.parse_args([
-        "tree-apply",
-        "--plan", "/tmp/tree_plan.tsv",
-        "--operation", "copy",
-        "--collision-policy", "skip",
-    ])
+    args = parser.parse_args(
+        [
+            "tree-apply",
+            "--plan",
+            "/tmp/tree_plan.tsv",
+            "--operation",
+            "copy",
+            "--collision-policy",
+            "skip",
+        ]
+    )
     assert args.command == "tree-apply"
     assert args.operation == "copy"
     assert args.collision_policy == "skip"
@@ -168,34 +184,48 @@ def test_parser_tree_apply_subcommand():
 
 def test_parser_delete_plan_subcommand():
     parser = build_parser()
-    args = parser.parse_args([
-        "delete-plan",
-        "--roots", "/tmp/root",
-        "--out", "/tmp/plan.tsv",
-        "--select-paths", "/tmp/select.txt",
-    ])
+    args = parser.parse_args(
+        [
+            "delete-plan",
+            "--roots",
+            "/tmp/root",
+            "--out",
+            "/tmp/plan.tsv",
+            "--select-paths",
+            "/tmp/select.txt",
+        ]
+    )
     assert args.command == "delete-plan"
 
 
 def test_parser_delete_apply_subcommand():
     parser = build_parser()
-    args = parser.parse_args([
-        "delete-apply",
-        "--plan", "/tmp/plan.tsv",
-        "--quarantine-root", "/tmp/quarantine",
-        "--dry-run",
-    ])
+    args = parser.parse_args(
+        [
+            "delete-apply",
+            "--plan",
+            "/tmp/plan.tsv",
+            "--quarantine-root",
+            "/tmp/quarantine",
+            "--dry-run",
+        ]
+    )
     assert args.command == "delete-apply"
     assert args.dry_run is True
 
 
 def test_parser_prune_recommend_subcommand():
     parser = build_parser()
-    args = parser.parse_args([
-        "prune-recommend",
-        "--roots", "/tmp/root1", "/tmp/root2",
-        "--out-dir", "/tmp/out",
-    ])
+    args = parser.parse_args(
+        [
+            "prune-recommend",
+            "--roots",
+            "/tmp/root1",
+            "/tmp/root2",
+            "--out-dir",
+            "/tmp/out",
+        ]
+    )
     assert args.command == "prune-recommend"
     assert len(args.roots) == 2
 
@@ -373,8 +403,19 @@ def test_cmd_delete_apply_dry_run(tmp_path, capsys):
     plan_path = tmp_path / "del_plan.tsv"
     write_tsv(
         plan_path,
-        ["inode_id", "path", "action", "primary_path", "asset_key", "selected_seed", "unit_size",
-         "nlink_expected", "nlink_scanned", "external_links", "note"],
+        [
+            "inode_id",
+            "path",
+            "action",
+            "primary_path",
+            "asset_key",
+            "selected_seed",
+            "unit_size",
+            "nlink_expected",
+            "nlink_scanned",
+            "external_links",
+            "note",
+        ],
         [],
     )
     args = argparse.Namespace(

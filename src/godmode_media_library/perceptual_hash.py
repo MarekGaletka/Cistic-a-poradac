@@ -13,8 +13,16 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _IMAGE_EXTS = {
-    "jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp",
-    "heic", "heif",
+    "jpg",
+    "jpeg",
+    "png",
+    "bmp",
+    "tiff",
+    "tif",
+    "gif",
+    "webp",
+    "heic",
+    "heif",
 }
 
 # Hash size: 8 means 8x(8+1) = 72 pixel grid, producing 64-bit hash
@@ -29,6 +37,7 @@ def is_image_ext(ext: str) -> bool:
 def _check_pillow() -> bool:
     try:
         import PIL  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -37,6 +46,7 @@ def _check_pillow() -> bool:
 def _check_heif() -> bool:
     try:
         import pillow_heif  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -57,6 +67,7 @@ def dhash(path: Path, *, hash_size: int = HASH_SIZE) -> str | None:
     # Register HEIF opener if available
     if path.suffix.lower() in (".heic", ".heif") and _check_heif():
         import pillow_heif
+
         pillow_heif.register_heif_opener()
 
     try:
@@ -149,19 +160,22 @@ def find_similar(
             elif len(hash_a) > image_hash_len:
                 # Video composite hash — average frame distance
                 from .video_hash import video_hamming_distance
+
                 dist_float = video_hamming_distance(hash_a, hash_b)
                 dist = int(round(dist_float))
             else:
                 continue
 
             if dist <= threshold:
-                pairs.append(SimilarPair(
-                    path_a=path_a,
-                    path_b=path_b,
-                    distance=dist,
-                    hash_a=hash_a,
-                    hash_b=hash_b,
-                ))
+                pairs.append(
+                    SimilarPair(
+                        path_a=path_a,
+                        path_b=path_b,
+                        distance=dist,
+                        hash_a=hash_a,
+                        hash_b=hash_b,
+                    )
+                )
 
     pairs.sort(key=lambda p: (p.distance, p.path_a))
     return pairs

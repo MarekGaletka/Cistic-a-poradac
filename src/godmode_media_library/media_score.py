@@ -19,14 +19,14 @@ logger = logging.getLogger(__name__)
 
 # Each dimension returns 0.0–1.0; final score = weighted sum × 100.
 _WEIGHTS = {
-    "resolution": 0.25,      # megapixels / technical quality
+    "resolution": 0.25,  # megapixels / technical quality
     "metadata_richness": 0.15,  # how well-documented
-    "file_quality": 0.10,    # size-to-resolution ratio (compression)
-    "camera_tier": 0.10,     # device quality
-    "geo": 0.05,             # has GPS = more interesting
-    "user_signal": 0.20,     # rating + favorite + tags
-    "uniqueness": 0.10,      # not a duplicate / primary in group
-    "recency": 0.05,         # newer files slightly preferred
+    "file_quality": 0.10,  # size-to-resolution ratio (compression)
+    "camera_tier": 0.10,  # device quality
+    "geo": 0.05,  # has GPS = more interesting
+    "user_signal": 0.20,  # rating + favorite + tags
+    "uniqueness": 0.10,  # not a duplicate / primary in group
+    "recency": 0.05,  # newer files slightly preferred
 }
 
 
@@ -34,43 +34,96 @@ _WEIGHTS = {
 
 _CAMERA_TIERS: dict[str, float] = {
     # Pro cameras
-    "canon eos r": 1.0, "canon eos 5d": 1.0, "canon eos-1d": 1.0,
-    "nikon z": 0.95, "nikon d8": 1.0, "nikon d7": 0.9, "nikon d5": 0.95,
-    "sony ilce-7": 1.0, "sony ilce-9": 1.0, "sony a7": 1.0, "sony a9": 1.0,
-    "fujifilm x-t": 0.9, "fujifilm x-pro": 0.9, "fujifilm gfx": 1.0,
-    "hasselblad": 1.0, "leica": 0.95, "phase one": 1.0,
-    "panasonic dc-s": 0.9, "panasonic dc-gh": 0.85,
-    "olympus e-m1": 0.85, "om system": 0.85,
+    "canon eos r": 1.0,
+    "canon eos 5d": 1.0,
+    "canon eos-1d": 1.0,
+    "nikon z": 0.95,
+    "nikon d8": 1.0,
+    "nikon d7": 0.9,
+    "nikon d5": 0.95,
+    "sony ilce-7": 1.0,
+    "sony ilce-9": 1.0,
+    "sony a7": 1.0,
+    "sony a9": 1.0,
+    "fujifilm x-t": 0.9,
+    "fujifilm x-pro": 0.9,
+    "fujifilm gfx": 1.0,
+    "hasselblad": 1.0,
+    "leica": 0.95,
+    "phase one": 1.0,
+    "panasonic dc-s": 0.9,
+    "panasonic dc-gh": 0.85,
+    "olympus e-m1": 0.85,
+    "om system": 0.85,
     # Mid-range
-    "canon eos r10": 0.75, "canon eos m": 0.7,
-    "nikon d3": 0.7, "nikon z 30": 0.65, "nikon z fc": 0.7,
+    "canon eos r10": 0.75,
+    "canon eos m": 0.7,
+    "nikon d3": 0.7,
+    "nikon z 30": 0.65,
+    "nikon z fc": 0.7,
     "sony ilce-6": 0.75,
     # Flagship phones
-    "iphone 15 pro": 0.7, "iphone 14 pro": 0.65, "iphone 13 pro": 0.6,
-    "iphone 16 pro": 0.72, "iphone 16": 0.6,
-    "iphone 15": 0.55, "iphone 14": 0.5, "iphone 13": 0.45,
-    "iphone 12 pro": 0.55, "iphone 12": 0.4,
-    "pixel 9 pro": 0.65, "pixel 8 pro": 0.6, "pixel 7 pro": 0.55,
-    "samsung sm-s92": 0.65, "samsung sm-s91": 0.6,  # S24/S23 Ultra
+    "iphone 15 pro": 0.7,
+    "iphone 14 pro": 0.65,
+    "iphone 13 pro": 0.6,
+    "iphone 16 pro": 0.72,
+    "iphone 16": 0.6,
+    "iphone 15": 0.55,
+    "iphone 14": 0.5,
+    "iphone 13": 0.45,
+    "iphone 12 pro": 0.55,
+    "iphone 12": 0.4,
+    "pixel 9 pro": 0.65,
+    "pixel 8 pro": 0.6,
+    "pixel 7 pro": 0.55,
+    "samsung sm-s92": 0.65,
+    "samsung sm-s91": 0.6,  # S24/S23 Ultra
     "samsung sm-s90": 0.55,
     # DJI drones
-    "dji": 0.8, "mavic": 0.8, "phantom": 0.75,
+    "dji": 0.8,
+    "mavic": 0.8,
+    "phantom": 0.75,
     # GoPro
     "gopro": 0.55,
     # Basic phones
-    "iphone se": 0.3, "iphone 8": 0.25, "iphone 7": 0.2,
+    "iphone se": 0.3,
+    "iphone 8": 0.25,
+    "iphone 7": 0.2,
 }
 
 # ── Image category thresholds ────────────────────────────────────────
 
 _IMAGE_EXTS = {
-    "jpg", "jpeg", "png", "tiff", "tif", "bmp", "webp",
-    "heic", "heif", "raw", "cr2", "cr3", "nef", "arw",
-    "orf", "rw2", "dng", "raf",
+    "jpg",
+    "jpeg",
+    "png",
+    "tiff",
+    "tif",
+    "bmp",
+    "webp",
+    "heic",
+    "heif",
+    "raw",
+    "cr2",
+    "cr3",
+    "nef",
+    "arw",
+    "orf",
+    "rw2",
+    "dng",
+    "raf",
 }
 _VIDEO_EXTS = {
-    "mp4", "mov", "avi", "mkv", "webm", "m4v", "mts",
-    "3gp", "wmv", "flv",
+    "mp4",
+    "mov",
+    "avi",
+    "mkv",
+    "webm",
+    "m4v",
+    "mts",
+    "3gp",
+    "wmv",
+    "flv",
 }
 
 
@@ -106,6 +159,7 @@ def _tier_label(score: float) -> str:
 
 # ── Dimension scorers ────────────────────────────────────────────────
 
+
 def _score_resolution(width: int | None, height: int | None, ext: str) -> float:
     """Score based on megapixels. 20+ MP = 1.0, <0.3 MP = 0.0."""
     if not width or not height:
@@ -128,7 +182,10 @@ def _score_resolution(width: int | None, height: int | None, ext: str) -> float:
 
 
 def _score_file_quality(
-    size: int, width: int | None, height: int | None, ext: str,
+    size: int,
+    width: int | None,
+    height: int | None,
+    ext: str,
 ) -> float:
     """Score compression quality — bits per pixel for images, bitrate for video."""
     if ext.lower() in _VIDEO_EXTS:
@@ -268,6 +325,7 @@ def _score_recency(date_original: str | None, mtime: float | None) -> float:
 
 # ── Main scoring function ────────────────────────────────────────────
 
+
 def score_file(row: dict) -> MediaScore:
     """Compute appeal score for a single file row from the catalog."""
     ext = row.get("ext") or Path(row.get("path", "")).suffix.lstrip(".") or ""
@@ -275,19 +333,24 @@ def score_file(row: dict) -> MediaScore:
 
     dims = {
         "resolution": _score_resolution(
-            row.get("width"), row.get("height"), ext,
+            row.get("width"),
+            row.get("height"),
+            ext,
         ),
         "metadata_richness": _score_richness(row.get("metadata_richness")),
         "file_quality": _score_file_quality(
             row.get("size") or 0,
-            row.get("width"), row.get("height"),
+            row.get("width"),
+            row.get("height"),
             ext,
         ),
         "camera_tier": _score_camera(
-            row.get("camera_make"), row.get("camera_model"),
+            row.get("camera_make"),
+            row.get("camera_model"),
         ),
         "geo": _score_geo(
-            row.get("gps_latitude"), row.get("gps_longitude"),
+            row.get("gps_latitude"),
+            row.get("gps_longitude"),
         ),
         "user_signal": _score_user_signal(
             row.get("rating"),
@@ -312,6 +375,7 @@ def score_file(row: dict) -> MediaScore:
 
 
 # ── Batch scoring from catalog ───────────────────────────────────────
+
 
 def score_catalog(
     db_path: str | Path,
@@ -389,45 +453,26 @@ def get_smart_collections(
     collections: dict[str, list[dict]] = {}
 
     # Best of — top 50 overall
-    collections["best_of"] = [
-        s.to_dict() for s in all_scores[:50]
-    ]
+    collections["best_of"] = [s.to_dict() for s in all_scores[:50]]
 
     # Masterpieces — score >= 85
-    collections["masterpieces"] = [
-        s.to_dict() for s in all_scores if s.tier == "masterpiece"
-    ][:30]
+    collections["masterpieces"] = [s.to_dict() for s in all_scores if s.tier == "masterpiece"][:30]
 
     # Top rated — files with user rating 4+
-    collections["top_rated"] = [
-        s.to_dict() for s in all_scores
-        if s.dimensions.get("user_signal", 0) >= 0.5
-    ][:30]
+    collections["top_rated"] = [s.to_dict() for s in all_scores if s.dimensions.get("user_signal", 0) >= 0.5][:30]
 
     # Travel — files with GPS data, sorted by score
-    collections["travel"] = [
-        s.to_dict() for s in all_scores
-        if s.dimensions.get("geo", 0) > 0
-    ][:40]
+    collections["travel"] = [s.to_dict() for s in all_scores if s.dimensions.get("geo", 0) > 0][:40]
 
     # Pro shots — high camera tier + high resolution
     collections["pro_shots"] = [
-        s.to_dict() for s in all_scores
-        if s.dimensions.get("camera_tier", 0) >= 0.55
-        and s.dimensions.get("resolution", 0) >= 0.7
+        s.to_dict() for s in all_scores if s.dimensions.get("camera_tier", 0) >= 0.55 and s.dimensions.get("resolution", 0) >= 0.7
     ][:30]
 
     # Recent highlights — last 6 months, score >= 40
-    collections["recent"] = [
-        s.to_dict() for s in all_scores
-        if s.dimensions.get("recency", 0) >= 0.85 and s.total >= 40
-    ][:30]
+    collections["recent"] = [s.to_dict() for s in all_scores if s.dimensions.get("recency", 0) >= 0.85 and s.total >= 40][:30]
 
     # Hidden gems — decent quality but no user interaction
-    collections["hidden_gems"] = [
-        s.to_dict() for s in all_scores
-        if s.dimensions.get("user_signal", 0) == 0
-        and s.total >= 45
-    ][:30]
+    collections["hidden_gems"] = [s.to_dict() for s in all_scores if s.dimensions.get("user_signal", 0) == 0 and s.total >= 45][:30]
 
     return collections

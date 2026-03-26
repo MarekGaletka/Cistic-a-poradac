@@ -298,6 +298,7 @@ def apply_tree_plan(
                     raise ValueError(f"Unsupported operation: {operation}")
             except OSError as exc:
                 import errno as errno_mod
+
                 skipped += 1
                 detail = f"os_error:{exc.errno}"
                 if exc.errno == errno_mod.EXDEV:

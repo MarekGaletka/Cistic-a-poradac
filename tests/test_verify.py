@@ -22,15 +22,19 @@ def test_verify_all_ok(tmp_path: Path) -> None:
     (media / "b.png").write_bytes(b"content_b")
 
     with Catalog(tmp_path / "catalog.db") as cat:
-        cat.upsert_file(_make_row(
-            path=str(media / "a.jpg"),
-            size=len(b"content_a"),
-        ))
-        cat.upsert_file(_make_row(
-            path=str(media / "b.png"),
-            size=len(b"content_b"),
-            ext="png",
-        ))
+        cat.upsert_file(
+            _make_row(
+                path=str(media / "a.jpg"),
+                size=len(b"content_a"),
+            )
+        )
+        cat.upsert_file(
+            _make_row(
+                path=str(media / "b.png"),
+                size=len(b"content_b"),
+                ext="png",
+            )
+        )
         cat.commit()
 
         result = verify_catalog(cat)
@@ -59,10 +63,12 @@ def test_verify_size_mismatch(tmp_path: Path) -> None:
     f.write_bytes(b"actual_content")
 
     with Catalog(tmp_path / "catalog.db") as cat:
-        cat.upsert_file(_make_row(
-            path=str(f),
-            size=999,  # wrong size
-        ))
+        cat.upsert_file(
+            _make_row(
+                path=str(f),
+                size=999,  # wrong size
+            )
+        )
         cat.commit()
 
         result = verify_catalog(cat)
@@ -82,10 +88,12 @@ def test_verify_with_limit(tmp_path: Path) -> None:
 
     with Catalog(tmp_path / "catalog.db") as cat:
         for i in range(5):
-            cat.upsert_file(_make_row(
-                path=str(media / f"f{i}.jpg"),
-                size=1,
-            ))
+            cat.upsert_file(
+                _make_row(
+                    path=str(media / f"f{i}.jpg"),
+                    size=1,
+                )
+            )
         cat.commit()
 
         result = verify_catalog(cat, limit=2)

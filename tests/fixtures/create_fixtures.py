@@ -15,8 +15,8 @@ def create_jpeg_with_exif():
 
     img = Image.new("RGB", (4, 4), color=(255, 0, 0))
     exif = img.getexif()
-    exif[0x010F] = "TestCamera"       # Make
-    exif[0x0110] = "TestModel X1"     # Model
+    exif[0x010F] = "TestCamera"  # Make
+    exif[0x0110] = "TestModel X1"  # Model
     exif_ifd = exif.get_ifd(0x8769)
     exif_ifd[0x9003] = "2024:06:15 14:30:00"  # DateTimeOriginal
     img.save(HERE / "tiny_photo.jpg", "JPEG", exif=exif.tobytes())
@@ -44,10 +44,18 @@ def create_tiny_video():
     out = HERE / "tiny_video.mp4"
     subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "color=c=black:s=16x16:d=1:r=1",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-t", "1",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=16x16:d=1:r=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-t",
+            "1",
             str(out),
         ],
         capture_output=True,

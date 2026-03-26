@@ -22,16 +22,32 @@ logger = logging.getLogger(__name__)
 
 # Tags that should never be copied between files
 _UNCOPYABLE_TAGS = {
-    "SourceFile", "FileName", "Directory", "FileSize", "FileModifyDate",
-    "FileAccessDate", "FileInodeChangeDate", "FilePermissions", "FileType",
-    "FileTypeExtension", "MIMEType", "ExifToolVersion",
-    "ThumbnailImage", "PreviewImage", "JpgFromRaw",
+    "SourceFile",
+    "FileName",
+    "Directory",
+    "FileSize",
+    "FileModifyDate",
+    "FileAccessDate",
+    "FileInodeChangeDate",
+    "FilePermissions",
+    "FileType",
+    "FileTypeExtension",
+    "MIMEType",
+    "ExifToolVersion",
+    "ThumbnailImage",
+    "PreviewImage",
+    "JpgFromRaw",
 }
 
 # Tags where values should be merged (union) rather than overwritten
 _LIST_TAGS = {
-    "Keywords", "Subject", "HierarchicalSubject", "CatalogSets",
-    "TagsList", "LastKeywordXMP", "LastKeywordIPTC",
+    "Keywords",
+    "Subject",
+    "HierarchicalSubject",
+    "CatalogSets",
+    "TagsList",
+    "LastKeywordXMP",
+    "LastKeywordIPTC",
 }
 
 # Tags that are camera-specific binary data — only copy if survivor has none
@@ -119,35 +135,55 @@ def create_merge_plan(
     candidates = merge_candidates(diff, survivor_path)
     for tag, (source_path, value) in candidates.items():
         if _is_uncopyable(tag):
-            plan.skipped.append(MergeAction(
-                tag=tag, value=value, source_path=source_path,
-                action_type="skip_uncopyable",
-            ))
+            plan.skipped.append(
+                MergeAction(
+                    tag=tag,
+                    value=value,
+                    source_path=source_path,
+                    action_type="skip_uncopyable",
+                )
+            )
             continue
 
         if _is_makernote_tag(tag):
             if has_makernotes:
-                plan.skipped.append(MergeAction(
-                    tag=tag, value=value, source_path=source_path,
-                    action_type="skip_makernotes",
-                ))
+                plan.skipped.append(
+                    MergeAction(
+                        tag=tag,
+                        value=value,
+                        source_path=source_path,
+                        action_type="skip_makernotes",
+                    )
+                )
             else:
-                plan.actions.append(MergeAction(
-                    tag=tag, value=value, source_path=source_path,
-                    action_type="copy",
-                ))
+                plan.actions.append(
+                    MergeAction(
+                        tag=tag,
+                        value=value,
+                        source_path=source_path,
+                        action_type="copy",
+                    )
+                )
             continue
 
         if _is_list_tag(tag):
-            plan.actions.append(MergeAction(
-                tag=tag, value=value, source_path=source_path,
-                action_type="merge_list",
-            ))
+            plan.actions.append(
+                MergeAction(
+                    tag=tag,
+                    value=value,
+                    source_path=source_path,
+                    action_type="merge_list",
+                )
+            )
         else:
-            plan.actions.append(MergeAction(
-                tag=tag, value=value, source_path=source_path,
-                action_type="copy",
-            ))
+            plan.actions.append(
+                MergeAction(
+                    tag=tag,
+                    value=value,
+                    source_path=source_path,
+                    action_type="copy",
+                )
+            )
 
     # 2. Process list-type conflicts — try to merge lists
     for tag, path_values in diff.conflicts.items():
@@ -174,18 +210,26 @@ def create_merge_plan(
                 survivor_set = set()
             new_vals = all_vals - survivor_set
             if new_vals:
-                plan.actions.append(MergeAction(
-                    tag=tag, value=sorted(new_vals), source_path=source,
-                    action_type="merge_list",
-                ))
+                plan.actions.append(
+                    MergeAction(
+                        tag=tag,
+                        value=sorted(new_vals),
+                        source_path=source,
+                        action_type="merge_list",
+                    )
+                )
         else:
             # Non-list conflict — survivor value preserved, log conflict
             for p, v in path_values.items():
                 if p != survivor_path:
-                    plan.conflicts.append(MergeAction(
-                        tag=tag, value=v, source_path=p,
-                        action_type="skip_conflict",
-                    ))
+                    plan.conflicts.append(
+                        MergeAction(
+                            tag=tag,
+                            value=v,
+                            source_path=p,
+                            action_type="skip_conflict",
+                        )
+                    )
 
     return plan
 

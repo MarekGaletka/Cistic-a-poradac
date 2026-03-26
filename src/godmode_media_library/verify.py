@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class VerifyResult:
     """Result of catalog verification."""
+
     total_checked: int = 0
     missing_files: list[str] = field(default_factory=list)
     size_mismatches: list[tuple[str, int, int]] = field(default_factory=list)  # path, catalog_size, actual_size

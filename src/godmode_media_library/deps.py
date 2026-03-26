@@ -31,6 +31,7 @@ class DependencyStatus:
 
 # ── Platform detection ────────────────────────────────────────────────
 
+
 def _platform() -> str:
     """Return simplified platform: 'macos', 'linux', or 'windows'."""
     system = platform.system().lower()
@@ -112,6 +113,7 @@ def resolve_bin(name: str) -> str | None:
 
 # ── Individual checkers ───────────────────────────────────────────────
 
+
 def check_exiftool(bin_path: str = "exiftool") -> DependencyStatus:
     """Check ExifTool availability and version."""
     resolved = _which(bin_path) if "/" not in bin_path else bin_path
@@ -131,7 +133,10 @@ def check_exiftool(bin_path: str = "exiftool") -> DependencyStatus:
     version = None
     try:
         result = subprocess.run(
-            [resolved, "-ver"], capture_output=True, text=True, timeout=10,
+            [resolved, "-ver"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             version = result.stdout.strip()
@@ -159,7 +164,10 @@ def check_ffprobe() -> DependencyStatus:
     version = None
     try:
         result = subprocess.run(
-            [resolved, "-version"], capture_output=True, text=True, timeout=10,
+            [resolved, "-version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             first_line = result.stdout.split("\n")[0]
@@ -191,6 +199,7 @@ def check_ffmpeg() -> DependencyStatus:
 def check_rclone() -> DependencyStatus:
     """Check rclone availability (needed for cloud storage access)."""
     from .cloud import _rclone_bin
+
     resolved = _which(_rclone_bin()) or _which("rclone")
     if resolved is None:
         return DependencyStatus(
@@ -202,7 +211,10 @@ def check_rclone() -> DependencyStatus:
     version = None
     try:
         result = subprocess.run(
-            [resolved, "version", "--check"], capture_output=True, text=True, timeout=10,
+            [resolved, "version", "--check"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             for line in result.stdout.split("\n"):
@@ -269,6 +281,7 @@ def check_geopy() -> DependencyStatus:
 
 # ── Aggregate checker ─────────────────────────────────────────────────
 
+
 def check_all(exiftool_bin: str = "exiftool") -> list[DependencyStatus]:
     """Check all dependencies and return list of statuses."""
     return [
@@ -284,6 +297,7 @@ def check_all(exiftool_bin: str = "exiftool") -> list[DependencyStatus]:
 
 
 # ── Formatting ────────────────────────────────────────────────────────
+
 
 def format_report(statuses: list[DependencyStatus]) -> str:
     """Format dependency statuses as a human-readable report."""

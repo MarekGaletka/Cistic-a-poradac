@@ -9,6 +9,7 @@ from godmode_media_library.models import DuplicateRow, FileRecord
 
 # ── Auto-skip markers for external tools ──────────────────────────────
 
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "integration: integration tests with real files")
     config.addinivalue_line("markers", "requires_exiftool: skip if exiftool not installed")

@@ -17,10 +17,22 @@ def catalog_path(tmp_path):
     # Insert a sample file
     photo_path = str(tmp_path / "photo.jpg")
     row = CatalogFileRow(
-        id=None, path=photo_path, size=5000, mtime=1.0, ctime=1.0,
-        birthtime=1.0, ext="jpg", sha256="abc", inode=None, device=None,
-        nlink=1, asset_key=None, asset_component=False, xattr_count=0,
-        first_seen="2024-01-01", last_scanned="2024-01-01",
+        id=None,
+        path=photo_path,
+        size=5000,
+        mtime=1.0,
+        ctime=1.0,
+        birthtime=1.0,
+        ext="jpg",
+        sha256="abc",
+        inode=None,
+        device=None,
+        nlink=1,
+        asset_key=None,
+        asset_component=False,
+        xattr_count=0,
+        first_seen="2024-01-01",
+        last_scanned="2024-01-01",
     )
     file_id = cat.upsert_file(row)
     # Insert faces and a person

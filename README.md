@@ -299,6 +299,41 @@ Install flow for end users:
 2. Double-click the `.pkg`.
 3. Follow Installer steps (no terminal needed).
 
+## Error recovery & resume
+
+All long-running operations (audit, pipeline, cloud consolidation) are designed to be safely interrupted and resumed.
+
+### Audit / apply / delete-apply
+
+These commands are idempotent. If interrupted (Ctrl+C, power loss, disk unmount):
+
+- **audit**: Re-run with the same `--out-dir`. Files already hashed are skipped via the catalog.
+- **apply**: The execution log (`executed_moves.tsv`) tracks completed moves. Re-running skips already-moved files.
+- **delete-apply**: Same pattern — the log tracks completed quarantine moves.
+
+To undo: `gml restore --log /path/to/executed_moves.tsv`
+
+### Cloud consolidation pipeline (10-phase)
+
+The consolidation pipeline uses SQLite-backed checkpoints. Each file's status is tracked per-phase.
+
+- **Internet drops mid-transfer**: Pipeline marks in-progress files as failed. On resume, only failed/pending files are retried.
+- **Mac sleeps / process killed**: On next run, the pipeline detects the existing job and resumes from the last completed phase.
+- **Destination full / quota exceeded**: Pipeline auto-pauses with status `PAUSED`. Fix the quota, then resume via web UI.
+- **Verification failures**: Files that fail post-transfer hash verification are marked `FAILED` and retried in Phase 7 (retry phase).
+
+Monitor progress via web UI at `http://localhost:8765` (start with `gml serve`).
+
+### Logging for debugging
+
+```bash
+gml audit --roots /path -v --log-file /tmp/gml.log
+```
+
+- `-v` for INFO, `-vv` for DEBUG
+- `--log-file` writes JSON-formatted logs with automatic rotation (10 MB, 3 backups)
+- `--logfile-max-mb 20` for 20 MB per file, `--logfile-backups 5` for 5 backup files
+
 ## Docker (run outside local Python environment)
 
 Build:

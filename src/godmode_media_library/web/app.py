@@ -42,6 +42,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         from .api import _capture_event_loop
+
         _capture_event_loop()
         yield
 

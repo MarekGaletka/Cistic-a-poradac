@@ -68,6 +68,7 @@ def run_pipeline(
     catalog = Catalog(catalog_path)
 
     if confirm_fn is None and config.interactive:
+
         def confirm_fn(msg: str) -> bool:
             answer = input(f"{msg} [y/N]: ").strip().lower()
             return answer in ("y", "yes")
@@ -150,7 +151,10 @@ def run_pipeline(
 
     logger.info(
         "Pipeline complete: scanned=%d, extracted=%d, groups=%d, merged=%d tags, errors=%d",
-        result.files_scanned, result.metadata_extracted,
-        result.duplicate_groups, result.tags_merged, len(result.errors),
+        result.files_scanned,
+        result.metadata_extracted,
+        result.duplicate_groups,
+        result.tags_merged,
+        len(result.errors),
     )
     return result

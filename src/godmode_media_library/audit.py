@@ -150,9 +150,7 @@ def write_audit_run(
 
     ext_counts = Counter(rec.ext if rec.ext else "(noext)" for rec in records)
     top_large = [
-        (rec.size, str(rec.path))
-        for rec in sorted(records, key=lambda x: x.size, reverse=True)
-        if rec.size >= large_file_threshold_bytes
+        (rec.size, str(rec.path)) for rec in sorted(records, key=lambda x: x.size, reverse=True) if rec.size >= large_file_threshold_bytes
     ]
 
     path_to_key, path_is_component, key_to_exts = build_asset_membership([r.path for r in records])

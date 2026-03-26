@@ -44,12 +44,40 @@ class _ChangeCollector:
 def _is_media_file(path: Path) -> bool:
     """Check if path looks like a media file."""
     media_exts = {
-        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif",
-        ".webp", ".heic", ".heif", ".avif", ".svg",
-        ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm",
-        ".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a",
-        ".cr2", ".nef", ".arw", ".dng", ".orf", ".rw2",
-        ".pdf", ".psd", ".ai",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".webp",
+        ".heic",
+        ".heif",
+        ".avif",
+        ".svg",
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".wmv",
+        ".flv",
+        ".webm",
+        ".mp3",
+        ".wav",
+        ".aac",
+        ".flac",
+        ".ogg",
+        ".m4a",
+        ".cr2",
+        ".nef",
+        ".arw",
+        ".dng",
+        ".orf",
+        ".rw2",
+        ".pdf",
+        ".psd",
+        ".ai",
     }
     return path.suffix.lower() in media_exts
 
@@ -139,7 +167,9 @@ def watch_roots(
 
                 logger.info(
                     "Auto-scan complete: scanned=%d new=%d changed=%d",
-                    stats.files_scanned, stats.files_new, stats.files_changed,
+                    stats.files_scanned,
+                    stats.files_new,
+                    stats.files_changed,
                 )
                 if on_scan_complete:
                     on_scan_complete(stats)

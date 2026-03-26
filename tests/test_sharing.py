@@ -18,8 +18,7 @@ def cat(tmp_path):
     c.open()
     # Insert a test file
     c.conn.execute(
-        "INSERT INTO files (path, size, mtime, ctime, ext, first_seen, last_scanned) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO files (path, size, mtime, ctime, ext, first_seen, last_scanned) VALUES (?, ?, ?, ?, ?, ?, ?)",
         ("/tmp/photo.jpg", 1024, 1000.0, 1000.0, ".jpg", "2025-01-01", "2025-01-01"),
     )
     c.conn.commit()
@@ -31,9 +30,7 @@ def cat(tmp_path):
 
 
 def test_shares_table_exists(cat):
-    tables = {r[0] for r in cat.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()}
+    tables = {r[0] for r in cat.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     assert "shares" in tables
 
 
@@ -128,8 +125,7 @@ def test_cleanup_expired_shares(cat):
     cat.create_share("/tmp/photo.jpg", label="expired")
     # Manually expire one
     cat.conn.execute(
-        "UPDATE shares SET expires_at = '2020-01-01T00:00:00+00:00' WHERE id = "
-        "(SELECT id FROM shares WHERE label = 'expired')"
+        "UPDATE shares SET expires_at = '2020-01-01T00:00:00+00:00' WHERE id = (SELECT id FROM shares WHERE label = 'expired')"
     )
     cat.conn.commit()
     cleaned = cat.cleanup_expired_shares()
@@ -171,8 +167,7 @@ def client(tmp_path):
     cat = Catalog(db)
     cat.open()
     cat.conn.execute(
-        "INSERT INTO files (path, size, mtime, ctime, ext, first_seen, last_scanned) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO files (path, size, mtime, ctime, ext, first_seen, last_scanned) VALUES (?, ?, ?, ?, ?, ?, ?)",
         ("/tmp/test.jpg", 2048, 1000.0, 1000.0, ".jpg", "2025-01-01", "2025-01-01"),
     )
     cat.conn.commit()

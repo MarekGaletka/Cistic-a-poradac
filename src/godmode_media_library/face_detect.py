@@ -32,6 +32,7 @@ def _load_libs():
     try:
         try:
             import pillow_heif  # type: ignore
+
             pillow_heif.register_heif_opener()
         except ImportError:
             logger.debug("pillow_heif not available, HEIF support disabled")
@@ -39,9 +40,7 @@ def _load_libs():
         import numpy as np  # type: ignore
         from PIL import Image  # type: ignore
     except ImportError as exc:
-        raise RuntimeError(
-            "Face detection requires: pip install godmode-media-library[people]"
-        ) from exc
+        raise RuntimeError("Face detection requires: pip install godmode-media-library[people]") from exc
     return face_recognition, np, Image
 
 
@@ -85,7 +84,9 @@ def detect_faces_in_file(
 
     # Use upsample=2 for better detection on high-res / downscaled images
     locations = face_recognition.face_locations(
-        image, number_of_times_to_upsample=2, model=model,
+        image,
+        number_of_times_to_upsample=2,
+        model=model,
     )
     if not locations:
         return 0
@@ -143,8 +144,12 @@ def scan_new_faces(
     for i, (file_id, path) in enumerate(pending):
         try:
             n = detect_faces_in_file(
-                catalog, file_id, path,
-                model=model, max_dimension=max_dimension, encrypt_fn=encrypt_fn,
+                catalog,
+                file_id,
+                path,
+                model=model,
+                max_dimension=max_dimension,
+                encrypt_fn=encrypt_fn,
             )
             result.files_processed += 1
             result.faces_detected += n
@@ -186,6 +191,7 @@ def cluster_faces(
                 vec = decrypt_fn(blob)
             else:
                 import struct
+
                 vec = list(struct.unpack("<128d", blob))
             face_ids.append(face_id)
             vectors.append(vec)
@@ -261,6 +267,7 @@ def match_face_to_known(
                 ref_vec = np.array(decrypt_fn(row[0]))
             else:
                 import struct
+
                 ref_vec = np.array(struct.unpack("<128d", row[0]))
         except (struct.error, ValueError, TypeError) as exc:
             logger.debug("Failed to decode face encoding for person: %s", exc)
@@ -298,6 +305,7 @@ def crop_face_thumbnail(
     try:
         try:
             import pillow_heif  # type: ignore
+
             pillow_heif.register_heif_opener()
         except ImportError:
             pass
@@ -324,6 +332,7 @@ def crop_face_thumbnail(
             face_img = face_img.resize((size, size), Image.LANCZOS)
 
             import io
+
             buf = io.BytesIO()
             face_img.convert("RGB").save(buf, format="JPEG", quality=85)
             return buf.getvalue()

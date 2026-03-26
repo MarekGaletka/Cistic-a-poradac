@@ -106,13 +106,26 @@ def incremental_scan(
             is_new_or_changed = True
 
         info = {
-            "idx": idx, "path": path, "path_str": path_str,
-            "size": size, "mtime": mtime, "ctime": ctime, "ext": ext,
-            "birthtime": birthtime, "xattr": xattr,
-            "inode": inode, "device": device, "nlink": nlink,
-            "asset_key": asset_key, "is_component": is_component,
-            "needs_hash": needs_hash, "is_new_or_changed": is_new_or_changed,
-            "sha256": None, "media_meta": None, "exif_meta": None, "phash": None,
+            "idx": idx,
+            "path": path,
+            "path_str": path_str,
+            "size": size,
+            "mtime": mtime,
+            "ctime": ctime,
+            "ext": ext,
+            "birthtime": birthtime,
+            "xattr": xattr,
+            "inode": inode,
+            "device": device,
+            "nlink": nlink,
+            "asset_key": asset_key,
+            "is_component": is_component,
+            "needs_hash": needs_hash,
+            "is_new_or_changed": is_new_or_changed,
+            "sha256": None,
+            "media_meta": None,
+            "exif_meta": None,
+            "phash": None,
         }
         file_infos.append(info)
 
@@ -155,10 +168,7 @@ def incremental_scan(
         logger.info("Hashing %d files (workers=%d)", len(paths_to_hash), effective_workers)
         if effective_workers > 1:
             with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-                futures = {
-                    pool.submit(sha256_file, p): (fi_idx, sz)
-                    for fi_idx, p, sz in paths_to_hash
-                }
+                futures = {pool.submit(sha256_file, p): (fi_idx, sz) for fi_idx, p, sz in paths_to_hash}
                 for future in as_completed(futures):
                     fi_idx, sz = futures[future]
                     try:
@@ -176,6 +186,7 @@ def incremental_scan(
 
     # ── Phase 3: Parallel media probe + EXIF ──────────────────────────
     if paths_for_media:
+
         def _extract_media(fi_idx: int, p: Path, ext: str) -> tuple[int, MediaMeta | None, ExifMeta | None]:
             mm = probe_file(p) if is_media_ext(ext) else None
             em = read_exif(p) if can_read_exif(ext) else None
@@ -229,10 +240,7 @@ def incremental_scan(
             inode=info["inode"],
             device=info["device"],
             nlink=info["nlink"],
-            asset_key=(
-                f"{info['path'].parent}\t{info['path'].stem}"
-                if info["asset_key"] else None
-            ),
+            asset_key=(f"{info['path'].parent}\t{info['path'].stem}" if info["asset_key"] else None),
             asset_component=info["is_component"],
             xattr_count=info["xattr"],
             first_seen="",
@@ -301,7 +309,11 @@ def incremental_scan(
 
     logger.info(
         "Scan complete: %d scanned, %d new, %d changed, %d removed, %d bytes hashed",
-        stats.files_scanned, stats.files_new, stats.files_changed, stats.files_removed, stats.bytes_hashed,
+        stats.files_scanned,
+        stats.files_new,
+        stats.files_changed,
+        stats.files_removed,
+        stats.bytes_hashed,
     )
     return stats
 
@@ -340,22 +352,30 @@ def _run_exiftool_extraction(catalog: Catalog, exiftool_bin: str = "exiftool") -
 
 # Keys to try for date_original (priority order)
 _DATE_KEYS = [
-    "EXIF:DateTimeOriginal", "DateTimeOriginal",
-    "EXIF:CreateDate", "CreateDate",
-    "XMP:DateTimeOriginal", "XMP:CreateDate",
-    "QuickTime:CreateDate", "QuickTime:MediaCreateDate",
+    "EXIF:DateTimeOriginal",
+    "DateTimeOriginal",
+    "EXIF:CreateDate",
+    "CreateDate",
+    "XMP:DateTimeOriginal",
+    "XMP:CreateDate",
+    "QuickTime:CreateDate",
+    "QuickTime:MediaCreateDate",
     "Composite:SubSecDateTimeOriginal",
     "H264:DateTimeOriginal",
 ]
 
 # Keys to try for GPS latitude/longitude
 _GPS_LAT_KEYS = [
-    "Composite:GPSLatitude", "EXIF:GPSLatitude",
-    "GPSLatitude", "XMP:GPSLatitude",
+    "Composite:GPSLatitude",
+    "EXIF:GPSLatitude",
+    "GPSLatitude",
+    "XMP:GPSLatitude",
 ]
 _GPS_LON_KEYS = [
-    "Composite:GPSLongitude", "EXIF:GPSLongitude",
-    "GPSLongitude", "XMP:GPSLongitude",
+    "Composite:GPSLongitude",
+    "EXIF:GPSLongitude",
+    "GPSLongitude",
+    "XMP:GPSLongitude",
 ]
 
 
@@ -403,6 +423,7 @@ def _extract_gps_float(meta: dict, keys: list[str]) -> float | None:
         if isinstance(val, str):
             # Handle "49.1234 N" or "49 deg 7' 25.08\" N" formats
             import re
+
             # Try simple float
             try:
                 return float(val)
@@ -484,8 +505,7 @@ def _backfill_dates_from_filesystem(catalog: Catalog) -> int:
     from datetime import datetime, timezone
 
     count = catalog.conn.execute(
-        "SELECT COUNT(*) FROM files "
-        "WHERE date_original IS NULL AND (birthtime IS NOT NULL OR mtime IS NOT NULL)"
+        "SELECT COUNT(*) FROM files WHERE date_original IS NULL AND (birthtime IS NOT NULL OR mtime IS NOT NULL)"
     ).fetchone()[0]
 
     if count == 0:
@@ -494,8 +514,7 @@ def _backfill_dates_from_filesystem(catalog: Catalog) -> int:
     logger.info("Backfilling date_original from filesystem dates for %d files", count)
 
     rows = catalog.conn.execute(
-        "SELECT id, birthtime, mtime FROM files "
-        "WHERE date_original IS NULL AND (birthtime IS NOT NULL OR mtime IS NOT NULL)"
+        "SELECT id, birthtime, mtime FROM files WHERE date_original IS NULL AND (birthtime IS NOT NULL OR mtime IS NOT NULL)"
     ).fetchall()
 
     for row_id, birthtime, mtime in rows:
@@ -515,9 +534,7 @@ def _backfill_dates_from_filesystem(catalog: Catalog) -> int:
 def _update_duplicate_groups(catalog: Catalog) -> int:
     """Detect exact duplicate groups from SHA-256 hashes in catalog."""
     cur = catalog.conn.execute(
-        "SELECT sha256, GROUP_CONCAT(id, ',') as ids, COUNT(*) as cnt "
-        "FROM files WHERE sha256 IS NOT NULL "
-        "GROUP BY sha256 HAVING cnt >= 2"
+        "SELECT sha256, GROUP_CONCAT(id, ',') as ids, COUNT(*) as cnt FROM files WHERE sha256 IS NOT NULL GROUP BY sha256 HAVING cnt >= 2"
     )
     groups = 0
     for row in cur.fetchall():

@@ -85,6 +85,7 @@ def test_read_exif_nonexistent():
 
 try:
     import importlib.util
+
     HAS_PILLOW = importlib.util.find_spec("PIL") is not None
 except Exception:
     HAS_PILLOW = False

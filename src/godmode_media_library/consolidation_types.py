@@ -9,8 +9,10 @@ from enum import StrEnum
 # Enums
 # ---------------------------------------------------------------------------
 
+
 class JobStatus(StrEnum):
     """Status of a consolidation job."""
+
     CREATED = "created"
     RUNNING = "running"
     PAUSED = "paused"
@@ -20,6 +22,7 @@ class JobStatus(StrEnum):
 
 class FileStatus(StrEnum):
     """Status of a single file transfer."""
+
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -29,6 +32,7 @@ class FileStatus(StrEnum):
 
 class Phase(StrEnum):
     """Consolidation pipeline phases (order matters)."""
+
     WAIT_FOR_SOURCES = "wait_for_sources"
     CLOUD_CATALOG_SCAN = "cloud_catalog_scan"
     LOCAL_SCAN = "local_scan"
@@ -44,6 +48,7 @@ class Phase(StrEnum):
 
 class StructurePattern(StrEnum):
     """Destination directory structure patterns."""
+
     YEAR_MONTH = "year_month"
     YEAR = "year"
     FLAT = "flat"
@@ -51,6 +56,7 @@ class StructurePattern(StrEnum):
 
 class DedupStrategy(StrEnum):
     """Deduplication strategies."""
+
     RICHNESS = "richness"
     LARGEST = "largest"
     NEWEST = "newest"
@@ -126,19 +132,58 @@ QUOTA_ERRORS = (
 )
 
 # Media file extensions
-MEDIA_EXTENSIONS = frozenset({
-    # Images
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp",
-    ".heic", ".heif", ".avif", ".raw", ".cr2", ".cr3", ".nef", ".arw",
-    ".dng", ".orf", ".rw2", ".pef", ".srw",
-    # Video
-    ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v",
-    ".3gp", ".mts", ".m2ts", ".mpg", ".mpeg", ".vob",
-    # Audio
-    ".mp3", ".aac", ".flac", ".wav", ".ogg", ".m4a", ".wma", ".aiff",
-    # Documents
-    ".pdf",
-})
+MEDIA_EXTENSIONS = frozenset(
+    {
+        # Images
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".webp",
+        ".heic",
+        ".heif",
+        ".avif",
+        ".raw",
+        ".cr2",
+        ".cr3",
+        ".nef",
+        ".arw",
+        ".dng",
+        ".orf",
+        ".rw2",
+        ".pef",
+        ".srw",
+        # Video
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".wmv",
+        ".flv",
+        ".webm",
+        ".m4v",
+        ".3gp",
+        ".mts",
+        ".m2ts",
+        ".mpg",
+        ".mpeg",
+        ".vob",
+        # Audio
+        ".mp3",
+        ".aac",
+        ".flac",
+        ".wav",
+        ".ogg",
+        ".m4a",
+        ".wma",
+        ".aiff",
+        # Documents
+        ".pdf",
+    }
+)
 
 # Job types
 JOB_TYPE_ULTIMATE = "ultimate_consolidation"

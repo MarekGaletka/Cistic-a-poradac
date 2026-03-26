@@ -38,11 +38,13 @@ def test_pipeline_with_files_no_duplicates(tmp_path):
         interactive=False,
     )
 
-    with patch("godmode_media_library.scanner.probe_file", return_value=None), \
-         patch("godmode_media_library.scanner.read_exif", return_value=None), \
-         patch("godmode_media_library.scanner.dhash", return_value=None), \
-         patch("godmode_media_library.scanner.video_dhash", return_value=None), \
-         patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}):
+    with (
+        patch("godmode_media_library.scanner.probe_file", return_value=None),
+        patch("godmode_media_library.scanner.read_exif", return_value=None),
+        patch("godmode_media_library.scanner.dhash", return_value=None),
+        patch("godmode_media_library.scanner.video_dhash", return_value=None),
+        patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}),
+    ):
         result = run_pipeline(config)
 
     assert result.files_scanned == 2
@@ -64,11 +66,13 @@ def test_pipeline_with_duplicates(tmp_path):
         interactive=False,
     )
 
-    with patch("godmode_media_library.scanner.probe_file", return_value=None), \
-         patch("godmode_media_library.scanner.read_exif", return_value=None), \
-         patch("godmode_media_library.scanner.dhash", return_value=None), \
-         patch("godmode_media_library.scanner.video_dhash", return_value=None), \
-         patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}):
+    with (
+        patch("godmode_media_library.scanner.probe_file", return_value=None),
+        patch("godmode_media_library.scanner.read_exif", return_value=None),
+        patch("godmode_media_library.scanner.dhash", return_value=None),
+        patch("godmode_media_library.scanner.video_dhash", return_value=None),
+        patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}),
+    ):
         result = run_pipeline(config)
 
     assert result.files_scanned == 2
@@ -108,11 +112,13 @@ def test_pipeline_dry_run(tmp_path):
         dry_run=True,
     )
 
-    with patch("godmode_media_library.scanner.probe_file", return_value=None), \
-         patch("godmode_media_library.scanner.read_exif", return_value=None), \
-         patch("godmode_media_library.scanner.dhash", return_value=None), \
-         patch("godmode_media_library.scanner.video_dhash", return_value=None), \
-         patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}):
+    with (
+        patch("godmode_media_library.scanner.probe_file", return_value=None),
+        patch("godmode_media_library.scanner.read_exif", return_value=None),
+        patch("godmode_media_library.scanner.dhash", return_value=None),
+        patch("godmode_media_library.scanner.video_dhash", return_value=None),
+        patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}),
+    ):
         result = run_pipeline(config)
 
     assert isinstance(result, PipelineResult)
@@ -135,11 +141,13 @@ def test_pipeline_interactive_abort(tmp_path):
     def decline(_msg: str) -> bool:
         return False
 
-    with patch("godmode_media_library.scanner.probe_file", return_value=None), \
-         patch("godmode_media_library.scanner.read_exif", return_value=None), \
-         patch("godmode_media_library.scanner.dhash", return_value=None), \
-         patch("godmode_media_library.scanner.video_dhash", return_value=None), \
-         patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}):
+    with (
+        patch("godmode_media_library.scanner.probe_file", return_value=None),
+        patch("godmode_media_library.scanner.read_exif", return_value=None),
+        patch("godmode_media_library.scanner.dhash", return_value=None),
+        patch("godmode_media_library.scanner.video_dhash", return_value=None),
+        patch("godmode_media_library.pipeline.extract_all_metadata", return_value={}),
+    ):
         result = run_pipeline(config, confirm_fn=decline)
 
     # Should have scanned but not merged (user declined)

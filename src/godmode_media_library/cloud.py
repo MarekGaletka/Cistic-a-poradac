@@ -82,7 +82,7 @@ PROVIDERS = {
     "google photos": {
         "label": "Google Photos",
         "rclone_type": "google photos",
-        "setup": "rclone config create gphotos \"google photos\"  # (OAuth + read-only)",
+        "setup": 'rclone config create gphotos "google photos"  # (OAuth + read-only)',
         "media_paths": ["media/all", "media/by-year"],
         "icon": "\U0001f4f7",
         "auth": "oauth",
@@ -114,8 +114,13 @@ PROVIDERS = {
         "icon": "\u2601\ufe0f",
         "auth": "credentials",
         "fields": [
-            {"key": "provider", "label": "Provider", "type": "select", "required": True,
-             "options": ["AWS", "Cloudflare", "DigitalOcean", "Wasabi", "Other"]},
+            {
+                "key": "provider",
+                "label": "Provider",
+                "type": "select",
+                "required": True,
+                "options": ["AWS", "Cloudflare", "DigitalOcean", "Wasabi", "Other"],
+            },
             {"key": "access_key_id", "label": "Access Key ID", "type": "text", "required": True},
             {"key": "secret_access_key", "label": "Secret Access Key", "type": "password", "required": True},
             {"key": "region", "label": "Region", "type": "text", "required": False},
@@ -145,6 +150,7 @@ class RcloneRemote:
 @dataclass
 class CloudSource:
     """A cloud storage source with status information."""
+
     name: str
     provider: str
     remote_type: str
@@ -161,6 +167,7 @@ class CloudSource:
 @dataclass
 class SyncResult:
     """Result of a cloud sync/copy operation."""
+
     remote: str
     remote_path: str
     local_path: str
@@ -332,7 +339,9 @@ def delete_remote(name: str) -> dict:
     try:
         result = subprocess.run(
             [_rclone_bin(), "config", "delete", name],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return {"success": False, "message": result.stderr.strip()}
@@ -349,7 +358,9 @@ def test_remote(name: str) -> dict:
     try:
         result = subprocess.run(
             [_rclone_bin(), "lsd", f"{name}:", "--max-depth", "1"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode == 0:
             return {"success": True, "message": "Connection OK"}
@@ -379,7 +390,9 @@ def rclone_version() -> str | None:
         # Just get version from first line
         result2 = subprocess.run(
             [_rclone_bin(), "version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         first_line = result2.stdout.strip().splitlines()[0] if result2.stdout else ""
         return first_line.replace("rclone ", "").strip()
@@ -394,7 +407,9 @@ def list_remotes() -> list[RcloneRemote]:
     try:
         result = subprocess.run(
             [_rclone_bin(), "listremotes", "--long"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return []
@@ -437,7 +452,9 @@ def rclone_size(remote: str, path: str = "") -> dict:
     try:
         result = subprocess.run(
             [_rclone_bin(), "size", target, "--json"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
             return {"count": 0, "bytes": 0}
@@ -453,7 +470,9 @@ def rclone_about(remote: str) -> dict:
     try:
         result = subprocess.run(
             [_rclone_bin(), "about", f"{remote}:", "--json"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             return {}
@@ -485,15 +504,20 @@ def rclone_copy(
         raise RuntimeError("rclone is not installed")
 
     import time
+
     start = time.monotonic()
 
     source = f"{remote}:{remote_path}" if remote_path else f"{remote}:"
     Path(local_path).mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        _rclone_bin(), "copy", source, local_path,
+        _rclone_bin(),
+        "copy",
+        source,
+        local_path,
         "--stats-one-line",
-        "--stats", "2s",
+        "--stats",
+        "2s",
         "-v",
     ]
     if include_pattern:
@@ -507,8 +531,11 @@ def rclone_copy(
     try:
         # Use Popen for streaming progress (4.8)
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
 
         files_transferred = 0
@@ -534,18 +561,23 @@ def rclone_copy(
             # Real-time progress callback
             if progress_fn and ("Transferred:" in line or "%" in line):
                 pct_match = re.search(r"(\d+)%", line)
-                progress_fn({
-                    "files_transferred": files_transferred,
-                    "bytes_transferred": bytes_transferred,
-                    "progress_pct": int(pct_match.group(1)) if pct_match else 0,
-                })
+                progress_fn(
+                    {
+                        "files_transferred": files_transferred,
+                        "bytes_transferred": bytes_transferred,
+                        "progress_pct": int(pct_match.group(1)) if pct_match else 0,
+                    }
+                )
 
             if _time.monotonic() > deadline:
                 proc.kill()
                 proc.wait()
                 return SyncResult(
-                    remote=remote, remote_path=remote_path, local_path=local_path,
-                    errors=1, elapsed_seconds=time.monotonic() - start,
+                    remote=remote,
+                    remote_path=remote_path,
+                    local_path=local_path,
+                    errors=1,
+                    elapsed_seconds=time.monotonic() - start,
                 )
 
         proc.wait()
@@ -562,8 +594,11 @@ def rclone_copy(
         )
     except OSError:
         return SyncResult(
-            remote=remote, remote_path=remote_path, local_path=local_path,
-            errors=1, elapsed_seconds=time.monotonic() - start,
+            remote=remote,
+            remote_path=remote_path,
+            local_path=local_path,
+            errors=1,
+            elapsed_seconds=time.monotonic() - start,
         )
 
 
@@ -588,14 +623,19 @@ def rclone_upload(
         raise RuntimeError("rclone is not installed")
 
     import time
+
     start = time.monotonic()
 
     destination = f"{remote}:{remote_path}" if remote_path else f"{remote}:"
 
     cmd = [
-        _rclone_bin(), "copy", local_path, destination,
+        _rclone_bin(),
+        "copy",
+        local_path,
+        destination,
         "--stats-one-line",
-        "--stats", "2s",
+        "--stats",
+        "2s",
         "-v",
     ]
     if include_pattern:
@@ -605,7 +645,10 @@ def rclone_upload(
 
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=7200,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=7200,
         )
         elapsed = time.monotonic() - start
 
@@ -614,6 +657,7 @@ def rclone_upload(
         #   Transferred:   5.000 MiB / 5.000 MiB, 100%, 2.500 MiB/s, ETA 0s  (bytes)
         #   Transferred:            42 / 42, 100%                               (files)
         import re
+
         files_transferred = 0
         bytes_transferred = 0
         errors = 0
@@ -643,8 +687,11 @@ def rclone_upload(
         )
     except subprocess.TimeoutExpired:
         return SyncResult(
-            remote=remote, remote_path=remote_path, local_path=local_path,
-            errors=1, elapsed_seconds=time.monotonic() - start,
+            remote=remote,
+            remote_path=remote_path,
+            local_path=local_path,
+            errors=1,
+            elapsed_seconds=time.monotonic() - start,
         )
 
 
@@ -667,10 +714,7 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
 
     # Pre-check: is FUSE available on macOS?
     if platform.system() == "Darwin":
-        fuse_available = (
-            Path("/Library/Filesystems/macfuse.fs").exists()
-            or Path("/Library/Filesystems/osxfuse.fs").exists()
-        )
+        fuse_available = Path("/Library/Filesystems/macfuse.fs").exists() or Path("/Library/Filesystems/osxfuse.fs").exists()
         if not fuse_available:
             raise RuntimeError(
                 "macFUSE není nainstalovaný. Nainstalujte: brew install macfuse "
@@ -679,10 +723,15 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
             )
 
     cmd = [
-        _rclone_bin(), "mount", f"{remote}:", mount_point,
+        _rclone_bin(),
+        "mount",
+        f"{remote}:",
+        mount_point,
         "--daemon",
-        "--vfs-cache-mode", "full",
-        "--vfs-cache-max-age", "24h",
+        "--vfs-cache-mode",
+        "full",
+        "--vfs-cache-max-age",
+        "24h",
     ]
 
     try:
@@ -726,7 +775,10 @@ def _is_mount_active(mount_point: str) -> bool:
     """Check if a path is an active mount point."""
     try:
         result = subprocess.run(
-            ["mount"], capture_output=True, text=True, timeout=5,
+            ["mount"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return mount_point in result.stdout
     except (subprocess.TimeoutExpired, OSError):
@@ -764,10 +816,7 @@ def resolve_root(root_spec: str) -> Path:
         if full.exists():
             return full
 
-    raise ValueError(
-        f"Remote '{root_spec}' is not mounted locally. "
-        f"Mount it first with: rclone mount {remote}: ~/mnt/{remote} --daemon"
-    )
+    raise ValueError(f"Remote '{root_spec}' is not mounted locally. Mount it first with: rclone mount {remote}: ~/mnt/{remote} --daemon")
 
 
 def mount_command(remote: str, mount_point: str | None = None) -> str:
@@ -790,12 +839,14 @@ def detect_icloud_paths() -> list[dict]:
     # iCloud Drive
     icloud_drive = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
     if icloud_drive.exists():
-        paths.append({
-            "name": "iCloud Drive",
-            "path": str(icloud_drive),
-            "type": "icloud_drive",
-            "icon": "\U0001f34e",
-        })
+        paths.append(
+            {
+                "name": "iCloud Drive",
+                "path": str(icloud_drive),
+                "type": "icloud_drive",
+                "icon": "\U0001f34e",
+            }
+        )
 
     # iCloud Photos (managed by Photos.app)
     photos_lib = Path.home() / "Pictures" / "Photos Library.photoslibrary"
@@ -804,12 +855,14 @@ def detect_icloud_paths() -> list[dict]:
         if not masters.exists():
             masters = photos_lib / "Masters"
         if masters.exists():
-            paths.append({
-                "name": "iCloud Photos (lokální kopie)",
-                "path": str(masters),
-                "type": "icloud_photos",
-                "icon": "\U0001f4f7",
-            })
+            paths.append(
+                {
+                    "name": "iCloud Photos (lokální kopie)",
+                    "path": str(masters),
+                    "type": "icloud_photos",
+                    "icon": "\U0001f4f7",
+                }
+            )
 
     # iCloud app data — grouped into a single entry with sub-paths
     icloud_apps = Path.home() / "Library" / "Mobile Documents"
@@ -821,19 +874,23 @@ def detect_icloud_paths() -> list[dict]:
             docs = app_dir / "Documents"
             if docs.exists():
                 app_name = app_dir.name.split("~")[-1]
-                sub_paths.append({
-                    "name": app_name,
-                    "path": str(docs),
-                })
+                sub_paths.append(
+                    {
+                        "name": app_name,
+                        "path": str(docs),
+                    }
+                )
         if sub_paths:
-            paths.append({
-                "name": "iCloud Apps",
-                "path": str(icloud_apps),
-                "type": "icloud_apps",
-                "icon": "\U0001f34e",
-                "app_count": len(sub_paths),
-                "apps": sub_paths,
-            })
+            paths.append(
+                {
+                    "name": "iCloud Apps",
+                    "path": str(icloud_apps),
+                    "type": "icloud_apps",
+                    "icon": "\U0001f34e",
+                    "app_count": len(sub_paths),
+                    "apps": sub_paths,
+                }
+            )
 
     return paths
 
@@ -869,41 +926,49 @@ def detect_native_cloud_paths() -> list[dict]:
                     icon = "\u2601\ufe0f"
                 elif "MEGA" in name or "mega" in name.lower():
                     icon = "\U0001f4e6"
-                paths.append({
-                    "name": name,
-                    "path": str(d),
-                    "type": "native_sync",
-                    "icon": icon,
-                })
+                paths.append(
+                    {
+                        "name": name,
+                        "path": str(d),
+                        "type": "native_sync",
+                        "icon": icon,
+                    }
+                )
 
     for gp in gdrive_paths:
         if gp.exists() and not any(p["path"] == str(gp) for p in paths):
-            paths.append({
-                "name": "Google Drive",
-                "path": str(gp),
-                "type": "native_sync",
-                "icon": "\U0001f4be",
-            })
+            paths.append(
+                {
+                    "name": "Google Drive",
+                    "path": str(gp),
+                    "type": "native_sync",
+                    "icon": "\U0001f4be",
+                }
+            )
 
     # Dropbox
     dropbox = Path.home() / "Dropbox"
     if dropbox.exists() and not any(p["path"] == str(dropbox) for p in paths):
-        paths.append({
-            "name": "Dropbox",
-            "path": str(dropbox),
-            "type": "native_sync",
-            "icon": "\U0001f4e5",
-        })
+        paths.append(
+            {
+                "name": "Dropbox",
+                "path": str(dropbox),
+                "type": "native_sync",
+                "icon": "\U0001f4e5",
+            }
+        )
 
     # MEGA Desktop
     mega = Path.home() / "MEGA"
     if mega.exists() and not any(p["path"] == str(mega) for p in paths):
-        paths.append({
-            "name": "MEGA",
-            "path": str(mega),
-            "type": "native_sync",
-            "icon": "\U0001f4e6",
-        })
+        paths.append(
+            {
+                "name": "MEGA",
+                "path": str(mega),
+                "type": "native_sync",
+                "icon": "\U0001f4e6",
+            }
+        )
 
     # pCloud Drive
     pcloud_paths = [
@@ -912,12 +977,14 @@ def detect_native_cloud_paths() -> list[dict]:
     ]
     for pp in pcloud_paths:
         if pp.exists() and not any(p["path"] == str(pp) for p in paths):
-            paths.append({
-                "name": "pCloud",
-                "path": str(pp),
-                "type": "native_sync",
-                "icon": "\u2601\ufe0f",
-            })
+            paths.append(
+                {
+                    "name": "pCloud",
+                    "path": str(pp),
+                    "type": "native_sync",
+                    "icon": "\u2601\ufe0f",
+                }
+            )
 
     return paths
 
@@ -950,8 +1017,7 @@ def provider_setup_guide(provider_key: str) -> dict:
                 "step": 3,
                 "title": "Připoj (mount)",
                 "command": (
-                    f"mkdir -p ~/mnt/{provider_key} && rclone mount"
-                    f" {provider_key}: ~/mnt/{provider_key} --daemon --vfs-cache-mode full"
+                    f"mkdir -p ~/mnt/{provider_key} && rclone mount {provider_key}: ~/mnt/{provider_key} --daemon --vfs-cache-mode full"
                 ),
             },
             {
@@ -983,35 +1049,39 @@ def get_cloud_status() -> dict:
         sync_path = str(default_sync_dir() / r.name)
         synced = Path(sync_path).exists() and any(Path(sync_path).iterdir()) if Path(sync_path).exists() else False
 
-        sources.append({
-            "name": r.name,
-            "provider": r.provider_label,
-            "remote_type": r.type,
-            "source_type": "rclone",
-            "mounted": mounted,
-            "mount_path": mount_path if mounted else "",
-            "synced": synced,
-            "sync_path": sync_path if synced else "",
-            "icon": r.icon,
-            "available": mounted or synced,
-        })
+        sources.append(
+            {
+                "name": r.name,
+                "provider": r.provider_label,
+                "remote_type": r.type,
+                "source_type": "rclone",
+                "mounted": mounted,
+                "mount_path": mount_path if mounted else "",
+                "synced": synced,
+                "sync_path": sync_path if synced else "",
+                "icon": r.icon,
+                "available": mounted or synced,
+            }
+        )
 
     # Add native paths (skip grouped entries like icloud_apps — shown in /cloud/native)
     for np in native_paths:
         if np.get("type") == "icloud_apps":
             continue
-        sources.append({
-            "name": np["name"],
-            "provider": np["name"],
-            "remote_type": np["type"],
-            "source_type": "native",
-            "mounted": True,
-            "mount_path": np["path"],
-            "synced": False,
-            "sync_path": "",
-            "icon": np["icon"],
-            "available": True,
-        })
+        sources.append(
+            {
+                "name": np["name"],
+                "provider": np["name"],
+                "remote_type": np["type"],
+                "source_type": "native",
+                "mounted": True,
+                "mount_path": np["path"],
+                "synced": False,
+                "sync_path": "",
+                "icon": np["icon"],
+                "available": True,
+            }
+        )
 
     return {
         "rclone_installed": rclone_ok,
@@ -1084,13 +1154,11 @@ def rclone_ls_paginated(
 
         for dir_path in dirs_to_scan:
             target = f"{remote}:{dir_path}" if dir_path else f"{remote}:"
-            cmd = [_rclone_bin(), "lsjson", target, "--max-depth", "1",
-                   "--no-mimetype", "--fast-list"]
+            cmd = [_rclone_bin(), "lsjson", target, "--max-depth", "1", "--no-mimetype", "--fast-list"]
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                 if result.returncode != 0:
-                    logger.warning("rclone lsjson failed for %s:%s: %s",
-                                   remote, dir_path, result.stderr.strip()[:200])
+                    logger.warning("rclone lsjson failed for %s:%s: %s", remote, dir_path, result.stderr.strip()[:200])
                     continue
 
                 items = json.loads(result.stdout)
@@ -1131,8 +1199,10 @@ def _dynamic_timeout(file_size: int | None, min_speed_bps: int = 500_000) -> int
 
 
 def rclone_copyto(
-    src_remote: str, src_path: str,
-    dst_remote: str, dst_path: str,
+    src_remote: str,
+    src_path: str,
+    dst_remote: str,
+    dst_path: str,
     *,
     timeout: int | None = None,
     file_size: int | None = None,
@@ -1169,11 +1239,14 @@ def rclone_copyto(
     start = time.monotonic()
 
     cmd = [
-        _rclone_bin(), "copyto",
+        _rclone_bin(),
+        "copyto",
         f"{src_remote}:{src_path}",
         f"{dst_remote}:{dst_path}",
-        "--retries", "3",
-        "--low-level-retries", "10",
+        "--retries",
+        "3",
+        "--low-level-retries",
+        "10",
         "--stats-one-line",
         "-v",
     ]
@@ -1212,10 +1285,8 @@ def rclone_copyto(
 
     except subprocess.TimeoutExpired:
         elapsed = time.monotonic() - start
-        logger.warning("rclone copyto timed out after %.1fs: %s:%s -> %s:%s",
-                        elapsed, src_remote, src_path, dst_remote, dst_path)
-        fail = {"success": False, "bytes": 0, "elapsed": elapsed,
-                "error": f"Timed out after {effective_timeout}s (file_size={file_size})"}
+        logger.warning("rclone copyto timed out after %.1fs: %s:%s -> %s:%s", elapsed, src_remote, src_path, dst_remote, dst_path)
+        fail = {"success": False, "bytes": 0, "elapsed": elapsed, "error": f"Timed out after {effective_timeout}s (file_size={file_size})"}
         if raise_on_failure:
             raise RcloneTransferError(fail)
         return fail
@@ -1235,15 +1306,15 @@ def rclone_copyto(
 # Map rclone backend types to their native hash algorithms.
 # Using the native hash avoids re-downloading the file for verification.
 _BACKEND_HASH_MAP: dict[str, str] = {
-    "drive": "md5",           # Google Drive stores MD5 natively
-    "onedrive": "sha1",      # OneDrive/SharePoint use SHA-1
-    "dropbox": "dropbox",    # Dropbox has its own content hash
-    "s3": "md5",             # S3 ETag is MD5 for non-multipart uploads
-    "gcs": "md5",            # Google Cloud Storage uses MD5
-    "b2": "sha1",            # Backblaze B2 uses SHA-1
-    "swift": "md5",          # OpenStack Swift uses MD5
-    "azureblob": "md5",      # Azure Blob uses MD5
-    "pcloud": "sha256",      # pCloud supports SHA-256
+    "drive": "md5",  # Google Drive stores MD5 natively
+    "onedrive": "sha1",  # OneDrive/SharePoint use SHA-1
+    "dropbox": "dropbox",  # Dropbox has its own content hash
+    "s3": "md5",  # S3 ETag is MD5 for non-multipart uploads
+    "gcs": "md5",  # Google Cloud Storage uses MD5
+    "b2": "sha1",  # Backblaze B2 uses SHA-1
+    "swift": "md5",  # OpenStack Swift uses MD5
+    "azureblob": "md5",  # Azure Blob uses MD5
+    "pcloud": "sha256",  # pCloud supports SHA-256
     # MEGA: no server-side hash available via rclone
     # local: md5 or sha256 computed on demand
 }
@@ -1262,7 +1333,9 @@ def get_native_hash_type(remote: str) -> str | None:
     try:
         result = subprocess.run(
             [_rclone_bin(), "listremotes", "--long"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             for line in result.stdout.strip().splitlines():
@@ -1277,7 +1350,8 @@ def get_native_hash_type(remote: str) -> str | None:
 
 
 def rclone_check_file(
-    remote: str, path: str,
+    remote: str,
+    path: str,
     expected_size: int | None = None,
 ) -> dict:
     """Check if a file exists on remote, optionally verify size.
@@ -1341,7 +1415,8 @@ def rclone_hashsum(remote: str, path: str, hash_type: str = "sha256") -> str | N
 
 
 def rclone_verify_transfer(
-    remote: str, path: str,
+    remote: str,
+    path: str,
     expected_size: int | None = None,
     expected_hash: str | None = None,
     hash_type: str = "sha256",
@@ -1352,8 +1427,12 @@ def rclone_verify_transfer(
              "actual_size": int|None, "actual_hash": str|None, "error": str|None}
     """
     result = {
-        "verified": False, "size_ok": None, "hash_ok": None,
-        "actual_size": None, "actual_hash": None, "error": None,
+        "verified": False,
+        "size_ok": None,
+        "hash_ok": None,
+        "actual_size": None,
+        "actual_hash": None,
+        "error": None,
     }
 
     check = rclone_check_file(remote, path, expected_size=expected_size)
@@ -1428,8 +1507,11 @@ def rclone_dedupe(
 
     try:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
 
         output_lines: list[str] = []
@@ -1460,9 +1542,14 @@ def rclone_dedupe(
             if _time.monotonic() > deadline:
                 proc.kill()
                 proc.wait()
-                return {"success": False, "error": f"Dedupe timeout after {timeout}s",
-                        "duplicates_removed": duplicates_removed, "bytes_freed": bytes_freed,
-                        "dry_run": dry_run, "output": "".join(output_lines[-50:])}
+                return {
+                    "success": False,
+                    "error": f"Dedupe timeout after {timeout}s",
+                    "duplicates_removed": duplicates_removed,
+                    "bytes_freed": bytes_freed,
+                    "dry_run": dry_run,
+                    "output": "".join(output_lines[-50:]),
+                }
 
         proc.wait()
         output = "".join(output_lines)
@@ -1476,8 +1563,7 @@ def rclone_dedupe(
             "error": None if proc.returncode == 0 else output[-500:],
         }
     except OSError as exc:
-        return {"success": False, "error": str(exc),
-                "duplicates_removed": 0, "bytes_freed": 0, "dry_run": dry_run, "output": ""}
+        return {"success": False, "error": str(exc), "duplicates_removed": 0, "bytes_freed": 0, "dry_run": dry_run, "output": ""}
 
 
 def rclone_is_reachable(remote: str, timeout: int = 20) -> bool:
@@ -1529,14 +1615,22 @@ def retry_with_backoff(
         except retryable_exceptions as exc:
             last_exc = exc
             if attempt == max_retries:
-                logger.error("retry_with_backoff: all %d attempts failed for %s: %s",
-                             max_retries + 1, fn.__name__ if hasattr(fn, '__name__') else fn, exc)
+                logger.error(
+                    "retry_with_backoff: all %d attempts failed for %s: %s",
+                    max_retries + 1,
+                    fn.__name__ if hasattr(fn, "__name__") else fn,
+                    exc,
+                )
                 raise
-            delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
-            logger.warning("retry_with_backoff: attempt %d/%d failed for %s (%s), retrying in %.1fs",
-                           attempt + 1, max_retries + 1,
-                           fn.__name__ if hasattr(fn, '__name__') else fn,
-                           exc, delay)
+            delay = min(base_delay * (2**attempt) + random.uniform(0, 1), max_delay)
+            logger.warning(
+                "retry_with_backoff: attempt %d/%d failed for %s (%s), retrying in %.1fs",
+                attempt + 1,
+                max_retries + 1,
+                fn.__name__ if hasattr(fn, "__name__") else fn,
+                exc,
+                delay,
+            )
             time.sleep(delay)
 
     # Should not reach here, but satisfy type checkers
@@ -1578,14 +1672,12 @@ def wait_for_connectivity(
     start = time.monotonic()
     while True:
         if rclone_is_reachable(remote, timeout=min(poll_interval, 10)):
-            logger.info("wait_for_connectivity: %s is reachable after %.1fs",
-                        remote, time.monotonic() - start)
+            logger.info("wait_for_connectivity: %s is reachable after %.1fs", remote, time.monotonic() - start)
             return True
 
         elapsed = time.monotonic() - start
         if elapsed >= timeout:
-            logger.warning("wait_for_connectivity: %s not reachable after %.1fs (timeout=%ds)",
-                           remote, elapsed, timeout)
+            logger.warning("wait_for_connectivity: %s not reachable after %.1fs (timeout=%ds)", remote, elapsed, timeout)
             return False
 
         if progress_fn is not None:

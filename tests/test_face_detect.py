@@ -24,10 +24,22 @@ def sample_file(catalog):
     from godmode_media_library.catalog import CatalogFileRow
 
     row = CatalogFileRow(
-        id=None, path="/tmp/test_photo.jpg", size=1000, mtime=1.0, ctime=1.0,
-        birthtime=1.0, ext="jpg", sha256="abc123", inode=None, device=None,
-        nlink=1, asset_key=None, asset_component=False, xattr_count=0,
-        first_seen="2024-01-01", last_scanned="2024-01-01",
+        id=None,
+        path="/tmp/test_photo.jpg",
+        size=1000,
+        mtime=1.0,
+        ctime=1.0,
+        birthtime=1.0,
+        ext="jpg",
+        sha256="abc123",
+        inode=None,
+        device=None,
+        nlink=1,
+        asset_key=None,
+        asset_component=False,
+        xattr_count=0,
+        first_seen="2024-01-01",
+        last_scanned="2024-01-01",
     )
     return catalog.upsert_file(row)
 
@@ -74,7 +86,9 @@ def test_insert_and_get_face(catalog, sample_file):
 
 def test_get_face_by_id(catalog, sample_file):
     face_id = catalog.insert_face(
-        file_id=sample_file, face_index=0, bbox=(10, 100, 110, 10),
+        file_id=sample_file,
+        face_index=0,
+        bbox=(10, 100, 110, 10),
     )
     face = catalog.get_face_by_id(face_id)
     assert face is not None
@@ -98,11 +112,15 @@ def test_files_without_faces(catalog, sample_file):
 
 def test_get_all_encodings(catalog, sample_file):
     catalog.insert_face(
-        file_id=sample_file, face_index=0, bbox=(0, 0, 0, 0),
+        file_id=sample_file,
+        face_index=0,
+        bbox=(0, 0, 0, 0),
         encoding_blob=b"enc1",
     )
     catalog.insert_face(
-        file_id=sample_file, face_index=1, bbox=(0, 0, 0, 0),
+        file_id=sample_file,
+        face_index=1,
+        bbox=(0, 0, 0, 0),
         encoding_blob=None,
     )
     encs = catalog.get_all_encodings()
@@ -201,7 +219,9 @@ def test_privacy_flags(catalog):
 
 def test_wipe_encodings(catalog, sample_file):
     catalog.insert_face(
-        file_id=sample_file, face_index=0, bbox=(0, 0, 0, 0),
+        file_id=sample_file,
+        face_index=0,
+        bbox=(0, 0, 0, 0),
         encoding_blob=b"secret_biometric_data",
     )
     wiped = catalog.wipe_face_encodings()
@@ -332,6 +352,7 @@ def test_schema_v5_to_v6_migration(tmp_path):
     db = tmp_path / "old.db"
     # Create v5 database manually
     import sqlite3
+
     conn = sqlite3.connect(str(db))
     conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     conn.execute("INSERT INTO meta VALUES ('schema_version', '5')")

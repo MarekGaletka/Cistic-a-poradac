@@ -23,9 +23,11 @@ _MONITOR_STATE_PATH = Path.home() / ".config" / "gml" / "backup_monitor_state.js
 # Models
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HealthCheck:
     """Result of a single health check."""
+
     remote_name: str
     timestamp: str
     accessible: bool
@@ -41,6 +43,7 @@ class HealthCheck:
 @dataclass
 class MonitorState:
     """Persistent monitoring state."""
+
     last_check_at: str = ""
     checks: list[dict] = field(default_factory=list)
     alerts: list[dict] = field(default_factory=list)  # {timestamp, severity, message, remote, acknowledged}
@@ -50,6 +53,7 @@ class MonitorState:
 # ---------------------------------------------------------------------------
 # State persistence
 # ---------------------------------------------------------------------------
+
 
 def _load_state() -> MonitorState:
     if _MONITOR_STATE_PATH.exists():
@@ -75,6 +79,7 @@ def _save_state(state: MonitorState) -> None:
 # Health check execution
 # ---------------------------------------------------------------------------
 
+
 def check_remote_health(remote_name: str) -> HealthCheck:
     """Check if a remote is accessible and functional."""
     now = datetime.now(timezone.utc).isoformat()
@@ -86,7 +91,9 @@ def check_remote_health(remote_name: str) -> HealthCheck:
         # 1. Test accessibility with rclone lsd (fast, read-only)
         result = subprocess.run(
             [_rclone_bin(), "lsd", f"{remote_name}:", "--max-depth", "1"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
         check.latency_ms = elapsed_ms
@@ -101,28 +108,36 @@ def check_remote_health(remote_name: str) -> HealthCheck:
         test_content = f"gml-health-{now}"
         write_result = subprocess.run(
             [_rclone_bin(), "rcat", f"{remote_name}:.gml_health_check.txt"],
-            input=test_content, capture_output=True, text=True, timeout=30,
+            input=test_content,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if write_result.returncode == 0:
             check.write_ok = True
             # 3. Test read back
             read_result = subprocess.run(
                 [_rclone_bin(), "cat", f"{remote_name}:.gml_health_check.txt"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if read_result.returncode == 0 and test_content in read_result.stdout:
                 check.read_ok = True
             # Clean up
             subprocess.run(
                 [_rclone_bin(), "deletefile", f"{remote_name}:.gml_health_check.txt"],
-                capture_output=True, timeout=15,
+                capture_output=True,
+                timeout=15,
             )
 
         # 4. Check free space
         try:
             about = subprocess.run(
                 [_rclone_bin(), "about", f"{remote_name}:", "--json"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if about.returncode == 0:
                 info = json.loads(about.stdout)
@@ -292,9 +307,11 @@ def acknowledge_all_alerts() -> int:
 # Notifications
 # ---------------------------------------------------------------------------
 
+
 def _send_notification(title: str, message: str, severity: str = "info") -> None:
     """Send a macOS desktop notification."""
     import platform
+
     if platform.system() != "Darwin":
         logger.info("Notification [%s]: %s — %s", severity, title, message)
         return
@@ -306,7 +323,8 @@ def _send_notification(title: str, message: str, severity: str = "info") -> None
         '''
         subprocess.run(
             ["osascript", "-e", script],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
         logger.info("macOS notification sent: %s", title)
     except Exception as e:

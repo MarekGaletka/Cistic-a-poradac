@@ -12,30 +12,32 @@ from godmode_media_library.consolidation_types import QUOTA_ERRORS
 class TestQuotaErrorDetection:
     """Test that QUOTA_ERRORS patterns match expected error strings."""
 
-    @pytest.mark.parametrize("error_msg", [
-        "User quota exceeded for this operation",
-        "Insufficient storage space on remote",
-        "No space left on device",
-        "Storage limit reached for this account",
-        "Rate limit exceeded, retry after 60s",
-        "User rate limit hit, backing off",
-    ])
+    @pytest.mark.parametrize(
+        "error_msg",
+        [
+            "User quota exceeded for this operation",
+            "Insufficient storage space on remote",
+            "No space left on device",
+            "Storage limit reached for this account",
+            "Rate limit exceeded, retry after 60s",
+            "User rate limit hit, backing off",
+        ],
+    )
     def test_known_quota_errors_detected(self, error_msg):
-        assert any(q in error_msg.lower() for q in QUOTA_ERRORS), (
-            f"Expected '{error_msg}' to match a QUOTA_ERRORS pattern"
-        )
+        assert any(q in error_msg.lower() for q in QUOTA_ERRORS), f"Expected '{error_msg}' to match a QUOTA_ERRORS pattern"
 
-    @pytest.mark.parametrize("error_msg", [
-        "Connection timeout after 30s",
-        "File not found: remote:path/to/file.jpg",
-        "Permission denied: cannot write to destination",
-        "SSL handshake failed",
-        "Checksum mismatch on uploaded file",
-    ])
+    @pytest.mark.parametrize(
+        "error_msg",
+        [
+            "Connection timeout after 30s",
+            "File not found: remote:path/to/file.jpg",
+            "Permission denied: cannot write to destination",
+            "SSL handshake failed",
+            "Checksum mismatch on uploaded file",
+        ],
+    )
     def test_non_quota_errors_not_detected(self, error_msg):
-        assert not any(q in error_msg.lower() for q in QUOTA_ERRORS), (
-            f"Expected '{error_msg}' NOT to match any QUOTA_ERRORS pattern"
-        )
+        assert not any(q in error_msg.lower() for q in QUOTA_ERRORS), f"Expected '{error_msg}' NOT to match any QUOTA_ERRORS pattern"
 
     def test_case_insensitive_matching(self):
         """QUOTA_ERRORS are lowercase; matching should use .lower() on input."""

@@ -76,10 +76,20 @@ def test_apply_delete_plan_moves_primary(tmp_path: Path):
 
     write_tsv(
         plan_path,
-        ["inode_id", "path", "action", "primary_path", "asset_key", "selected_seed",
-         "unit_size", "nlink_expected", "nlink_scanned", "external_links", "note"],
-        [(iid, str(f1), "move_primary", str(f1), "", "1",
-          str(f1.stat().st_size), "1", "1", "0", "quarantine_primary_copy")],
+        [
+            "inode_id",
+            "path",
+            "action",
+            "primary_path",
+            "asset_key",
+            "selected_seed",
+            "unit_size",
+            "nlink_expected",
+            "nlink_scanned",
+            "external_links",
+            "note",
+        ],
+        [(iid, str(f1), "move_primary", str(f1), "", "1", str(f1.stat().st_size), "1", "1", "0", "quarantine_primary_copy")],
     )
 
     quarantine = tmp_path / "quarantine"
@@ -110,10 +120,20 @@ def test_apply_delete_plan_dry_run(tmp_path: Path):
 
     write_tsv(
         plan_path,
-        ["inode_id", "path", "action", "primary_path", "asset_key", "selected_seed",
-         "unit_size", "nlink_expected", "nlink_scanned", "external_links", "note"],
-        [(iid, str(f1), "move_primary", str(f1), "", "1",
-          str(f1.stat().st_size), "1", "1", "0", "quarantine_primary_copy")],
+        [
+            "inode_id",
+            "path",
+            "action",
+            "primary_path",
+            "asset_key",
+            "selected_seed",
+            "unit_size",
+            "nlink_expected",
+            "nlink_scanned",
+            "external_links",
+            "note",
+        ],
+        [(iid, str(f1), "move_primary", str(f1), "", "1", str(f1.stat().st_size), "1", "1", "0", "quarantine_primary_copy")],
     )
 
     quarantine = tmp_path / "quarantine"
@@ -151,10 +171,20 @@ def test_apply_delete_plan_unlink_alias(tmp_path: Path):
     plan_path = tmp_path / "plan.tsv"
     write_tsv(
         plan_path,
-        ["inode_id", "path", "action", "primary_path", "asset_key", "selected_seed",
-         "unit_size", "nlink_expected", "nlink_scanned", "external_links", "note"],
-        [(iid, str(f2), "unlink_alias", str(f1), "", "0",
-          str(f1.stat().st_size), "2", "2", "0", "remove_extra_hardlink_alias")],
+        [
+            "inode_id",
+            "path",
+            "action",
+            "primary_path",
+            "asset_key",
+            "selected_seed",
+            "unit_size",
+            "nlink_expected",
+            "nlink_scanned",
+            "external_links",
+            "note",
+        ],
+        [(iid, str(f2), "unlink_alias", str(f1), "", "0", str(f1.stat().st_size), "2", "2", "0", "remove_extra_hardlink_alias")],
     )
 
     quarantine = tmp_path / "quarantine"
@@ -177,10 +207,34 @@ def test_apply_delete_plan_manual_review(tmp_path: Path):
     plan_path = tmp_path / "plan.tsv"
     write_tsv(
         plan_path,
-        ["inode_id", "path", "action", "primary_path", "asset_key", "selected_seed",
-         "unit_size", "nlink_expected", "nlink_scanned", "external_links", "note"],
-        [("iid", str(tmp_path / "photo.jpg"), "manual_review_external_links", str(tmp_path / "photo.jpg"), "", "1",
-          "100", "3", "1", "2", "nlink=3;scanned_links=1")],
+        [
+            "inode_id",
+            "path",
+            "action",
+            "primary_path",
+            "asset_key",
+            "selected_seed",
+            "unit_size",
+            "nlink_expected",
+            "nlink_scanned",
+            "external_links",
+            "note",
+        ],
+        [
+            (
+                "iid",
+                str(tmp_path / "photo.jpg"),
+                "manual_review_external_links",
+                str(tmp_path / "photo.jpg"),
+                "",
+                "1",
+                "100",
+                "3",
+                "1",
+                "2",
+                "nlink=3;scanned_links=1",
+            )
+        ],
     )
 
     log_path = tmp_path / "log.tsv"
@@ -200,10 +254,34 @@ def test_apply_delete_plan_skip_missing(tmp_path: Path):
     plan_path = tmp_path / "plan.tsv"
     write_tsv(
         plan_path,
-        ["inode_id", "path", "action", "primary_path", "asset_key", "selected_seed",
-         "unit_size", "nlink_expected", "nlink_scanned", "external_links", "note"],
-        [("iid", str(tmp_path / "nonexistent.jpg"), "move_primary", str(tmp_path / "nonexistent.jpg"), "", "1",
-          "100", "1", "1", "0", "quarantine_primary_copy")],
+        [
+            "inode_id",
+            "path",
+            "action",
+            "primary_path",
+            "asset_key",
+            "selected_seed",
+            "unit_size",
+            "nlink_expected",
+            "nlink_scanned",
+            "external_links",
+            "note",
+        ],
+        [
+            (
+                "iid",
+                str(tmp_path / "nonexistent.jpg"),
+                "move_primary",
+                str(tmp_path / "nonexistent.jpg"),
+                "",
+                "1",
+                "100",
+                "1",
+                "1",
+                "0",
+                "quarantine_primary_copy",
+            )
+        ],
     )
 
     log_path = tmp_path / "log.tsv"

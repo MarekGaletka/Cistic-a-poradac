@@ -25,29 +25,36 @@ from godmode_media_library.cloud import (
 def _reset_rclone_cache():
     """Reset the global _rclone_available cache so each test gets a fresh check."""
     import godmode_media_library.cloud as _cloud_mod
+
     _cloud_mod._rclone_available = None
 
 
 def test_check_rclone_not_installed():
     _reset_rclone_cache()
-    with patch("godmode_media_library.cloud._rclone_bin", return_value="/nonexistent/rclone"), \
-         patch("godmode_media_library.cloud.shutil.which", return_value=None):
+    with (
+        patch("godmode_media_library.cloud._rclone_bin", return_value="/nonexistent/rclone"),
+        patch("godmode_media_library.cloud.shutil.which", return_value=None),
+    ):
         assert check_rclone() is False
     _reset_rclone_cache()
 
 
 def test_check_rclone_installed():
     _reset_rclone_cache()
-    with patch("godmode_media_library.cloud._rclone_bin", return_value="/usr/bin/rclone"), \
-         patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"):
+    with (
+        patch("godmode_media_library.cloud._rclone_bin", return_value="/usr/bin/rclone"),
+        patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"),
+    ):
         assert check_rclone() is True
     _reset_rclone_cache()
 
 
 def test_list_remotes_no_rclone():
     _reset_rclone_cache()
-    with patch("godmode_media_library.cloud._rclone_bin", return_value="/nonexistent/rclone"), \
-         patch("godmode_media_library.cloud.shutil.which", return_value=None):
+    with (
+        patch("godmode_media_library.cloud._rclone_bin", return_value="/nonexistent/rclone"),
+        patch("godmode_media_library.cloud.shutil.which", return_value=None),
+    ):
         assert list_remotes() == []
     _reset_rclone_cache()
 
@@ -55,9 +62,11 @@ def test_list_remotes_no_rclone():
 def test_list_remotes_parses_output():
     _reset_rclone_cache()
     mock_output = "gdrive: drive\nmega:   mega\npcloud: pcloud\n"
-    with patch("godmode_media_library.cloud._rclone_bin", return_value="/usr/bin/rclone"), \
-         patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"), \
-         patch("subprocess.run") as mock_run:
+    with (
+        patch("godmode_media_library.cloud._rclone_bin", return_value="/usr/bin/rclone"),
+        patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"),
+        patch("subprocess.run") as mock_run,
+    ):
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = mock_output
         remotes = list_remotes()
@@ -198,8 +207,10 @@ def test_detect_native_cloud_paths_empty(tmp_path):
 
 
 def test_get_cloud_status_no_rclone():
-    with patch("godmode_media_library.cloud.check_rclone", return_value=False), \
-         patch("godmode_media_library.cloud.detect_native_cloud_paths", return_value=[]):
+    with (
+        patch("godmode_media_library.cloud.check_rclone", return_value=False),
+        patch("godmode_media_library.cloud.detect_native_cloud_paths", return_value=[]),
+    ):
         status = get_cloud_status()
         assert status["rclone_installed"] is False
         assert status["rclone_version"] is None
@@ -209,11 +220,13 @@ def test_get_cloud_status_no_rclone():
 
 def test_get_cloud_status_with_rclone():
     mock_remotes = [RcloneRemote(name="mega", type="mega")]
-    with patch("godmode_media_library.cloud.check_rclone", return_value=True), \
-         patch("godmode_media_library.cloud.rclone_version", return_value="1.67.0"), \
-         patch("godmode_media_library.cloud.list_remotes", return_value=mock_remotes), \
-         patch("godmode_media_library.cloud.detect_native_cloud_paths", return_value=[]), \
-         patch("godmode_media_library.cloud._is_mount_active", return_value=False):
+    with (
+        patch("godmode_media_library.cloud.check_rclone", return_value=True),
+        patch("godmode_media_library.cloud.rclone_version", return_value="1.67.0"),
+        patch("godmode_media_library.cloud.list_remotes", return_value=mock_remotes),
+        patch("godmode_media_library.cloud.detect_native_cloud_paths", return_value=[]),
+        patch("godmode_media_library.cloud._is_mount_active", return_value=False),
+    ):
         status = get_cloud_status()
         assert status["rclone_installed"] is True
         assert status["rclone_version"] == "1.67.0"

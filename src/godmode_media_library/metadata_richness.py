@@ -17,49 +17,123 @@ logger = logging.getLogger(__name__)
 # Tag suffixes match the part after the group prefix (e.g. "EXIF:Make" → "Make")
 
 RICHNESS_CATEGORIES: dict[str, tuple[float, list[str]]] = {
-    "datetime": (15.0, [
-        "DateTimeOriginal", "CreateDate", "ModifyDate",
-        "MediaCreateDate", "TrackCreateDate",
-    ]),
-    "camera": (10.0, [
-        "Make", "Model", "LensModel", "LensInfo", "LensID",
-    ]),
-    "exposure": (10.0, [
-        "ExposureTime", "FNumber", "ISO", "ExposureProgram",
-        "MeteringMode", "Flash", "WhiteBalance",
-    ]),
-    "gps": (12.0, [
-        "GPSLatitude", "GPSLongitude", "GPSAltitude",
-        "GPSTimeStamp", "GPSDateStamp",
-    ]),
-    "dimensions": (5.0, [
-        "ImageWidth", "ImageHeight", "XResolution", "YResolution",
-    ]),
-    "color": (8.0, [
-        "ColorSpace", "ICCProfileName", "ProfileDescription",
-        "ColorTemperature", "Gamma",
-    ]),
-    "xmp": (10.0, [
-        "Creator", "Description", "Subject", "Rating",
-        "Title", "Label",
-    ]),
-    "iptc": (8.0, [
-        "Caption-Abstract", "Keywords", "City", "Country-PrimaryLocationName",
-        "Province-State", "By-line", "CopyrightNotice",
-    ]),
+    "datetime": (
+        15.0,
+        [
+            "DateTimeOriginal",
+            "CreateDate",
+            "ModifyDate",
+            "MediaCreateDate",
+            "TrackCreateDate",
+        ],
+    ),
+    "camera": (
+        10.0,
+        [
+            "Make",
+            "Model",
+            "LensModel",
+            "LensInfo",
+            "LensID",
+        ],
+    ),
+    "exposure": (
+        10.0,
+        [
+            "ExposureTime",
+            "FNumber",
+            "ISO",
+            "ExposureProgram",
+            "MeteringMode",
+            "Flash",
+            "WhiteBalance",
+        ],
+    ),
+    "gps": (
+        12.0,
+        [
+            "GPSLatitude",
+            "GPSLongitude",
+            "GPSAltitude",
+            "GPSTimeStamp",
+            "GPSDateStamp",
+        ],
+    ),
+    "dimensions": (
+        5.0,
+        [
+            "ImageWidth",
+            "ImageHeight",
+            "XResolution",
+            "YResolution",
+        ],
+    ),
+    "color": (
+        8.0,
+        [
+            "ColorSpace",
+            "ICCProfileName",
+            "ProfileDescription",
+            "ColorTemperature",
+            "Gamma",
+        ],
+    ),
+    "xmp": (
+        10.0,
+        [
+            "Creator",
+            "Description",
+            "Subject",
+            "Rating",
+            "Title",
+            "Label",
+        ],
+    ),
+    "iptc": (
+        8.0,
+        [
+            "Caption-Abstract",
+            "Keywords",
+            "City",
+            "Country-PrimaryLocationName",
+            "Province-State",
+            "By-line",
+            "CopyrightNotice",
+        ],
+    ),
     "makernotes": (5.0, []),  # Special: any MakerNotes:* tag scores
-    "video_audio": (10.0, [
-        "Duration", "VideoCodec", "AudioCodec", "AvgBitrate",
-        "VideoFrameRate", "AudioChannels", "AudioSampleRate",
-        "CompressorName", "BitDepth",
-    ]),
-    "thumbnail": (3.0, [
-        "ThumbnailLength", "ThumbnailOffset",
-    ]),
-    "rights": (4.0, [
-        "Copyright", "CopyrightNotice", "Rights", "UsageTerms",
-        "WebStatement", "Artist",
-    ]),
+    "video_audio": (
+        10.0,
+        [
+            "Duration",
+            "VideoCodec",
+            "AudioCodec",
+            "AvgBitrate",
+            "VideoFrameRate",
+            "AudioChannels",
+            "AudioSampleRate",
+            "CompressorName",
+            "BitDepth",
+        ],
+    ),
+    "thumbnail": (
+        3.0,
+        [
+            "ThumbnailLength",
+            "ThumbnailOffset",
+        ],
+    ),
+    "rights": (
+        4.0,
+        [
+            "Copyright",
+            "CopyrightNotice",
+            "Rights",
+            "UsageTerms",
+            "WebStatement",
+            "Artist",
+        ],
+    ),
 }
 
 MAX_RICHNESS = sum(cat[0] for cat in RICHNESS_CATEGORIES.values())

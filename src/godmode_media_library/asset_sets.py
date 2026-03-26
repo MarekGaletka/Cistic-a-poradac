@@ -33,7 +33,7 @@ def build_asset_membership(paths: Iterable[Path]) -> tuple[dict[Path, str], dict
         has_video = any(e in VIDEO_EXTS for e in exts)
         has_sidecar = any(e in SIDECAR_EXTS for e in exts)
         # We treat anything with multiple related members as an atomic set.
-        path_is_component[path] = (len(exts) > 1 and (has_image or has_video or has_sidecar))
+        path_is_component[path] = len(exts) > 1 and (has_image or has_video or has_sidecar)
 
     return path_to_key, path_is_component, key_to_exts
 

@@ -27,7 +27,24 @@ logger = logging.getLogger(__name__)
 _DEFAULT_QUARANTINE = Path.home() / ".config" / "gml" / "quarantine"
 
 # Media extensions we look for during deep scan / recovery
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".heif", ".svg", ".raw", ".cr2", ".nef", ".arw", ".dng"}
+_IMAGE_EXTS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".webp",
+    ".heic",
+    ".heif",
+    ".svg",
+    ".raw",
+    ".cr2",
+    ".nef",
+    ".arw",
+    ".dng",
+}
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp"}
 _AUDIO_EXTS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a", ".opus"}
 _MEDIA_EXTS = _IMAGE_EXTS | _VIDEO_EXTS | _AUDIO_EXTS
@@ -37,9 +54,11 @@ _MEDIA_EXTS = _IMAGE_EXTS | _VIDEO_EXTS | _AUDIO_EXTS
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class QuarantineEntry:
     """A single file in the quarantine."""
+
     path: str
     original_path: str
     size: int
@@ -51,6 +70,7 @@ class QuarantineEntry:
 @dataclass
 class DeepScanResult:
     """Result of a deep scan for hidden/lost media."""
+
     locations_scanned: int = 0
     files_found: int = 0
     total_size: int = 0
@@ -61,6 +81,7 @@ class DeepScanResult:
 @dataclass
 class IntegrityResult:
     """Result of a file integrity check."""
+
     total_checked: int = 0
     healthy: int = 0
     corrupted: int = 0
@@ -71,6 +92,7 @@ class IntegrityResult:
 @dataclass
 class PhotoRecResult:
     """Result of a PhotoRec recovery run."""
+
     files_recovered: int = 0
     total_size: int = 0
     output_dir: str = ""
@@ -80,6 +102,7 @@ class PhotoRecResult:
 # ---------------------------------------------------------------------------
 # 1. Quarantine browser
 # ---------------------------------------------------------------------------
+
 
 def list_quarantine(quarantine_root: Path | None = None) -> list[QuarantineEntry]:
     """List all files in the quarantine directory."""
@@ -103,14 +126,16 @@ def list_quarantine(quarantine_root: Path | None = None) -> list[QuarantineEntry
             original = manifest.get(str(fpath), {}).get("original_path", "unknown")
             qdate = manifest.get(str(fpath), {}).get("quarantine_date", "")
             category = _categorize_ext(ext)
-            entries.append(QuarantineEntry(
-                path=str(fpath),
-                original_path=original,
-                size=stat.st_size,
-                ext=ext,
-                quarantine_date=qdate,
-                category=category,
-            ))
+            entries.append(
+                QuarantineEntry(
+                    path=str(fpath),
+                    original_path=original,
+                    size=stat.st_size,
+                    ext=ext,
+                    quarantine_date=qdate,
+                    category=category,
+                )
+            )
     return entries
 
 
@@ -377,7 +402,15 @@ _APP_SOURCES: list[dict[str, Any]] = [
         "color": "#4A154B",
         "category": "work",
         "paths": [
-            Path.home() / "Library" / "Containers" / "com.tinyspeck.slackmacgap" / "Data" / "Library" / "Application Support" / "Slack" / "Cache",
+            Path.home()
+            / "Library"
+            / "Containers"
+            / "com.tinyspeck.slackmacgap"
+            / "Data"
+            / "Library"
+            / "Application Support"
+            / "Slack"
+            / "Cache",
             Path.home() / "Library" / "Application Support" / "Slack" / "Cache",
             Path.home() / "Library" / "Application Support" / "Slack" / "Service Worker" / "CacheStorage",
         ],
@@ -474,6 +507,7 @@ _APP_SOURCES: list[dict[str, Any]] = [
 @dataclass
 class AppMineResult:
     """Result of mining media from a single app."""
+
     app_id: str
     app_name: str
     icon: str
@@ -505,7 +539,7 @@ def _detect_type_by_magic(fpath: str) -> tuple[str, str] | None:
         # Check ftyp-based formats (MP4/MOV) — variable offset
         if b"ftyp" in header[:16]:
             ftyp_pos = header.find(b"ftyp")
-            brand = header[ftyp_pos + 4:ftyp_pos + 8]
+            brand = header[ftyp_pos + 4 : ftyp_pos + 8]
             if brand in (b"mp41", b"mp42", b"isom", b"M4A ", b"M4V ", b"avc1", b"dash"):
                 return (".mp4", "video")
             if brand in (b"qt  ", b"MSNV"):
@@ -526,7 +560,7 @@ def _detect_type_by_magic(fpath: str) -> tuple[str, str] | None:
 
         # Simple prefix matching
         for magic, result in _MAGIC_BYTES.items():
-            if header[:len(magic)] == magic:
+            if header[: len(magic)] == magic:
                 return result
 
         return None
@@ -556,13 +590,15 @@ def mine_app_media(
 
     for idx, source in enumerate(sources):
         if progress_fn:
-            progress_fn({
-                "phase": "app_mining",
-                "app": source["name"],
-                "app_icon": source["icon"],
-                "progress_pct": int((idx / max(total, 1)) * 100),
-                "apps_scanned": idx,
-            })
+            progress_fn(
+                {
+                    "phase": "app_mining",
+                    "app": source["name"],
+                    "app_icon": source["icon"],
+                    "progress_pct": int((idx / max(total, 1)) * 100),
+                    "apps_scanned": idx,
+                }
+            )
 
         app_result = AppMineResult(
             app_id=source["id"],
@@ -655,11 +691,13 @@ def mine_app_media(
         results.append(app_result)
 
     if progress_fn:
-        progress_fn({
-            "phase": "complete",
-            "progress_pct": 100,
-            "apps_scanned": total,
-        })
+        progress_fn(
+            {
+                "phase": "complete",
+                "progress_pct": 100,
+                "apps_scanned": total,
+            }
+        )
 
     return results
 
@@ -669,17 +707,19 @@ def get_available_apps() -> list[dict]:
     apps: list[dict] = []
     for source in _APP_SOURCES:
         available = any(p.exists() for p in source["paths"])
-        apps.append({
-            "id": source["id"],
-            "name": source["name"],
-            "icon": source["icon"],
-            "color": source["color"],
-            "category": source["category"],
-            "available": available,
-            "encrypted": source.get("encrypted", False),
-            "decryptable": source.get("decryptable", False),
-            "note": source.get("note", ""),
-        })
+        apps.append(
+            {
+                "id": source["id"],
+                "name": source["name"],
+                "icon": source["icon"],
+                "color": source["color"],
+                "category": source["category"],
+                "available": available,
+                "encrypted": source.get("encrypted", False),
+                "decryptable": source.get("decryptable", False),
+                "note": source.get("note", ""),
+            }
+        )
     return apps
 
 
@@ -714,12 +754,14 @@ def deep_scan(
 
     for idx, (name, scan_path) in enumerate(locations_to_scan):
         if progress_fn:
-            progress_fn({
-                "phase": "deep_scan",
-                "location": name,
-                "progress_pct": int((idx / max(total_locs, 1)) * 100),
-                "files_found": result.files_found,
-            })
+            progress_fn(
+                {
+                    "phase": "deep_scan",
+                    "location": name,
+                    "progress_pct": int((idx / max(total_locs, 1)) * 100),
+                    "files_found": result.files_found,
+                }
+            )
 
         loc_files: list[dict] = []
         loc_size = 0
@@ -736,14 +778,16 @@ def deep_scan(
                         fsize = stat.st_size
                         if fsize < 100:  # Skip tiny/empty files
                             continue
-                        loc_files.append({
-                            "path": fpath,
-                            "name": fname,
-                            "size": fsize,
-                            "ext": ext,
-                            "category": _categorize_ext(ext),
-                            "location": name,
-                        })
+                        loc_files.append(
+                            {
+                                "path": fpath,
+                                "name": fname,
+                                "size": fsize,
+                                "ext": ext,
+                                "category": _categorize_ext(ext),
+                                "location": name,
+                            }
+                        )
                         loc_size += fsize
                         result.files_found += 1
                         result.total_size += fsize
@@ -753,23 +797,27 @@ def deep_scan(
             pass
 
         if loc_files:
-            result.locations.append({
-                "name": name,
-                "path": str(scan_path),
-                "files_count": len(loc_files),
-                "total_size": loc_size,
-            })
+            result.locations.append(
+                {
+                    "name": name,
+                    "path": str(scan_path),
+                    "files_count": len(loc_files),
+                    "total_size": loc_size,
+                }
+            )
             result.files.extend(loc_files)
 
     result.locations_scanned = total_locs
 
     if progress_fn:
-        progress_fn({
-            "phase": "complete",
-            "progress_pct": 100,
-            "files_found": result.files_found,
-            "total_size": result.total_size,
-        })
+        progress_fn(
+            {
+                "phase": "complete",
+                "progress_pct": 100,
+                "files_found": result.files_found,
+                "total_size": result.total_size,
+            }
+        )
 
     return result
 
@@ -820,6 +868,7 @@ def recover_files(
 # 3. Integrity check — detect corrupted media
 # ---------------------------------------------------------------------------
 
+
 def check_integrity(
     paths: list[str] | None = None,
     catalog_path: str | None = None,
@@ -833,6 +882,7 @@ def check_integrity(
         files_to_check = paths
     elif catalog_path:
         from .catalog import Catalog
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
@@ -845,12 +895,14 @@ def check_integrity(
 
     for idx, fpath in enumerate(files_to_check):
         if progress_fn and idx % 50 == 0:
-            progress_fn({
-                "phase": "integrity_check",
-                "progress_pct": int((idx / max(total, 1)) * 100),
-                "checked": result.total_checked,
-                "corrupted": result.corrupted,
-            })
+            progress_fn(
+                {
+                    "phase": "integrity_check",
+                    "progress_pct": int((idx / max(total, 1)) * 100),
+                    "checked": result.total_checked,
+                    "corrupted": result.corrupted,
+                }
+            )
 
         p = Path(fpath)
         if not p.exists():
@@ -886,12 +938,14 @@ def check_integrity(
         result.total_checked += 1
 
     if progress_fn:
-        progress_fn({
-            "phase": "complete",
-            "progress_pct": 100,
-            "checked": result.total_checked,
-            "corrupted": result.corrupted,
-        })
+        progress_fn(
+            {
+                "phase": "complete",
+                "progress_pct": 100,
+                "checked": result.total_checked,
+                "corrupted": result.corrupted,
+            }
+        )
 
     return result
 
@@ -919,12 +973,15 @@ def repair_file(fpath: str) -> dict:
 # 4. PhotoRec integration
 # ---------------------------------------------------------------------------
 
+
 def check_photorec() -> dict:
     """Check if PhotoRec (testdisk) is installed."""
     try:
         result = subprocess.run(
             ["photorec", "--version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         version = result.stdout.strip().split("\n")[0] if result.stdout else "unknown"
         return {"available": True, "version": version}
@@ -940,13 +997,17 @@ def list_disks() -> list[dict]:
     try:
         result = subprocess.run(
             ["diskutil", "list", "-plist"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             # Parse plist output — simplified approach via diskutil info
             result2 = subprocess.run(
                 ["diskutil", "list"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             current_disk = None
             for line in result2.stdout.split("\n"):
@@ -954,19 +1015,23 @@ def list_disks() -> list[dict]:
                 if line.startswith("/dev/"):
                     current_disk = line.split()[0].rstrip(":")
                     desc = line.split("(", 1)[-1].rstrip("):") if "(" in line else ""
-                    disks.append({
-                        "device": current_disk,
-                        "description": desc,
-                        "partitions": [],
-                    })
+                    disks.append(
+                        {
+                            "device": current_disk,
+                            "description": desc,
+                            "partitions": [],
+                        }
+                    )
                 elif current_disk and ":" in line and "Apple" in line or "Microsoft" in line or "EFI" in line:
                     parts = line.split()
                     if len(parts) >= 3:
                         if disks:
-                            disks[-1]["partitions"].append({
-                                "name": parts[1] if len(parts) > 1 else "",
-                                "size": parts[-2] + " " + parts[-1] if len(parts) > 2 else "",
-                            })
+                            disks[-1]["partitions"].append(
+                                {
+                                    "name": parts[1] if len(parts) > 1 else "",
+                                    "size": parts[-2] + " " + parts[-1] if len(parts) > 2 else "",
+                                }
+                            )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
@@ -977,13 +1042,15 @@ def list_disks() -> list[dict]:
             if vol.is_dir() and not vol.name.startswith("."):
                 try:
                     usage = shutil.disk_usage(vol)
-                    disks.append({
-                        "device": str(vol),
-                        "description": f"Volume: {vol.name}",
-                        "total_size": usage.total,
-                        "free_size": usage.free,
-                        "partitions": [],
-                    })
+                    disks.append(
+                        {
+                            "device": str(vol),
+                            "description": f"Volume: {vol.name}",
+                            "total_size": usage.total,
+                            "free_size": usage.free,
+                            "partitions": [],
+                        }
+                    )
                 except OSError:
                     pass
 
@@ -1017,7 +1084,8 @@ def run_photorec(
     cmd = [
         "photorec",
         "/log",
-        "/d", str(out),
+        "/d",
+        str(out),
     ]
 
     # File type filter
@@ -1028,12 +1096,14 @@ def run_photorec(
     cmd.append(source)
 
     if progress_fn:
-        progress_fn({
-            "phase": "photorec",
-            "status": "starting",
-            "source": source,
-            "output_dir": output_dir,
-        })
+        progress_fn(
+            {
+                "phase": "photorec",
+                "status": "starting",
+                "source": source,
+                "output_dir": output_dir,
+            }
+        )
 
     try:
         # PhotoRec is interactive by default; we use /cmd for non-interactive
@@ -1052,12 +1122,14 @@ def run_photorec(
                 fpath = os.path.join(dirpath, fname)
                 try:
                     fsize = os.path.getsize(fpath)
-                    result.files.append({
-                        "path": fpath,
-                        "name": fname,
-                        "size": fsize,
-                        "ext": os.path.splitext(fname)[1].lower(),
-                    })
+                    result.files.append(
+                        {
+                            "path": fpath,
+                            "name": fname,
+                            "size": fsize,
+                            "ext": os.path.splitext(fname)[1].lower(),
+                        }
+                    )
                     result.files_recovered += 1
                     result.total_size += fsize
                 except OSError:
@@ -1069,11 +1141,13 @@ def run_photorec(
         logger.error("PhotoRec error: %s", e)
 
     if progress_fn:
-        progress_fn({
-            "phase": "complete",
-            "files_recovered": result.files_recovered,
-            "total_size": result.total_size,
-        })
+        progress_fn(
+            {
+                "phase": "complete",
+                "files_recovered": result.files_recovered,
+                "total_size": result.total_size,
+            }
+        )
 
     return result
 
@@ -1123,6 +1197,7 @@ def check_signal_decrypt() -> dict:
     # Check sqlcipher
     try:
         import pysqlcipher3.dbapi2  # noqa: F401
+
         result["sqlcipher_available"] = True
     except ImportError:
         # Try system sqlcipher via subprocess (check Homebrew paths too)
@@ -1136,7 +1211,8 @@ def check_signal_decrypt() -> dict:
         try:
             subprocess.run(
                 [sqlcipher_bin or "sqlcipher", "--version"],
-                capture_output=True, timeout=5,
+                capture_output=True,
+                timeout=5,
             )
             result["sqlcipher_available"] = True
         except (FileNotFoundError, subprocess.TimeoutExpired, TypeError):
@@ -1147,11 +1223,16 @@ def check_signal_decrypt() -> dict:
     try:
         proc = subprocess.run(
             [
-                "security", "find-generic-password",
-                "-s", _SIGNAL_KEYCHAIN_SERVICE,
-                "-a", _SIGNAL_KEYCHAIN_ACCOUNT,
+                "security",
+                "find-generic-password",
+                "-s",
+                _SIGNAL_KEYCHAIN_SERVICE,
+                "-a",
+                _SIGNAL_KEYCHAIN_ACCOUNT,
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if proc.returncode == 0:
             result["keychain_accessible"] = True
@@ -1163,10 +1244,7 @@ def check_signal_decrypt() -> dict:
         return result
 
     result["possible"] = (
-        result["db_exists"]
-        and result["attachments_exist"]
-        and result["sqlcipher_available"]
-        and result["keychain_accessible"]
+        result["db_exists"] and result["attachments_exist"] and result["sqlcipher_available"] and result["keychain_accessible"]
     )
     return result
 
@@ -1176,12 +1254,17 @@ def _get_signal_key() -> str | None:
     try:
         proc = subprocess.run(
             [
-                "security", "find-generic-password",
-                "-s", _SIGNAL_KEYCHAIN_SERVICE,
-                "-a", _SIGNAL_KEYCHAIN_ACCOUNT,
+                "security",
+                "find-generic-password",
+                "-s",
+                _SIGNAL_KEYCHAIN_SERVICE,
+                "-a",
+                _SIGNAL_KEYCHAIN_ACCOUNT,
                 "-w",
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if proc.returncode == 0:
             return proc.stdout.strip()
@@ -1197,6 +1280,7 @@ def _open_signal_db(key: str):
     """
     try:
         import pysqlcipher3.dbapi2 as sqlcipher
+
         conn = sqlcipher.connect(str(_SIGNAL_DB_PATH))
         conn.execute(f"PRAGMA key = \"x'{key}'\"")
         conn.execute("PRAGMA cipher_compatibility = 4")
@@ -1242,13 +1326,16 @@ def _query_signal_attachments_cli(key: str) -> list[dict]:
     try:
         proc = subprocess.run(
             [
-                _find_sqlcipher_bin(), str(_SIGNAL_DB_PATH),
+                _find_sqlcipher_bin(),
+                str(_SIGNAL_DB_PATH),
                 f"PRAGMA key = \"x'{key}'\";",
                 "PRAGMA cipher_compatibility = 4;",
                 ".mode json",
                 query,
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if proc.returncode == 0 and proc.stdout.strip():
             return json.loads(proc.stdout)
@@ -1338,34 +1425,48 @@ def decrypt_signal_attachments(
     logger.info("Found %d Signal attachments to process", total)
 
     if progress_fn:
-        progress_fn({
-            "phase": "signal_decrypt",
-            "status": "decrypting",
-            "progress_pct": 10,
-            "total": total,
-        })
+        progress_fn(
+            {
+                "phase": "signal_decrypt",
+                "status": "decrypting",
+                "progress_pct": 10,
+                "total": total,
+            }
+        )
 
     # Process each attachment
     media_types = {
-        "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
-        "image/webp": ".webp", "image/heic": ".heic", "image/heif": ".heif",
-        "image/bmp": ".bmp", "image/tiff": ".tiff",
-        "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/heic": ".heic",
+        "image/heif": ".heif",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+        "video/mp4": ".mp4",
+        "video/quicktime": ".mov",
+        "video/webm": ".webm",
         "video/3gpp": ".3gp",
-        "audio/aac": ".aac", "audio/mpeg": ".mp3", "audio/ogg": ".ogg",
-        "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
+        "audio/aac": ".aac",
+        "audio/mpeg": ".mp3",
+        "audio/ogg": ".ogg",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a",
     }
 
     for idx, att in enumerate(attachments):
         if progress_fn and idx % 20 == 0:
-            progress_fn({
-                "phase": "signal_decrypt",
-                "status": "decrypting",
-                "progress_pct": 10 + int((idx / max(total, 1)) * 85),
-                "processed": idx,
-                "total": total,
-                "decrypted": result["decrypted"],
-            })
+            progress_fn(
+                {
+                    "phase": "signal_decrypt",
+                    "status": "decrypting",
+                    "progress_pct": 10 + int((idx / max(total, 1)) * 85),
+                    "processed": idx,
+                    "total": total,
+                    "decrypted": result["decrypted"],
+                }
+            )
 
         att_path = att.get("path")
         content_type = att.get("contentType", "")
@@ -1428,7 +1529,8 @@ def decrypt_signal_attachments(
                     ciphertext = encrypted_data[16:-32]
 
                     cipher = Cipher(
-                        algorithms.AES(aes_key), modes.CBC(iv),
+                        algorithms.AES(aes_key),
+                        modes.CBC(iv),
                         backend=default_backend(),
                     )
                     decryptor = cipher.decryptor()
@@ -1442,14 +1544,16 @@ def decrypt_signal_attachments(
                     out_path.write_bytes(plaintext)
                     result["decrypted"] += 1
                     result["total_size"] += len(plaintext)
-                    result["files"].append({
-                        "path": str(out_path),
-                        "name": out_name,
-                        "size": len(plaintext),
-                        "ext": ext,
-                        "category": _categorize_ext(ext),
-                        "content_type": content_type,
-                    })
+                    result["files"].append(
+                        {
+                            "path": str(out_path),
+                            "name": out_name,
+                            "size": len(plaintext),
+                            "ext": ext,
+                            "category": _categorize_ext(ext),
+                            "content_type": content_type,
+                        }
+                    )
                     continue
                 except Exception as e:
                     logger.debug("AES decrypt failed for %s: %s, trying raw copy", att_path, e)
@@ -1467,14 +1571,16 @@ def decrypt_signal_attachments(
                 result["decrypted"] += 1
                 fsize = out_path.stat().st_size
                 result["total_size"] += fsize
-                result["files"].append({
-                    "path": str(out_path),
-                    "name": out_path.name,
-                    "size": fsize,
-                    "ext": ext,
-                    "category": cat,
-                    "content_type": content_type,
-                })
+                result["files"].append(
+                    {
+                        "path": str(out_path),
+                        "name": out_path.name,
+                        "size": fsize,
+                        "ext": ext,
+                        "category": cat,
+                        "content_type": content_type,
+                    }
+                )
             else:
                 result["skipped"] += 1
 
@@ -1482,12 +1588,14 @@ def decrypt_signal_attachments(
             result["errors"].append(f"{att_path}: {e}")
 
     if progress_fn:
-        progress_fn({
-            "phase": "complete",
-            "progress_pct": 100,
-            "decrypted": result["decrypted"],
-            "total_size": result["total_size"],
-        })
+        progress_fn(
+            {
+                "phase": "complete",
+                "progress_pct": 100,
+                "decrypted": result["decrypted"],
+                "total_size": result["total_size"],
+            }
+        )
 
     return result
 
@@ -1495,6 +1603,7 @@ def decrypt_signal_attachments(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _categorize_ext(ext: str) -> str:
     if ext in _IMAGE_EXTS:
@@ -1617,11 +1726,13 @@ def _check_video_ffprobe(path: Path) -> dict | None:
     """Check video integrity using ffprobe."""
     try:
         from .deps import resolve_bin
+
         _ffprobe = resolve_bin("ffprobe") or "ffprobe"
         result = subprocess.run(
-            [_ffprobe, "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=codec_type", "-of", "json", str(path)],
-            capture_output=True, text=True, timeout=30,
+            [_ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "json", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()
@@ -1641,6 +1752,7 @@ def _repair_jpeg(path: Path) -> dict:
     """Try to repair a truncated JPEG using Pillow."""
     try:
         from PIL import Image, ImageFile
+
         ImageFile.LOAD_TRUNCATED_IMAGES = True
 
         backup = path.with_suffix(path.suffix + ".bak")
@@ -1670,6 +1782,7 @@ def _repair_video(path: Path) -> dict:
     try:
         # Check ffmpeg availability
         from .deps import resolve_bin
+
         _ffmpeg = resolve_bin("ffmpeg") or "ffmpeg"
         subprocess.run([_ffmpeg, "-version"], capture_output=True, timeout=5)
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -1684,14 +1797,21 @@ def _repair_video(path: Path) -> dict:
         # Re-mux with ffmpeg — fixes missing moov, broken index
         result = subprocess.run(
             [
-                _ffmpeg, "-y",
-                "-err_detect", "ignore_err",
-                "-i", str(path),
-                "-c", "copy",
-                "-movflags", "+faststart",
+                _ffmpeg,
+                "-y",
+                "-err_detect",
+                "ignore_err",
+                "-i",
+                str(path),
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
                 str(repaired),
             ],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
 
         if result.returncode == 0 and repaired.exists() and repaired.stat().st_size > 0:

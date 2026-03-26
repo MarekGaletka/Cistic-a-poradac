@@ -38,6 +38,7 @@ class TestBackendHashMap:
 class TestGetNativeHashType:
     def test_returns_hash_for_known_remote(self, monkeypatch):
         """Simulate rclone listremotes --long returning a known backend."""
+
         def fake_run(*args, **kwargs):
             result = subprocess.CompletedProcess(args[0], 0)
             result.stdout = "mydrive:        drive\nmypcloud:       pcloud\n"
@@ -115,8 +116,11 @@ class TestRcloneVerifyTransfer:
             lambda remote, path, **kw: "abc123def456",
         )
         result = rclone_verify_transfer(
-            "remote:", "path/file.jpg",
-            expected_size=1000, expected_hash="ABC123DEF456", hash_type="md5",
+            "remote:",
+            "path/file.jpg",
+            expected_size=1000,
+            expected_hash="ABC123DEF456",
+            hash_type="md5",
         )
         assert result["verified"] is True
         assert result["hash_ok"] is True
@@ -131,8 +135,11 @@ class TestRcloneVerifyTransfer:
             lambda remote, path, **kw: "different_hash",
         )
         result = rclone_verify_transfer(
-            "remote:", "path/file.jpg",
-            expected_size=1000, expected_hash="expected_hash", hash_type="md5",
+            "remote:",
+            "path/file.jpg",
+            expected_size=1000,
+            expected_hash="expected_hash",
+            hash_type="md5",
         )
         assert result["verified"] is False
         assert result["hash_ok"] is False
@@ -149,8 +156,11 @@ class TestRcloneVerifyTransfer:
             lambda remote, path, **kw: None,
         )
         result = rclone_verify_transfer(
-            "remote:", "path/file.jpg",
-            expected_size=1000, expected_hash="abc123", hash_type="md5",
+            "remote:",
+            "path/file.jpg",
+            expected_size=1000,
+            expected_hash="abc123",
+            hash_type="md5",
         )
         assert result["verified"] is True
         assert result["hash_ok"] is None

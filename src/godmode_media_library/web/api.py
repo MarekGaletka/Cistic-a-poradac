@@ -146,6 +146,7 @@ _BLOCKED_PREFIXES = ("/etc", "/var", "/private", "/sbin", "/usr", "/bin", "/tmp"
 
 # ── Background task tracking ──────────────────────────────────────────
 
+
 @dataclass
 class TaskStatus:
     id: str
@@ -170,11 +171,7 @@ _ws_lock = threading.Lock()
 def _evict_old_tasks() -> None:
     """Remove completed/failed tasks older than TTL. Must be called under _tasks_lock."""
     now = time.monotonic()
-    to_remove = [
-        tid
-        for tid, t in _tasks.items()
-        if t.status in ("completed", "failed") and (now - t._created_ts) > _TASK_TTL_SECONDS
-    ]
+    to_remove = [tid for tid, t in _tasks.items() if t.status in ("completed", "failed") and (now - t._created_ts) > _TASK_TTL_SECONDS]
     for tid in to_remove:
         del _tasks[tid]
     # Hard cap: if still too many completed, remove oldest
@@ -269,14 +266,17 @@ def _finish_task(task_id: str, result: dict | None = None, error: str | None = N
 
 # ── Catalog helper ────────────────────────────────────────────────────
 
+
 def _open_catalog(request: Request):
     from ..catalog import Catalog
+
     cat = Catalog(request.app.state.catalog_path)
     cat.open()
     return cat
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────
+
 
 @router.get("/stats")
 def get_stats(request: Request) -> dict:
@@ -369,12 +369,7 @@ def get_files(
             return result
 
         # Determine if we need full-scan mode (rating/notes filters or tag/favorites)
-        needs_full_scan = (
-            tag_id is not None
-            or favorites_only
-            or min_rating is not None
-            or has_notes
-        )
+        needs_full_scan = tag_id is not None or favorites_only or min_rating is not None or has_notes
 
         if needs_full_scan:
             rows = cat.query_files(
@@ -577,12 +572,14 @@ def get_duplicates(
         all_groups = cat.query_duplicates()  # list of (group_id, rows) tuples
         groups = []
         for gid, rows in all_groups[:limit]:
-            groups.append({
-                "group_id": gid,
-                "file_count": len(rows),
-                "total_size": sum(r.size for r in rows),
-                "files": [{"path": str(r.path), "size": r.size} for r in rows],
-            })
+            groups.append(
+                {
+                    "group_id": gid,
+                    "file_count": len(rows),
+                    "total_size": sum(r.size for r in rows),
+                    "files": [{"path": str(r.path), "size": r.size} for r in rows],
+                }
+            )
         return {"groups": groups, "total_groups": len(all_groups)}
     finally:
         cat.close()
@@ -598,10 +595,7 @@ def get_duplicate_group(request: Request, group_id: str) -> dict:
             raise HTTPException(status_code=404, detail="Group not found")
         return {
             "group_id": group_id,
-            "files": [
-                {"path": path, "metadata": meta}
-                for path, meta in group_meta
-            ],
+            "files": [{"path": path, "metadata": meta} for path, meta in group_meta],
         }
     finally:
         cat.close()
@@ -677,19 +671,23 @@ def get_memories(request: Request) -> dict:
         for row in cur.fetchall():
             year = row[1][:4] if row[1] else None
             if year and year != str(today.year):
-                by_year.setdefault(year, []).append({
-                    "path": row[0],
-                    "date": row[1],
-                    "camera": row[2],
-                    "size": row[3],
-                })
+                by_year.setdefault(year, []).append(
+                    {
+                        "path": row[0],
+                        "date": row[1],
+                        "camera": row[2],
+                        "size": row[3],
+                    }
+                )
         for year in sorted(by_year.keys(), reverse=True):
             years_ago = today.year - int(year)
-            memories.append({
-                "year": year,
-                "years_ago": years_ago,
-                "files": by_year[year][:10],
-            })
+            memories.append(
+                {
+                    "year": year,
+                    "years_ago": years_ago,
+                    "files": by_year[year][:10],
+                }
+            )
         return {"date": today.isoformat(), "memories": memories}
     finally:
         cat.close()
@@ -813,6 +811,7 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             import tempfile
 
             from ..deps import resolve_bin
+
             _ffmpeg = resolve_bin("ffmpeg") or "ffmpeg"
 
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -821,9 +820,16 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             try:
                 result = subprocess.run(
                     [
-                        _ffmpeg, "-y", "-i", str(full_path),
-                        "-ss", "00:00:01", "-frames:v", "1",
-                        "-vf", f"scale={size}:{size}:force_original_aspect_ratio=decrease",
+                        _ffmpeg,
+                        "-y",
+                        "-i",
+                        str(full_path),
+                        "-ss",
+                        "00:00:01",
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        f"scale={size}:{size}:force_original_aspect_ratio=decrease",
                         tmp_path,
                     ],
                     capture_output=True,
@@ -853,6 +859,7 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
     if ext in (".heic", ".heif"):
         try:
             import pillow_heif
+
             pillow_heif.register_heif_opener()
         except ImportError:
             raise HTTPException(status_code=400, detail="pillow-heif required for HEIC") from None
@@ -912,6 +919,7 @@ def get_preview(request: Request, file_path: str, size: int = Query(default=120,
     if ext in (".heic", ".heif"):
         try:
             import pillow_heif
+
             pillow_heif.register_heif_opener()
         except ImportError:
             raise HTTPException(status_code=400, detail="pillow-heif required") from None
@@ -957,16 +965,20 @@ def start_scan(
                 return
             with cat:
                 stats = incremental_scan(
-                    cat, scan_roots,
+                    cat,
+                    scan_roots,
                     extract_exiftool=cfg.extract_exiftool,
                     workers=cfg.workers,
                     progress_callback=lambda p: _update_progress(task.id, p),
                 )
-            _finish_task(task.id, result={
-                "files_scanned": stats.files_scanned,
-                "files_new": stats.files_new,
-                "files_changed": stats.files_changed,
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "files_scanned": stats.files_scanned,
+                    "files_new": stats.files_new,
+                    "files_changed": stats.files_changed,
+                },
+            )
         except Exception as e:
             _finish_task(task.id, error=str(e))
 
@@ -1022,14 +1034,17 @@ def start_pipeline(
                 workers=cfg.workers,
             )
             result = run_pipeline(pipeline_config)
-            _finish_task(task.id, result={
-                "files_scanned": result.files_scanned,
-                "metadata_extracted": result.metadata_extracted,
-                "duplicate_groups": result.duplicate_groups,
-                "merge_plans": result.merge_plans_created,
-                "tags_merged": result.tags_merged,
-                "errors": result.errors[:10],
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "files_scanned": result.files_scanned,
+                    "metadata_extracted": result.metadata_extracted,
+                    "duplicate_groups": result.duplicate_groups,
+                    "merge_plans": result.merge_plans_created,
+                    "tags_merged": result.tags_merged,
+                    "errors": result.errors[:10],
+                },
+            )
         except Exception as e:
             _finish_task(task.id, error=str(e))
 
@@ -1058,14 +1073,17 @@ def start_verify(
                     check_hashes=check_hashes,
                     progress_callback=lambda p: _update_progress(task.id, p),
                 )
-            _finish_task(task.id, result={
-                "total_checked": result.total_checked,
-                "ok": result.ok,
-                "missing": len(result.missing_files),
-                "size_mismatches": len(result.size_mismatches),
-                "hash_mismatches": len(result.hash_mismatches),
-                "has_issues": result.has_issues,
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "total_checked": result.total_checked,
+                    "ok": result.ok,
+                    "missing": len(result.missing_files),
+                    "size_mismatches": len(result.size_mismatches),
+                    "hash_mismatches": len(result.hash_mismatches),
+                    "has_issues": result.has_issues,
+                },
+            )
         except Exception as e:
             _finish_task(task.id, error=str(e))
 
@@ -1458,10 +1476,7 @@ def restore_files(request: Request, body: RestoreRequest) -> dict:
 def _is_path_allowed(p: Path) -> bool:
     """Check if a path is allowed to browse (security guard)."""
     resolved = str(p.resolve())
-    return all(
-        resolved != prefix and not resolved.startswith(prefix + "/")
-        for prefix in _BLOCKED_PREFIXES
-    )
+    return all(resolved != prefix and not resolved.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES)
 
 
 def _get_bookmarks() -> list[dict]:
@@ -1480,11 +1495,13 @@ def _get_bookmarks() -> list[dict]:
         try:
             for entry in sorted(volumes_path.iterdir()):
                 if entry.is_dir() and entry.name != "Macintosh HD":
-                    bookmarks.append({
-                        "name": entry.name,
-                        "path": str(entry),
-                        "icon": "\U0001f4be",
-                    })
+                    bookmarks.append(
+                        {
+                            "name": entry.name,
+                            "path": str(entry),
+                            "icon": "\U0001f4be",
+                        }
+                    )
         except PermissionError:
             pass
     return bookmarks
@@ -1518,12 +1535,14 @@ def browse_filesystem(
             item_count = 0
             with contextlib.suppress(PermissionError):
                 item_count = sum(1 for _ in entry.iterdir())
-            entries.append({
-                "name": entry.name,
-                "path": str(entry),
-                "is_dir": True,
-                "item_count": item_count,
-            })
+            entries.append(
+                {
+                    "name": entry.name,
+                    "path": str(entry),
+                    "is_dir": True,
+                    "item_count": item_count,
+                }
+            )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permission denied") from None
 
@@ -1558,8 +1577,7 @@ def _set_configured_roots(request: Request, roots: list[str]) -> None:
     cat = _open_catalog(request)
     try:
         cat.conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('configured_roots', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            "INSERT INTO meta (key, value) VALUES ('configured_roots', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (json.dumps(roots),),
         )
         cat.conn.commit()
@@ -1649,15 +1667,17 @@ def get_sources(request: Request) -> dict:
             ).fetchone()
             last_scan = last_scan_row[0] if last_scan_row else None
 
-            sources.append({
-                "path": root,
-                "name": root_path.name or root,
-                "online": online,
-                "file_count": file_count,
-                "total_size": total_size,
-                "last_scan": last_scan,
-                "configured": root in configured,
-            })
+            sources.append(
+                {
+                    "path": root,
+                    "name": root_path.name or root,
+                    "online": online,
+                    "file_count": file_count,
+                    "total_size": total_size,
+                    "last_scan": last_scan,
+                    "configured": root in configured,
+                }
+            )
 
         # Thumbnail cache stats
         cache_dir = _thumb_cache_dir()
@@ -1728,6 +1748,7 @@ def stream_file(request: Request, file_path: str) -> StreamingResponse:
     media_type = media_types.get(ext, "application/octet-stream")
 
     from fastapi.responses import FileResponse
+
     return FileResponse(
         str(full_path),
         media_type=media_type,
@@ -1764,8 +1785,7 @@ def _set_favorites(request: Request, favorites: list[str]) -> None:
     cat = _open_catalog(request)
     try:
         cat.conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('favorites', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            "INSERT INTO meta (key, value) VALUES ('favorites', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (json.dumps(favorites),),
         )
         cat.conn.commit()
@@ -1940,9 +1960,7 @@ def suggest_tags(request: Request, path: str = Query(...)) -> dict:
             # Try alternative method
             fr = cat.get_file_by_path(path)
             if fr:
-                faces_cur = cat.conn.execute(
-                    "SELECT COUNT(*) FROM faces WHERE file_id = ?", (fr.id,)
-                )
+                faces_cur = cat.conn.execute("SELECT COUNT(*) FROM faces WHERE file_id = ?", (fr.id,))
                 face_count = faces_cur.fetchone()[0]
                 if face_count > 0:
                     suggestions.append({"name": "Portrety", "color": "#f85149", "reason": "Detekce obliceju"})
@@ -1966,6 +1984,7 @@ def suggest_tags(request: Request, path: str = Query(...)) -> dict:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
+
 
 def _row_to_dict(row: Any) -> dict:
     """Convert a CatalogFileRow to a serializable dict."""
@@ -1997,12 +2016,45 @@ def _row_to_dict(row: Any) -> dict:
 
 
 _TEXT_EXTS = {
-    ".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".conf", ".log", ".sh", ".bash",
-    ".py", ".js", ".ts", ".html", ".css", ".sql", ".r", ".swift",
-    ".go", ".rs", ".java", ".kt", ".c", ".cpp", ".h", ".hpp",
-    ".rb", ".php", ".pl", ".lua", ".vim", ".env", ".gitignore",
-    ".dockerfile", ".makefile",
+    ".txt",
+    ".md",
+    ".csv",
+    ".json",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".log",
+    ".sh",
+    ".bash",
+    ".py",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".sql",
+    ".r",
+    ".swift",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".rb",
+    ".php",
+    ".pl",
+    ".lua",
+    ".vim",
+    ".env",
+    ".gitignore",
+    ".dockerfile",
+    ".makefile",
 }
 
 _TEXT_NAMES = {"makefile", "dockerfile", "readme", "license", "changelog"}
@@ -2014,13 +2066,28 @@ _ARCHIVE_EXTS = {".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar"}
 
 def _detect_language(ext: str) -> str:
     lang_map = {
-        ".py": "python", ".js": "javascript", ".ts": "typescript",
-        ".html": "html", ".css": "css", ".json": "json",
-        ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
-        ".sql": "sql", ".sh": "bash", ".bash": "bash",
-        ".md": "markdown", ".csv": "csv", ".go": "go",
-        ".rs": "rust", ".java": "java", ".c": "c", ".cpp": "cpp",
-        ".rb": "ruby", ".php": "php", ".swift": "swift",
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".html": "html",
+        ".css": "css",
+        ".json": "json",
+        ".xml": "xml",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".sql": "sql",
+        ".sh": "bash",
+        ".bash": "bash",
+        ".md": "markdown",
+        ".csv": "csv",
+        ".go": "go",
+        ".rs": "rust",
+        ".java": "java",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".rb": "ruby",
+        ".php": "php",
+        ".swift": "swift",
     }
     return lang_map.get(ext, "text")
 
@@ -2029,6 +2096,7 @@ def _detect_language(ext: str) -> str:
 async def get_dedup_rules(request: Request):
     """Get current deduplication rules."""
     from ..config import load_config
+
     config = load_config()
     return {
         "strategy": config.dedup_strategy,
@@ -2090,6 +2158,7 @@ async def put_dedup_rules(request: Request, body: DedupRulesRequest):
 def get_reorganize_sources():
     """Detect available media sources (mounted volumes, common folders)."""
     from ..reorganize import detect_sources
+
     return {"sources": detect_sources()}
 
 
@@ -2161,19 +2230,23 @@ def start_reorganize_execute(request: Request, background_tasks: BackgroundTasks
 
     def run_execute():
         try:
+
             def on_progress(info):
                 _update_progress(task.id, info)
 
             result = execute_reorganization(plan, progress_fn=on_progress)
 
-            _finish_task(task.id, result={
-                "files_processed": result.files_processed,
-                "files_copied": result.files_copied,
-                "files_skipped": result.files_skipped,
-                "originals_deleted": result.originals_deleted,
-                "space_saved": result.space_saved,
-                "errors": result.errors[:50],
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "files_processed": result.files_processed,
+                    "files_copied": result.files_copied,
+                    "files_skipped": result.files_skipped,
+                    "originals_deleted": result.originals_deleted,
+                    "space_saved": result.space_saved,
+                    "errors": result.errors[:50],
+                },
+            )
 
             # Clean up the plan
             _reorganize_plans.pop(body.plan_id, None)
@@ -2214,12 +2287,14 @@ def get_file_preview(request: Request, file_path: str) -> dict:
         try:
             content = full_path.read_text(encoding="utf-8", errors="replace")[:50000]
             lang = _detect_language(ext)
-            result.update({
-                "type": "text",
-                "content": content,
-                "language": lang,
-                "lines": content.count("\n") + 1,
-            })
+            result.update(
+                {
+                    "type": "text",
+                    "content": content,
+                    "language": lang,
+                    "lines": content.count("\n") + 1,
+                }
+            )
         except OSError:
             result["type"] = "unknown"
         return result
@@ -2239,24 +2314,30 @@ def get_file_preview(request: Request, file_path: str) -> dict:
             if ext == ".zip":
                 with zipfile.ZipFile(full_path) as zf:
                     for info in zf.infolist()[:100]:
-                        entries.append({
-                            "name": info.filename,
-                            "size": info.file_size,
-                            "is_dir": info.is_dir(),
-                        })
+                        entries.append(
+                            {
+                                "name": info.filename,
+                                "size": info.file_size,
+                                "is_dir": info.is_dir(),
+                            }
+                        )
             elif ext in {".tar", ".gz", ".bz2", ".xz"}:
                 with tarfile.open(full_path) as tf:
                     for member in tf.getmembers()[:100]:
-                        entries.append({
-                            "name": member.name,
-                            "size": member.size,
-                            "is_dir": member.isdir(),
-                        })
-            result.update({
-                "type": "archive",
-                "entries": entries,
-                "total_entries": len(entries),
-            })
+                        entries.append(
+                            {
+                                "name": member.name,
+                                "size": member.size,
+                                "is_dir": member.isdir(),
+                            }
+                        )
+            result.update(
+                {
+                    "type": "archive",
+                    "entries": entries,
+                    "total_entries": len(entries),
+                }
+            )
         except (OSError, zipfile.BadZipFile, tarfile.TarError):
             result["type"] = "unknown"
         return result
@@ -2264,14 +2345,20 @@ def get_file_preview(request: Request, file_path: str) -> dict:
     # Audio
     if ext in _AUDIO_EXTS:
         audio_media_types = {
-            ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac",
-            ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+            ".mp3": "audio/mpeg",
+            ".wav": "audio/wav",
+            ".flac": "audio/flac",
+            ".ogg": "audio/ogg",
+            ".m4a": "audio/mp4",
+            ".aac": "audio/aac",
         }
-        result.update({
-            "type": "audio",
-            "url": f"/api/stream/{file_path}",
-            "media_type": audio_media_types.get(ext, "audio/mpeg"),
-        })
+        result.update(
+            {
+                "type": "audio",
+                "url": f"/api/stream/{file_path}",
+                "media_type": audio_media_types.get(ext, "audio/mpeg"),
+            }
+        )
         return result
 
     return result
@@ -2313,6 +2400,7 @@ class AppMineRequest(BaseModel):
 def get_available_apps_endpoint():
     """List all known apps and whether they have data present."""
     from ..recovery import get_available_apps
+
     return {"apps": get_available_apps()}
 
 
@@ -2332,33 +2420,38 @@ def start_app_mine(background_tasks: BackgroundTasks, body: AppMineRequest):
             # Serialize results — cap file lists for response size
             serialized = []
             for r in results:
-                serialized.append({
-                    "app_id": r.app_id,
-                    "app_name": r.app_name,
-                    "icon": r.icon,
-                    "color": r.color,
-                    "category": r.category,
-                    "available": r.available,
-                    "encrypted": r.encrypted,
-                    "note": r.note,
-                    "files_found": r.files_found,
-                    "total_size": r.total_size,
-                    "raw_files_count": r.raw_files_count,
-                    "raw_total_size": r.raw_total_size,
-                    "images": r.images,
-                    "videos": r.videos,
-                    "audio": r.audio,
-                    "other": r.other,
-                    "files": r.files[:200],  # Cap per app
-                    "paths_checked": r.paths_checked,
-                })
+                serialized.append(
+                    {
+                        "app_id": r.app_id,
+                        "app_name": r.app_name,
+                        "icon": r.icon,
+                        "color": r.color,
+                        "category": r.category,
+                        "available": r.available,
+                        "encrypted": r.encrypted,
+                        "note": r.note,
+                        "files_found": r.files_found,
+                        "total_size": r.total_size,
+                        "raw_files_count": r.raw_files_count,
+                        "raw_total_size": r.raw_total_size,
+                        "images": r.images,
+                        "videos": r.videos,
+                        "audio": r.audio,
+                        "other": r.other,
+                        "files": r.files[:200],  # Cap per app
+                        "paths_checked": r.paths_checked,
+                    }
+                )
             total_files = sum(r.files_found for r in results)
             total_size = sum(r.total_size for r in results)
-            _finish_task(task.id, result={
-                "apps": serialized,
-                "total_files": total_files,
-                "total_size": total_size,
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "apps": serialized,
+                    "total_files": total_files,
+                    "total_size": total_size,
+                },
+            )
         except Exception as e:
             logger.exception("App mining failed")
             _finish_task(task.id, error=str(e))
@@ -2425,13 +2518,16 @@ def start_deep_scan(request: Request, background_tasks: BackgroundTasks):
             result = deep_scan(
                 progress_fn=lambda p: _update_progress(task.id, p),
             )
-            _finish_task(task.id, result={
-                "locations_scanned": result.locations_scanned,
-                "files_found": result.files_found,
-                "total_size": result.total_size,
-                "files": result.files[:500],
-                "locations": result.locations,
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "locations_scanned": result.locations_scanned,
+                    "files_found": result.files_found,
+                    "total_size": result.total_size,
+                    "files": result.files[:500],
+                    "locations": result.locations,
+                },
+            )
         except Exception as e:
             logger.exception("Deep scan failed")
             _finish_task(task.id, error=str(e))
@@ -2444,6 +2540,7 @@ def start_deep_scan(request: Request, background_tasks: BackgroundTasks):
 def start_recover_files(body: RecoverFilesRequest):
     """Copy/move found files to a recovery destination."""
     from ..recovery import recover_files
+
     return recover_files(body.paths, body.destination, body.delete_source)
 
 
@@ -2461,13 +2558,16 @@ def start_integrity_check(request: Request, background_tasks: BackgroundTasks):
                 catalog_path=catalog_path,
                 progress_fn=lambda p: _update_progress(task.id, p),
             )
-            _finish_task(task.id, result={
-                "total_checked": result.total_checked,
-                "healthy": result.healthy,
-                "corrupted": result.corrupted,
-                "repaired": result.repaired,
-                "errors": result.errors[:200],
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "total_checked": result.total_checked,
+                    "healthy": result.healthy,
+                    "corrupted": result.corrupted,
+                    "repaired": result.repaired,
+                    "errors": result.errors[:200],
+                },
+            )
         except Exception as e:
             logger.exception("Integrity check failed")
             _finish_task(task.id, error=str(e))
@@ -2480,6 +2580,7 @@ def start_integrity_check(request: Request, background_tasks: BackgroundTasks):
 def repair_single_file(body: RepairRequest):
     """Attempt to repair a single corrupted file."""
     from ..recovery import repair_file
+
     return repair_file(body.path)
 
 
@@ -2487,6 +2588,7 @@ def repair_single_file(body: RepairRequest):
 def photorec_status():
     """Check if PhotoRec is available."""
     from ..recovery import check_photorec
+
     return check_photorec()
 
 
@@ -2494,6 +2596,7 @@ def photorec_status():
 def get_disks():
     """List available disks for recovery."""
     from ..recovery import list_disks
+
     return {"disks": list_disks()}
 
 
@@ -2516,12 +2619,15 @@ def start_photorec(background_tasks: BackgroundTasks, body: PhotoRecRequest):
                 file_types=body.file_types,
                 progress_fn=lambda p: _update_progress(task.id, p),
             )
-            _finish_task(task.id, result={
-                "files_recovered": result.files_recovered,
-                "total_size": result.total_size,
-                "output_dir": result.output_dir,
-                "files": result.files[:500],
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "files_recovered": result.files_recovered,
+                    "total_size": result.total_size,
+                    "output_dir": result.output_dir,
+                    "files": result.files[:500],
+                },
+            )
         except Exception as e:
             logger.exception("PhotoRec failed")
             _finish_task(task.id, error=str(e))
@@ -2555,6 +2661,7 @@ class ScenarioUpdateRequest(BaseModel):
 def get_scenarios():
     """List all saved scenarios."""
     from ..scenarios import list_scenarios
+
     return {"scenarios": list_scenarios()}
 
 
@@ -2562,6 +2669,7 @@ def get_scenarios():
 def get_scenario_templates():
     """Get built-in scenario templates."""
     from ..scenarios import get_templates
+
     return {"templates": get_templates()}
 
 
@@ -2569,6 +2677,7 @@ def get_scenario_templates():
 def get_step_types():
     """Get available step types for building scenarios."""
     from ..scenarios import STEP_TYPES
+
     return {"step_types": STEP_TYPES}
 
 
@@ -2576,6 +2685,7 @@ def get_step_types():
 def check_triggers():
     """Check if any volume-mount triggers match currently mounted volumes."""
     from ..scenarios import check_volume_triggers
+
     return {"triggered": check_volume_triggers()}
 
 
@@ -2583,6 +2693,7 @@ def check_triggers():
 def get_scenario_detail(scenario_id: str):
     """Get a single scenario by ID."""
     from ..scenarios import get_scenario
+
     sc = get_scenario(scenario_id)
     if not sc:
         raise HTTPException(status_code=404, detail="Scénář nenalezen")
@@ -2593,6 +2704,7 @@ def get_scenario_detail(scenario_id: str):
 def create_new_scenario(body: ScenarioCreateRequest):
     """Create a new scenario."""
     from ..scenarios import create_scenario
+
     return create_scenario(body.model_dump())
 
 
@@ -2600,6 +2712,7 @@ def create_new_scenario(body: ScenarioCreateRequest):
 def update_existing_scenario(scenario_id: str, body: ScenarioUpdateRequest):
     """Update a scenario."""
     from ..scenarios import update_scenario
+
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     result = update_scenario(scenario_id, data)
     if not result:
@@ -2611,6 +2724,7 @@ def update_existing_scenario(scenario_id: str, body: ScenarioUpdateRequest):
 def delete_existing_scenario(scenario_id: str):
     """Delete a scenario."""
     from ..scenarios import delete_scenario
+
     if not delete_scenario(scenario_id):
         raise HTTPException(status_code=404, detail="Scénář nenalezen")
     return {"status": "ok"}
@@ -2620,6 +2734,7 @@ def delete_existing_scenario(scenario_id: str):
 def duplicate_existing_scenario(scenario_id: str):
     """Duplicate a scenario."""
     from ..scenarios import duplicate_scenario
+
     result = duplicate_scenario(scenario_id)
     if not result:
         raise HTTPException(status_code=404, detail="Scénář nenalezen")
@@ -2672,6 +2787,7 @@ class BackupExecuteRequest(BaseModel):
 def backup_stats(request: Request):
     """Get overall backup health statistics."""
     from ..distributed_backup import get_backup_stats, ensure_backup_tables
+
     cat = _open_catalog(request)
     try:
         ensure_backup_tables(cat)
@@ -2695,6 +2811,7 @@ def backup_stats(request: Request):
 def backup_targets(request: Request):
     """List all backup targets with capacity info."""
     from ..distributed_backup import get_targets, ensure_backup_tables
+
     cat = _open_catalog(request)
     try:
         ensure_backup_tables(cat)
@@ -2724,6 +2841,7 @@ def backup_targets(request: Request):
 def backup_probe(request: Request):
     """Probe all remotes for storage capacity."""
     from ..distributed_backup import probe_targets
+
     cat = _open_catalog(request)
     try:
         targets = probe_targets(cat)
@@ -2748,6 +2866,7 @@ def backup_probe(request: Request):
 def update_backup_target(remote_name: str, body: BackupTargetUpdate, request: Request):
     """Enable/disable a target or change its priority."""
     from ..distributed_backup import set_target_enabled, set_target_priority, ensure_backup_tables
+
     cat = _open_catalog(request)
     try:
         ensure_backup_tables(cat)
@@ -2780,6 +2899,7 @@ def update_backup_target(remote_name: str, body: BackupTargetUpdate, request: Re
 def backup_plan(request: Request):
     """Create a distribution plan for backing up files."""
     from ..distributed_backup import create_backup_plan
+
     cat = _open_catalog(request)
     try:
         plan = create_backup_plan(cat)
@@ -2814,12 +2934,14 @@ def backup_execute(request: Request, background_tasks: BackgroundTasks, body: Ba
 
     def run():
         from ..catalog import Catalog
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
             plan = create_backup_plan(cat)
             result = execute_backup_plan(
-                cat, plan,
+                cat,
+                plan,
                 dry_run=body.dry_run,
                 progress_fn=lambda p: _update_progress(task.id, p),
             )
@@ -2844,6 +2966,7 @@ def backup_verify(request: Request, background_tasks: BackgroundTasks):
 
     def run():
         from ..catalog import Catalog
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
@@ -2866,6 +2989,7 @@ def backup_verify(request: Request, background_tasks: BackgroundTasks):
 def backup_manifest(request: Request, page: int = 1, limit: int = 50, search: str = ""):
     """Get paginated backup manifest."""
     from ..distributed_backup import ensure_backup_tables
+
     cat = _open_catalog(request)
     try:
         ensure_backup_tables(cat)
@@ -2878,17 +3002,21 @@ def backup_manifest(request: Request, page: int = 1, limit: int = 50, search: st
             params.append(f"%{search}%")
 
         total = cat.conn.execute(
-            f"SELECT COUNT(*) FROM backup_manifest bm {where}", params,
+            f"SELECT COUNT(*) FROM backup_manifest bm {where}",
+            params,
         ).fetchone()[0]
 
-        rows = cat.conn.execute(f"""
+        rows = cat.conn.execute(
+            f"""
             SELECT bm.path, bm.size, bm.remote_name, bm.remote_path,
                    bm.backed_up_at, bm.verified, bm.verified_at
             FROM backup_manifest bm
             {where}
             ORDER BY bm.backed_up_at DESC
             LIMIT ? OFFSET ?
-        """, [*params, limit, offset]).fetchall()
+        """,
+            [*params, limit, offset],
+        ).fetchall()
 
         entries = [
             {
@@ -2921,6 +3049,7 @@ def backup_manifest(request: Request, page: int = 1, limit: int = 50, search: st
 def backup_monitor_status():
     """Get backup monitoring status and alerts."""
     from ..backup_monitor import get_monitor_status
+
     return get_monitor_status()
 
 
@@ -2946,12 +3075,15 @@ def backup_monitor_run(background_tasks: BackgroundTasks):
                 for c in checks
             ]
             ok = sum(1 for c in checks if c.accessible)
-            _finish_task(task.id, result={
-                "checked": len(checks),
-                "healthy": ok,
-                "unhealthy": len(checks) - ok,
-                "details": results,
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "checked": len(checks),
+                    "healthy": ok,
+                    "unhealthy": len(checks) - ok,
+                    "details": results,
+                },
+            )
         except Exception as e:
             logger.exception("Health check failed")
             _finish_task(task.id, error=str(e))
@@ -2964,6 +3096,7 @@ def backup_monitor_run(background_tasks: BackgroundTasks):
 def backup_monitor_ack():
     """Acknowledge all active alerts."""
     from ..backup_monitor import acknowledge_all_alerts
+
     count = acknowledge_all_alerts()
     return {"acknowledged": count}
 
@@ -2972,6 +3105,7 @@ def backup_monitor_ack():
 def backup_test_notification():
     """Send a test notification."""
     from ..backup_monitor import send_test_notification
+
     return send_test_notification()
 
 
@@ -2982,6 +3116,7 @@ def backup_test_notification():
 def bitrot_stats(request: Request):
     """Get bit rot verification statistics."""
     from ..bitrot import get_verification_stats
+
     cat = _open_catalog(request)
     try:
         return get_verification_stats(cat)
@@ -2999,23 +3134,28 @@ def bitrot_scan(request: Request, background_tasks: BackgroundTasks, limit: int 
 
     def run():
         from ..catalog import Catalog
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
             result = scan_bitrot(
-                cat, limit=limit,
+                cat,
+                limit=limit,
                 progress_fn=lambda p: _update_progress(task.id, p),
             )
-            _finish_task(task.id, result={
-                "total_checked": result.total_checked,
-                "healthy": result.healthy,
-                "corrupted": result.corrupted,
-                "missing": result.missing,
-                "bytes_verified": result.bytes_verified,
-                "elapsed_seconds": result.elapsed_seconds,
-                "corrupted_files": result.corrupted_files[:50],
-                "missing_files": result.missing_files[:50],
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "total_checked": result.total_checked,
+                    "healthy": result.healthy,
+                    "corrupted": result.corrupted,
+                    "missing": result.missing,
+                    "bytes_verified": result.bytes_verified,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "corrupted_files": result.corrupted_files[:50],
+                    "missing_files": result.missing_files[:50],
+                },
+            )
         except Exception as e:
             logger.exception("Bit rot scan failed")
             _finish_task(task.id, error=str(e))
@@ -3075,22 +3215,29 @@ def integrity_score(request: Request):
 
         # Compute weighted score
         score = (
-            hash_pct * 25 +        # 25% weight: hashing
-            date_pct * 15 +         # 15% weight: metadata
-            backup_pct * 25 +       # 25% weight: backup
-            verify_pct * 15 +       # 15% weight: verification
-            quality_pct * 5 +       # 5% weight: quality
-            15 - dup_penalty        # 15% base minus duplicate penalty
+            hash_pct * 25  # 25% weight: hashing
+            + date_pct * 15  # 15% weight: metadata
+            + backup_pct * 25  # 25% weight: backup
+            + verify_pct * 15  # 15% weight: verification
+            + quality_pct * 5  # 5% weight: quality
+            + 15
+            - dup_penalty  # 15% base minus duplicate penalty
         )
         score = max(0, min(100, round(score, 1)))
 
         # Grade
-        if score >= 90: grade = "A+"
-        elif score >= 80: grade = "A"
-        elif score >= 70: grade = "B"
-        elif score >= 60: grade = "C"
-        elif score >= 50: grade = "D"
-        else: grade = "F"
+        if score >= 90:
+            grade = "A+"
+        elif score >= 80:
+            grade = "A"
+        elif score >= 70:
+            grade = "B"
+        elif score >= 60:
+            grade = "C"
+        elif score >= 50:
+            grade = "D"
+        else:
+            grade = "F"
 
         return {
             "score": score,
@@ -3122,6 +3269,7 @@ def backup_auto_heal(request: Request, background_tasks: BackgroundTasks):
 
     def run():
         from ..catalog import Catalog
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
@@ -3148,6 +3296,7 @@ class SignalDecryptRequest(BaseModel):
 def signal_decrypt_status():
     """Check if Signal decryption is possible."""
     from ..recovery import check_signal_decrypt
+
     return check_signal_decrypt()
 
 
@@ -3177,6 +3326,7 @@ def start_signal_decrypt(
 
 
 # ── Gallery & Smart Scoring ──────────────────────────────────────────
+
 
 @router.get("/gallery/highlights")
 async def gallery_highlights(
@@ -3412,9 +3562,14 @@ def list_faces(
             )
             faces = [
                 {
-                    "id": r[0], "file_id": r[1], "face_index": r[2], "person_id": r[3],
+                    "id": r[0],
+                    "file_id": r[1],
+                    "face_index": r[2],
+                    "person_id": r[3],
                     "bbox": {"top": r[4], "right": r[5], "bottom": r[6], "left": r[7]},
-                    "confidence": r[8], "cluster_id": r[9], "path": r[10],
+                    "confidence": r[8],
+                    "cluster_id": r[9],
+                    "path": r[10],
                     "person_name": r[11] or "",
                 }
                 for r in cur.fetchall()
@@ -3551,7 +3706,10 @@ def trigger_face_clustering(request: Request, background: BackgroundTasks, body:
             decrypt_fn = get_decrypt_fn(enabled=True)
             try:
                 clusters = cluster_faces(
-                    cat, eps=body.eps, min_samples=body.min_samples, decrypt_fn=decrypt_fn,
+                    cat,
+                    eps=body.eps,
+                    min_samples=body.min_samples,
+                    decrypt_fn=decrypt_fn,
                 )
                 task.result = {
                     "clusters": len(clusters),
@@ -3640,12 +3798,14 @@ class CloudMountRequest(BaseModel):
 def cloud_status(request: Request):
     """Get cloud storage status — rclone remotes + native paths, enriched with scan info."""
     from godmode_media_library.cloud import get_cloud_status
+
     status = get_cloud_status()
 
     def _safe_disk_count(root: str, max_seconds: float = 3.0) -> int:
         """Count files on disk, skipping hidden dirs and respecting timeout."""
         import os
         import time
+
         count = 0
         deadline = time.monotonic() + max_seconds
         try:
@@ -3695,6 +3855,7 @@ def cloud_status(request: Request):
 def cloud_remotes():
     """List configured rclone remotes."""
     from godmode_media_library.cloud import check_rclone, list_remotes, rclone_version
+
     if not check_rclone():
         return {"installed": False, "remotes": [], "version": None}
     return {
@@ -3708,10 +3869,12 @@ def cloud_remotes():
 def cloud_native_paths(request: Request):
     """Detect natively synced cloud storage paths (iCloud, MEGA, pCloud, etc.)."""
     from godmode_media_library.cloud import detect_native_cloud_paths
+
     paths = detect_native_cloud_paths()
 
     def _safe_count(root: str) -> int:
         import os, time
+
         count, deadline = 0, time.monotonic() + 3.0
         try:
             for dirpath, dirnames, filenames in os.walk(root):
@@ -3750,6 +3913,7 @@ def cloud_native_paths(request: Request):
 def cloud_providers():
     """List supported cloud providers with setup instructions."""
     from godmode_media_library.cloud import PROVIDERS, provider_setup_guide
+
     result = {}
     for key in PROVIDERS:
         result[key] = provider_setup_guide(key)
@@ -3760,6 +3924,7 @@ def cloud_providers():
 def cloud_provider_guide(provider_key: str):
     """Get setup guide for a specific cloud provider."""
     from godmode_media_library.cloud import provider_setup_guide
+
     guide = provider_setup_guide(provider_key)
     if "error" in guide:
         raise HTTPException(404, guide["error"])
@@ -3770,6 +3935,7 @@ def cloud_provider_guide(provider_key: str):
 def cloud_browse(remote_name: str, path: str = Query("")):
     """Browse files/folders in a remote."""
     from godmode_media_library.cloud import rclone_ls
+
     try:
         items = rclone_ls(remote_name, path)
         return {"remote": remote_name, "path": path, "items": items}
@@ -3782,6 +3948,7 @@ def cloud_browse(remote_name: str, path: str = Query("")):
 def cloud_remote_about(remote_name: str):
     """Get storage usage for a remote (total, used, free)."""
     from godmode_media_library.cloud import rclone_about
+
     return rclone_about(remote_name)
 
 
@@ -3796,7 +3963,9 @@ def cloud_sync(request: Request, background: BackgroundTasks, body: CloudSyncReq
 
             local = body.local_path or str(default_sync_dir() / body.remote)
             result = rclone_copy(
-                body.remote, body.remote_path, local,
+                body.remote,
+                body.remote_path,
+                local,
                 include_pattern=body.include_pattern,
                 dry_run=body.dry_run,
             )
@@ -3859,28 +4028,36 @@ def cloud_backup(request: Request, background: BackgroundTasks, body: CloudBacku
             for i, src in enumerate(source_paths):
                 src_name = Path(src).name or "root"
                 dest_path = f"{body.remote_path}/{src_name}" if body.remote_path else src_name
-                _update_progress(task.id, {
-                    "step": f"Zálohuji {src_name}",
-                    "source": src,
-                    "current": i + 1,
-                    "total": len(source_paths),
-                })
+                _update_progress(
+                    task.id,
+                    {
+                        "step": f"Zálohuji {src_name}",
+                        "source": src,
+                        "current": i + 1,
+                        "total": len(source_paths),
+                    },
+                )
                 result = rclone_upload(
-                    src, body.remote, dest_path,
+                    src,
+                    body.remote,
+                    dest_path,
                     include_pattern=body.include_pattern,
                     dry_run=body.dry_run,
                 )
                 total_files += result.files_transferred
                 total_errors += result.errors
 
-            _finish_task(task.id, result={
-                "remote": body.remote,
-                "remote_path": body.remote_path,
-                "sources": len(source_paths),
-                "files_uploaded": total_files,
-                "errors": total_errors,
-                "dry_run": body.dry_run,
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "remote": body.remote,
+                    "remote_path": body.remote_path,
+                    "sources": len(source_paths),
+                    "files_uploaded": total_files,
+                    "errors": total_errors,
+                    "dry_run": body.dry_run,
+                },
+            )
         except Exception as exc:
             _finish_task(task.id, error=str(exc))
             logger.exception("Cloud backup task failed")
@@ -3893,6 +4070,7 @@ def cloud_backup(request: Request, background: BackgroundTasks, body: CloudBacku
 def cloud_mount_remote(body: CloudMountRequest):
     """Mount a remote as a local filesystem."""
     from godmode_media_library.cloud import rclone_mount
+
     try:
         path, success = rclone_mount(body.remote, body.mount_point or None)
         return {"mount_path": path, "success": success}
@@ -3905,6 +4083,7 @@ def cloud_mount_remote(body: CloudMountRequest):
 def cloud_unmount_remote(body: CloudMountRequest):
     """Unmount a FUSE mount."""
     from godmode_media_library.cloud import rclone_unmount
+
     mount_point = body.mount_point or str(Path.home() / "mnt" / body.remote)
     success = rclone_unmount(mount_point)
     return {"mount_point": mount_point, "success": success}
@@ -3920,6 +4099,7 @@ class CloudConnectRequest(BaseModel):
 def cloud_provider_fields(provider_key: str):
     """Return the credential fields needed for a provider."""
     from godmode_media_library.cloud import PROVIDERS
+
     info = PROVIDERS.get(provider_key)
     if not info:
         raise HTTPException(404, f"Unknown provider: {provider_key}")
@@ -3935,6 +4115,7 @@ def cloud_provider_fields(provider_key: str):
 def cloud_connect(body: CloudConnectRequest):
     """Create a new rclone remote (credential or start OAuth)."""
     from godmode_media_library.cloud import create_remote
+
     result = create_remote(body.provider_key, body.name, body.credentials)
     if not result["success"]:
         raise HTTPException(400, result["message"])
@@ -3945,6 +4126,7 @@ def cloud_connect(body: CloudConnectRequest):
 def cloud_oauth_status(name: str):
     """Check OAuth flow status for a remote being configured."""
     from godmode_media_library.cloud import get_oauth_status
+
     return get_oauth_status(name)
 
 
@@ -3952,6 +4134,7 @@ def cloud_oauth_status(name: str):
 def cloud_oauth_finalize(body: CloudConnectRequest):
     """Finalize an OAuth remote with the captured token."""
     from godmode_media_library.cloud import finalize_oauth
+
     token = body.credentials.get("token", "")
     if not token:
         raise HTTPException(400, "Missing OAuth token")
@@ -3965,6 +4148,7 @@ def cloud_oauth_finalize(body: CloudConnectRequest):
 def cloud_delete_remote(name: str):
     """Remove an rclone remote configuration."""
     from godmode_media_library.cloud import delete_remote
+
     result = delete_remote(name)
     if not result["success"]:
         raise HTTPException(400, result["message"])
@@ -3975,6 +4159,7 @@ def cloud_delete_remote(name: str):
 def cloud_test_remote(name: str):
     """Test connection to a remote."""
     from godmode_media_library.cloud import test_remote
+
     return test_remote(name)
 
 
@@ -3994,7 +4179,11 @@ def get_timeline_gaps(request: Request) -> dict:
         )
         rows = cur.fetchall()
         if not rows:
-            return {"months": [], "gaps": [], "coverage": {"first_date": None, "last_date": None, "total_months": 0, "covered_months": 0, "coverage_pct": 0}}
+            return {
+                "months": [],
+                "gaps": [],
+                "coverage": {"first_date": None, "last_date": None, "total_months": 0, "covered_months": 0, "coverage_pct": 0},
+            }
 
         # Build month list — skip rows with NULL year/month (bad date format)
         month_counts: dict[tuple[int, int], int] = {}
@@ -4005,7 +4194,11 @@ def get_timeline_gaps(request: Request) -> dict:
             month_counts[(year, month)] = r[2]
 
         if not month_counts:
-            return {"months": [], "gaps": [], "coverage": {"first_date": None, "last_date": None, "total_months": 0, "covered_months": 0, "coverage_pct": 0}}
+            return {
+                "months": [],
+                "gaps": [],
+                "coverage": {"first_date": None, "last_date": None, "total_months": 0, "covered_months": 0, "coverage_pct": 0},
+            }
 
         first_ym = min(month_counts.keys())
         last_ym = max(month_counts.keys())
@@ -4118,27 +4311,18 @@ def get_quality_stats(request: Request) -> dict:
     """Return quality category breakdown."""
     cat = _open_catalog(request)
     try:
-        cur = cat.conn.execute(
-            "SELECT quality_category, COUNT(*) FROM files "
-            "WHERE quality_category IS NOT NULL GROUP BY quality_category"
-        )
+        cur = cat.conn.execute("SELECT quality_category, COUNT(*) FROM files WHERE quality_category IS NOT NULL GROUP BY quality_category")
         categories = {row[0]: row[1] for row in cur.fetchall()}
 
-        blurry = cat.conn.execute(
-            "SELECT COUNT(*) FROM files WHERE quality_blur IS NOT NULL AND quality_blur < 50"
-        ).fetchone()[0]
+        blurry = cat.conn.execute("SELECT COUNT(*) FROM files WHERE quality_blur IS NOT NULL AND quality_blur < 50").fetchone()[0]
 
-        dark = cat.conn.execute(
-            "SELECT COUNT(*) FROM files WHERE quality_brightness IS NOT NULL AND quality_brightness < 40"
-        ).fetchone()[0]
+        dark = cat.conn.execute("SELECT COUNT(*) FROM files WHERE quality_brightness IS NOT NULL AND quality_brightness < 40").fetchone()[0]
 
         overexposed = cat.conn.execute(
             "SELECT COUNT(*) FROM files WHERE quality_brightness IS NOT NULL AND quality_brightness > 220"
         ).fetchone()[0]
 
-        analyzed = cat.conn.execute(
-            "SELECT COUNT(*) FROM files WHERE quality_category IS NOT NULL"
-        ).fetchone()[0]
+        analyzed = cat.conn.execute("SELECT COUNT(*) FROM files WHERE quality_category IS NOT NULL").fetchone()[0]
 
         return {
             **categories,
@@ -4157,10 +4341,7 @@ def _sync_person_labels(cat: Catalog, person_id: int) -> None:
     file_ids = {f["file_id"] for f in faces}
     for fid in file_ids:
         all_faces = cat.get_faces_for_file(fid)
-        names = sorted({
-            f["person_name"] for f in all_faces
-            if f.get("person_name")
-        })
+        names = sorted({f["person_name"] for f in all_faces if f.get("person_name")})
         people_str = ";".join(names)
         cat.upsert_label(fid, people=people_str)
 
@@ -4223,6 +4404,7 @@ class ConsolidationStartRequest(BaseModel):
     def validate_bwlimit(cls, v: str | None) -> str | None:
         if v is not None:
             import re
+
             if not re.match(r"^\d+[KMGkmg]?$", v):
                 raise ValueError("bwlimit must be like '10M', '1G', '512K' or a number")
         return v
@@ -4255,6 +4437,7 @@ def _consolidation_progress_dict(p) -> dict:
 def consolidation_status(request: Request):
     """Get current consolidation status."""
     from ..consolidation import get_consolidation_status
+
     catalog_path = str(request.app.state.catalog_path)
     return get_consolidation_status(catalog_path)
 
@@ -4307,6 +4490,7 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
         status = get_consolidation_status(catalog_path_str)
         if status.get("has_active_job"):
             from fastapi import HTTPException
+
             raise HTTPException(
                 status_code=409,
                 detail="Consolidation job is already running. Pause it first or wait for completion.",
@@ -4352,6 +4536,7 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
 def consolidation_pause(request: Request):
     """Pause an active consolidation job."""
     from ..consolidation import pause_consolidation
+
     catalog_path = str(request.app.state.catalog_path)
     return pause_consolidation(catalog_path)
 
@@ -4383,5 +4568,6 @@ def consolidation_resume(request: Request, background_tasks: BackgroundTasks):
 def consolidation_failed(request: Request):
     """Get detailed report of all failed transfers for manual review."""
     from ..consolidation import get_failed_files_report
+
     catalog_path = str(request.app.state.catalog_path)
     return {"failed_files": get_failed_files_report(catalog_path)}

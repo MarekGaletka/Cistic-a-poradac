@@ -144,6 +144,7 @@ class TestPhaseTracking:
 class TestStaleReset:
     def test_reset_stale_in_progress(self, catalog):
         from godmode_media_library.checkpoint import mark_file
+
         job = create_job(catalog, "test_job")
         # Create a file in in_progress state
         mark_file(catalog, job.job_id, "hash1", "remote:path1", "stream", "in_progress")
@@ -154,6 +155,7 @@ class TestStaleReset:
 
     def test_no_reset_for_fresh_files(self, catalog):
         from godmode_media_library.checkpoint import mark_file
+
         job = create_job(catalog, "test_job")
         mark_file(catalog, job.job_id, "hash1", "remote:path1", "stream", "in_progress")
 
@@ -173,6 +175,7 @@ class TestDBIntegrity:
 class TestProgress:
     def test_get_job_progress(self, catalog):
         from godmode_media_library.checkpoint import mark_file
+
         job = create_job(catalog, "test_job")
         mark_file(catalog, job.job_id, "h1", "r:p1", "stream", "completed", bytes_transferred=100)
         mark_file(catalog, job.job_id, "h2", "r:p2", "stream", "completed", bytes_transferred=200)

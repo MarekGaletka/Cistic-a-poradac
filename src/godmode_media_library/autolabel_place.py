@@ -152,9 +152,7 @@ def _coords_from_exif(entry: dict[str, object]) -> tuple[float, float] | None:
 def extract_gps_with_exiftool(paths: list[Path], exiftool_bin: str = "exiftool") -> tuple[dict[Path, tuple[float, float]], str]:
     binary = shutil.which(exiftool_bin) if "/" not in exiftool_bin else exiftool_bin
     if not binary:
-        raise RuntimeError(
-            "ExifTool is not available. Install ExifTool to enable auto-place GPS extraction."
-        )
+        raise RuntimeError("ExifTool is not available. Install ExifTool to enable auto-place GPS extraction.")
 
     mapping: dict[Path, tuple[float, float]] = {}
 
@@ -235,13 +233,7 @@ def _save_cache(path: Path, cache: dict[str, str]) -> None:
 
 
 def _format_geocode_label(address: dict[str, str]) -> str:
-    locality = (
-        address.get("city")
-        or address.get("town")
-        or address.get("village")
-        or address.get("municipality")
-        or address.get("hamlet")
-    )
+    locality = address.get("city") or address.get("town") or address.get("village") or address.get("municipality") or address.get("hamlet")
     county = address.get("county")
     state = address.get("state")
     country = address.get("country")
@@ -269,9 +261,7 @@ def reverse_geocode_coords(
         from geopy.extra.rate_limiter import RateLimiter
         from geopy.geocoders import Nominatim
     except Exception as exc:  # pragma: no cover - optional dependency path
-        raise RuntimeError(
-            "Reverse geocoding requires geopy. Install with: pip install geopy"
-        ) from exc
+        raise RuntimeError("Reverse geocoding requires geopy. Install with: pip install geopy") from exc
 
     cache = _load_cache(cache_path)
     geolocator = Nominatim(user_agent=user_agent, timeout=10)
@@ -293,11 +283,7 @@ def reverse_geocode_coords(
             if location and isinstance(location.raw, dict):
                 address = location.raw.get("address")
                 if isinstance(address, dict):
-                    normalized = {
-                        str(k): str(v)
-                        for k, v in address.items()
-                        if isinstance(k, str) and isinstance(v, str)
-                    }
+                    normalized = {str(k): str(v) for k, v in address.items() if isinstance(k, str) and isinstance(v, str)}
                     label = _format_geocode_label(normalized)
         except (OSError, ValueError, GeocoderServiceError):
             label = ""

@@ -190,10 +190,12 @@ def test_execute_merge_exiftool_success():
     mock_proc.stdout = ""
     mock_proc.stderr = ""
 
-    with patch("godmode_media_library.metadata_merge.sha256_file", return_value="abc123"), \
-         patch("godmode_media_library.metadata_merge.shutil.which", return_value="/usr/bin/exiftool"), \
-         patch("subprocess.run", return_value=mock_proc) as mock_run, \
-         patch("pathlib.Path.exists", return_value=False):
+    with (
+        patch("godmode_media_library.metadata_merge.sha256_file", return_value="abc123"),
+        patch("godmode_media_library.metadata_merge.shutil.which", return_value="/usr/bin/exiftool"),
+        patch("subprocess.run", return_value=mock_proc) as mock_run,
+        patch("pathlib.Path.exists", return_value=False),
+    ):
         result = execute_merge(plan, dry_run=False)
 
     assert result.applied == 2
@@ -211,7 +213,9 @@ def test_execute_merge_no_exiftool():
         survivor_hash="abc123",
         actions=[MergeAction(tag="EXIF:GPS", value=50.0, source_path="/d.jpg", action_type="copy")],
     )
-    with patch("godmode_media_library.metadata_merge.sha256_file", return_value="abc123"), \
-         patch("godmode_media_library.metadata_merge.shutil.which", return_value=None):
+    with (
+        patch("godmode_media_library.metadata_merge.sha256_file", return_value="abc123"),
+        patch("godmode_media_library.metadata_merge.shutil.which", return_value=None),
+    ):
         result = execute_merge(plan, dry_run=False)
     assert result.error == "ExifTool not available"

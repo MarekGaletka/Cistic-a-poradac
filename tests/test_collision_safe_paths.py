@@ -9,61 +9,101 @@ from godmode_media_library.consolidation_types import StructurePattern
 class TestBuildDestPath:
     def test_year_month_structure(self):
         result = _build_dest_path(
-            "dest", "IMG_001.jpg", "abc123", "2024-06-15T10:30:00", StructurePattern.YEAR_MONTH,
+            "dest",
+            "IMG_001.jpg",
+            "abc123",
+            "2024-06-15T10:30:00",
+            StructurePattern.YEAR_MONTH,
         )
         assert result == "dest/2024/06/IMG_001.jpg"
 
     def test_year_only_structure(self):
         result = _build_dest_path(
-            "dest", "IMG_001.jpg", "abc123", "2024-06-15T10:30:00", StructurePattern.YEAR,
+            "dest",
+            "IMG_001.jpg",
+            "abc123",
+            "2024-06-15T10:30:00",
+            StructurePattern.YEAR,
         )
         assert result == "dest/2024/IMG_001.jpg"
 
     def test_flat_structure(self):
         result = _build_dest_path(
-            "dest", "IMG_001.jpg", "abc123", "2024-06-15T10:30:00", StructurePattern.FLAT,
+            "dest",
+            "IMG_001.jpg",
+            "abc123",
+            "2024-06-15T10:30:00",
+            StructurePattern.FLAT,
         )
         assert result == "dest/IMG_001.jpg"
 
     def test_no_mod_time_uses_unknown(self):
         result = _build_dest_path(
-            "dest", "IMG_001.jpg", "abc123", None, StructurePattern.YEAR_MONTH,
+            "dest",
+            "IMG_001.jpg",
+            "abc123",
+            None,
+            StructurePattern.YEAR_MONTH,
         )
         assert result == "dest/unknown/00/IMG_001.jpg"
 
     def test_empty_filename_uses_hash(self):
         result = _build_dest_path(
-            "dest", "", "abcdef123456789", None, StructurePattern.FLAT,
+            "dest",
+            "",
+            "abcdef123456789",
+            None,
+            StructurePattern.FLAT,
         )
         assert "unnamed_abcdef123456" in result
 
     def test_whitespace_filename_uses_hash(self):
         result = _build_dest_path(
-            "dest", "   ", "abcdef123456789", None, StructurePattern.FLAT,
+            "dest",
+            "   ",
+            "abcdef123456789",
+            None,
+            StructurePattern.FLAT,
         )
         assert "unnamed_" in result
 
     def test_empty_filename_no_hash(self):
         result = _build_dest_path(
-            "dest", "", "", None, StructurePattern.FLAT,
+            "dest",
+            "",
+            "",
+            None,
+            StructurePattern.FLAT,
         )
         assert "unnamed_file" in result
 
     def test_date_format_without_time(self):
         result = _build_dest_path(
-            "dest", "f.jpg", "h", "2023-01-05", StructurePattern.YEAR_MONTH,
+            "dest",
+            "f.jpg",
+            "h",
+            "2023-01-05",
+            StructurePattern.YEAR_MONTH,
         )
         assert result == "dest/2023/01/f.jpg"
 
     def test_date_format_with_space_separator(self):
         result = _build_dest_path(
-            "dest", "f.jpg", "h", "2023-12-25 08:00:00", StructurePattern.YEAR_MONTH,
+            "dest",
+            "f.jpg",
+            "h",
+            "2023-12-25 08:00:00",
+            StructurePattern.YEAR_MONTH,
         )
         assert result == "dest/2023/12/f.jpg"
 
     def test_invalid_date_falls_back_to_unknown(self):
         result = _build_dest_path(
-            "dest", "f.jpg", "h", "not-a-date", StructurePattern.YEAR_MONTH,
+            "dest",
+            "f.jpg",
+            "h",
+            "not-a-date",
+            StructurePattern.YEAR_MONTH,
         )
         assert "unknown/00" in result
 
@@ -87,7 +127,9 @@ class TestMakeCollisionSafe:
     def test_collision_extends_hash(self):
         existing = {"dest/IMG_001_abcdef.jpg"}
         result = _make_collision_safe(
-            "dest/IMG_001.jpg", "abcdef123456789abcdef123456789ab", existing_paths=existing,
+            "dest/IMG_001.jpg",
+            "abcdef123456789abcdef123456789ab",
+            existing_paths=existing,
         )
         # Should have a longer hash prefix since the 6-char one collided
         assert result not in existing

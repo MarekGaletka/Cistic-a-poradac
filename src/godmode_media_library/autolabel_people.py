@@ -65,8 +65,7 @@ def _load_face_libs() -> tuple[object, object, object, object]:
         from sklearn.cluster import DBSCAN  # type: ignore
     except Exception as exc:  # pragma: no cover - optional dependency path
         raise RuntimeError(
-            "Auto-people requires optional dependencies. Install with: "
-            "pip install face-recognition scikit-learn pillow numpy"
+            "Auto-people requires optional dependencies. Install with: pip install face-recognition scikit-learn pillow numpy"
         ) from exc
     return face_recognition, np, Image, DBSCAN
 

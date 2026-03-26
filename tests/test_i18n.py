@@ -10,12 +10,14 @@ from godmode_media_library.i18n import get_lang, set_lang, t
 def setup_function():
     """Reset language before each test."""
     import godmode_media_library.i18n as mod
+
     mod._current_lang = None
 
 
 def test_default_language_english():
     with patch.dict("os.environ", {}, clear=True):
         import godmode_media_library.i18n as mod
+
         mod._current_lang = None
         assert get_lang() == "en"
 
@@ -23,6 +25,7 @@ def test_default_language_english():
 def test_gml_lang_cs():
     with patch.dict("os.environ", {"GML_LANG": "cs"}):
         import godmode_media_library.i18n as mod
+
         mod._current_lang = None
         assert get_lang() == "cs"
 
@@ -30,6 +33,7 @@ def test_gml_lang_cs():
 def test_gml_lang_cz():
     with patch.dict("os.environ", {"GML_LANG": "cz"}):
         import godmode_media_library.i18n as mod
+
         mod._current_lang = None
         assert get_lang() == "cs"
 
@@ -37,6 +41,7 @@ def test_gml_lang_cz():
 def test_system_lang_cs():
     with patch.dict("os.environ", {"LANG": "cs_CZ.UTF-8"}, clear=True):
         import godmode_media_library.i18n as mod
+
         mod._current_lang = None
         assert get_lang() == "cs"
 

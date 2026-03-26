@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import sys
 from pathlib import Path
 
@@ -21,12 +22,19 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=True)
 
 
-def setup_logging(verbosity: int = 0, log_file: Path | None = None) -> None:
+def setup_logging(
+    verbosity: int = 0,
+    log_file: Path | None = None,
+    log_max_bytes: int = 10 * 1024 * 1024,
+    log_backup_count: int = 3,
+) -> None:
     """Configure logging for the application.
 
     Args:
         verbosity: 0=WARNING, 1=INFO, 2+=DEBUG
         log_file: Optional path for JSON-formatted file logging.
+        log_max_bytes: Max size per log file before rotation (default 10 MB).
+        log_backup_count: Number of rotated backup files to keep (default 3).
     """
     level = logging.WARNING
     if verbosity == 1:
@@ -49,7 +57,12 @@ def setup_logging(verbosity: int = 0, log_file: Path | None = None) -> None:
 
     if log_file is not None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=log_max_bytes,
+            backupCount=log_backup_count,
+            encoding="utf-8",
+        )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(_JsonFormatter())
         root_logger.addHandler(file_handler)
