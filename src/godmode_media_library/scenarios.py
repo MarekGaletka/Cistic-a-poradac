@@ -791,26 +791,28 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         from .cloud import RcloneTransferError, rclone_copyto, rclone_is_reachable, retry_with_backoff, wait_for_connectivity
         from .catalog import Catalog
         from . import checkpoint as ckpt
+        from .consolidation_types import (
+            ERROR_TRUNCATE_LEN, FileStatus, JobStatus, Phase, JOB_TYPE_CLOUD_STREAM,
+        )
+        from pathlib import PurePosixPath
+        import sqlite3 as _sqlite3
         dest_remote = config.get("dest_remote", "gws-backup")
         dest_path = config.get("dest_path", "GML-Consolidated")
         cat = Catalog(catalog_path)
         cat.open()
         try:
-            # Create or resume consolidation job
             resumable = ckpt.get_resumable_jobs(cat)
             job = None
             for j in resumable:
-                if j.job_type == "cloud_stream_reorganize":
+                if j.job_type == JOB_TYPE_CLOUD_STREAM:
                     job = j
                     break
             if not job:
-                job = ckpt.create_job(cat, "cloud_stream_reorganize", config=config)
-            ckpt.update_job(cat, job.job_id, status="running", current_step="stream")
-            # Reset any stale in-progress transfers from previous interrupted run
-            ckpt.reset_stale_in_progress(cat, job.job_id, "stream")
-            # Get unique files from catalog that need transfer
+                job = ckpt.create_job(cat, JOB_TYPE_CLOUD_STREAM, config=config)
+            ckpt.update_job(cat, job.job_id, status=JobStatus.RUNNING, current_step=Phase.STREAM)
+            ckpt.reset_stale_in_progress(cat, job.job_id, Phase.STREAM)
             conn = cat.conn
-            conn.row_factory = __import__("sqlite3").Row
+            conn.row_factory = _sqlite3.Row
             cur = conn.execute("""
                 SELECT sha256, path, source_remote, size
                 FROM files
@@ -819,37 +821,31 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                 ORDER BY date_original DESC NULLS LAST
             """)
             rows = cur.fetchall()
-            # Register pending files
             for row in rows:
                 file_hash = row["sha256"]
                 source = row["source_remote"] or "local"
-                ckpt.mark_file(cat, job.job_id, file_hash, f"{source}:{row['path']}", "stream", "pending")
-            # Stream files
+                ckpt.mark_file(cat, job.job_id, file_hash, f"{source}:{row['path']}", Phase.STREAM, FileStatus.PENDING)
             transferred = 0
             failed = 0
             skipped = 0
-            pending = ckpt.get_pending_files(cat, job.job_id, "stream", limit=1000)
+            pending = ckpt.get_pending_files(cat, job.job_id, Phase.STREAM, limit=1000)
             while pending:
-                # Check connectivity before batch
                 if not rclone_is_reachable(dest_remote, timeout=10):
                     logger.warning("Destination %s unreachable, waiting...", dest_remote)
                     if not wait_for_connectivity(dest_remote, timeout=300):
-                        ckpt.update_job(cat, job.job_id, status="paused", error="Destination unreachable")
+                        ckpt.update_job(cat, job.job_id, status=JobStatus.PAUSED, error="Destination unreachable")
                         break
                 for fs in pending:
                     src_parts = fs.source_location.split(":", 1)
                     src_remote = src_parts[0] if len(src_parts) > 1 else "local"
                     src_path = src_parts[1] if len(src_parts) > 1 else src_parts[0]
                     if src_remote == "local":
-                        # Local files — skip cloud streaming, they'll be handled by sync_to_disk
-                        ckpt.mark_file(cat, job.job_id, fs.file_hash, fs.source_location, "stream", "skipped")
+                        ckpt.mark_file(cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.SKIPPED)
                         skipped += 1
                         continue
-                    # Determine destination path (year/month structure)
-                    from pathlib import PurePosixPath
                     fname = PurePosixPath(src_path).name
                     dest_file_path = f"{dest_path}/{fname}"
-                    ckpt.mark_file(cat, job.job_id, fs.file_hash, fs.source_location, "stream", "in_progress")
+                    ckpt.mark_file(cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.IN_PROGRESS)
                     try:
                         result = retry_with_backoff(
                             rclone_copyto,
@@ -860,46 +856,46 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                         )
                         if result["success"]:
                             ckpt.mark_file(
-                                cat, job.job_id, fs.file_hash, fs.source_location, "stream", "completed",
+                                cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.COMPLETED,
                                 dest=f"{dest_remote}:{dest_file_path}",
                                 bytes_transferred=result["bytes"],
                             )
                             transferred += 1
                         else:
                             ckpt.mark_file(
-                                cat, job.job_id, fs.file_hash, fs.source_location, "stream", "failed",
+                                cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.FAILED,
                                 error=result.get("error", "unknown"),
                             )
                             failed += 1
                     except RcloneTransferError as exc:
                         ckpt.mark_file(
-                            cat, job.job_id, fs.file_hash, fs.source_location, "stream", "failed",
-                            error=str(exc)[:200],
+                            cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.FAILED,
+                            error=str(exc)[:ERROR_TRUNCATE_LEN],
                         )
                         failed += 1
                     except Exception as exc:
                         ckpt.mark_file(
-                            cat, job.job_id, fs.file_hash, fs.source_location, "stream", "failed",
-                            error=str(exc)[:200],
+                            cat, job.job_id, fs.file_hash, fs.source_location, Phase.STREAM, FileStatus.FAILED,
+                            error=str(exc)[:ERROR_TRUNCATE_LEN],
                         )
                         failed += 1
                     if progress_fn:
-                        progress = ckpt.get_job_progress(cat, job.job_id, "stream")
+                        progress = ckpt.get_job_progress(cat, job.job_id, Phase.STREAM)
                         progress_fn({
                             "phase": "streaming",
-                            "transferred": progress["completed"],
-                            "failed": progress["failed"],
-                            "pending": progress["pending"],
+                            "transferred": progress[FileStatus.COMPLETED],
+                            "failed": progress[FileStatus.FAILED],
+                            "pending": progress[FileStatus.PENDING],
                             "bytes": progress["bytes_transferred"],
                         })
-                pending = ckpt.get_pending_files(cat, job.job_id, "stream", limit=1000)
-            progress = ckpt.get_job_progress(cat, job.job_id, "stream")
-            if progress["pending"] == 0 and progress["in_progress"] == 0:
+                pending = ckpt.get_pending_files(cat, job.job_id, Phase.STREAM, limit=1000)
+            progress = ckpt.get_job_progress(cat, job.job_id, Phase.STREAM)
+            if progress[FileStatus.PENDING] == 0 and progress[FileStatus.IN_PROGRESS] == 0:
                 ckpt.complete_job(cat, job.job_id)
             return {
-                "transferred": progress["completed"],
-                "failed": progress["failed"],
-                "skipped": progress["skipped"],
+                "transferred": progress[FileStatus.COMPLETED],
+                "failed": progress[FileStatus.FAILED],
+                "skipped": progress[FileStatus.SKIPPED],
                 "bytes_transferred": progress["bytes_transferred"],
                 "job_id": job.job_id,
             }
