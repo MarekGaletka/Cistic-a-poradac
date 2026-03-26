@@ -885,13 +885,14 @@ def get_preview(request: Request, file_path: str, size: int = Query(default=120,
 
     # Security: block access to sensitive system directories
     full_str = str(full_path)
-    if any(full_str.startswith(prefix) for prefix in _BLOCKED_PREFIXES):
+    if any(full_str == prefix or full_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Also verify file is within one of the configured scan roots
     scan_roots = getattr(request.app.state, "scan_roots", None)
     if scan_roots:
-        if not any(full_str.startswith(str(r)) for r in scan_roots):
+        resolved_roots = [Path(r).resolve() for r in scan_roots]
+        if not any(full_path == root or str(full_path).startswith(str(root) + "/") for root in resolved_roots):
             raise HTTPException(status_code=403, detail="File outside allowed roots")
 
     if not full_path.exists():
@@ -1851,7 +1852,8 @@ def create_share(request: Request, body: CreateShareRequest) -> dict:
         )
         return share
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        logger.warning("Share creation failed: %s", e)
+        raise HTTPException(status_code=404, detail="File not found") from e
     finally:
         cat.close()
 
@@ -3772,7 +3774,8 @@ def cloud_browse(remote_name: str, path: str = Query("")):
         items = rclone_ls(remote_name, path)
         return {"remote": remote_name, "path": path, "items": items}
     except RuntimeError as e:
-        raise HTTPException(500, str(e)) from e
+        logger.error("Cloud listing failed for %s/%s: %s", remote_name, path, e)
+        raise HTTPException(500, "Cloud listing failed") from e
 
 
 @router.get("/cloud/remote/{remote_name}/about")
@@ -3894,7 +3897,8 @@ def cloud_mount_remote(body: CloudMountRequest):
         path, success = rclone_mount(body.remote, body.mount_point or None)
         return {"mount_path": path, "success": success}
     except RuntimeError as e:
-        return {"mount_path": "", "success": False, "message": str(e)}
+        logger.error("Cloud mount failed: %s", e)
+        return {"mount_path": "", "success": False, "message": "Mount operation failed"}
 
 
 @router.post("/cloud/unmount")

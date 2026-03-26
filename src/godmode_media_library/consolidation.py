@@ -251,6 +251,8 @@ def _make_collision_safe(
         if candidate in existing_paths:
             counter = 2
             while candidate in existing_paths:
+                if counter > 10_000:
+                    raise RuntimeError(f"Cannot allocate collision-safe path after 10000 attempts: {dest_path}")
                 candidate = str(p.parent / f"{stem}_{full_hash[:hash_len]}_{counter}{suffix}")
                 counter += 1
 

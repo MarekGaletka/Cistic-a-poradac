@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 
 from .actions import apply_plan, promote_from_manifest, restore_from_log, selective_restore
@@ -836,6 +837,7 @@ def cmd_delete_apply(args: argparse.Namespace) -> int:
         quarantine_root=quarantine_root,
         log_path=log_path,
         dry_run=args.dry_run,
+        yes=args.yes,
     )
 
     print(f"moved_primary={result.moved_primary}")
@@ -1219,6 +1221,7 @@ def build_parser() -> argparse.ArgumentParser:
     pda.add_argument("--quarantine-root", required=True, help="Where primary copies are moved")
     pda.add_argument("--log", default=None, help="Optional execution log path")
     pda.add_argument("--dry-run", action="store_true", help="Simulate only")
+    pda.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     pda.set_defaults(func=cmd_delete_apply)
 
     pexp = sub.add_parser("export", help="Export catalog data to CSV/TSV")
@@ -1241,16 +1244,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    from .i18n import set_lang
+    try:
+        from .i18n import set_lang
 
-    parser = build_parser()
-    args = parser.parse_args()
-    if args.lang:
-        set_lang(args.lang)
-    log_file = Path(args.log_file) if args.log_file else None
-    setup_logging(verbosity=args.verbose, log_file=log_file)
-    logger.debug("command=%s args=%s", args.command, vars(args))
-    return int(args.func(args))
+        parser = build_parser()
+        args = parser.parse_args()
+        if args.lang:
+            set_lang(args.lang)
+        log_file = Path(args.log_file) if args.log_file else None
+        setup_logging(verbosity=args.verbose, log_file=log_file)
+        logger.debug("command=%s args=%s", args.command, vars(args))
+        return int(args.func(args))
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

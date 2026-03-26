@@ -382,6 +382,7 @@ def test_cmd_delete_apply_dry_run(tmp_path, capsys):
         quarantine_root=str(tmp_path / "quarantine"),
         log=None,
         dry_run=True,
+        yes=True,
     )
     ret = cmd_delete_apply(args)
     assert ret == 0

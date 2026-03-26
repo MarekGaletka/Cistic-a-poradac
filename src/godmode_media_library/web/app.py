@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import mimetypes
 import os
@@ -81,10 +82,6 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         # Allow static files, docs, and openapi schema without auth
         if not path.startswith("/api/"):
             return await call_next(request)
-        # Allow WebSocket upgrade (auth checked in WS handler if needed)
-        if request.headers.get("upgrade", "").lower() == "websocket":
-            return await call_next(request)
-
         # Check Bearer token or X-API-Token header
         auth_header = request.headers.get("authorization", "")
         token_header = request.headers.get("x-api-token", "")
@@ -98,7 +95,13 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         elif token_param:
             provided = token_param
 
-        if provided != api_token:
+        if not hmac.compare_digest(provided, api_token):
+            # For WebSocket upgrades, reject with 403 (WS doesn't support 401)
+            if request.headers.get("upgrade", "").lower() == "websocket":
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Invalid or missing API token"},
+                )
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or missing API token"},

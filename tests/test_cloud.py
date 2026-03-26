@@ -22,24 +22,41 @@ from godmode_media_library.cloud import (
 )
 
 
+def _reset_rclone_cache():
+    """Reset the global _rclone_available cache so each test gets a fresh check."""
+    import godmode_media_library.cloud as _cloud_mod
+    _cloud_mod._rclone_available = None
+
+
 def test_check_rclone_not_installed():
-    with patch("godmode_media_library.cloud.shutil.which", return_value=None):
+    _reset_rclone_cache()
+    with patch("godmode_media_library.cloud._rclone_bin", return_value="/nonexistent/rclone"), \
+         patch("godmode_media_library.cloud.shutil.which", return_value=None):
         assert check_rclone() is False
+    _reset_rclone_cache()
 
 
 def test_check_rclone_installed():
-    with patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"):
+    _reset_rclone_cache()
+    with patch("godmode_media_library.cloud._rclone_bin", return_value="/usr/bin/rclone"), \
+         patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"):
         assert check_rclone() is True
+    _reset_rclone_cache()
 
 
 def test_list_remotes_no_rclone():
-    with patch("godmode_media_library.cloud.shutil.which", return_value=None):
+    _reset_rclone_cache()
+    with patch("godmode_media_library.cloud._rclone_bin", return_value="/nonexistent/rclone"), \
+         patch("godmode_media_library.cloud.shutil.which", return_value=None):
         assert list_remotes() == []
+    _reset_rclone_cache()
 
 
 def test_list_remotes_parses_output():
+    _reset_rclone_cache()
     mock_output = "gdrive: drive\nmega:   mega\npcloud: pcloud\n"
-    with patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"), \
+    with patch("godmode_media_library.cloud._rclone_bin", return_value="/usr/bin/rclone"), \
+         patch("godmode_media_library.cloud.shutil.which", return_value="/usr/bin/rclone"), \
          patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = mock_output
@@ -52,6 +69,7 @@ def test_list_remotes_parses_output():
         assert remotes[1].provider_label == "MEGA"
         assert remotes[2].name == "pcloud"
         assert remotes[2].provider_label == "pCloud"
+    _reset_rclone_cache()
 
 
 def test_rclone_remote_autodetect_provider():

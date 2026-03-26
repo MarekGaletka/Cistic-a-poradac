@@ -55,9 +55,28 @@ def _quarantine_path(quarantine_root: Path, original_path: Path) -> Path:
         rest = rest.lstrip("\\/")
     else:
         rest = rest.lstrip("/")
+
+    # Reject path traversal components to prevent escaping quarantine_root
+    rest_parts = Path(rest).parts
+    if ".." in rest_parts:
+        raise ValueError(
+            f"Path traversal detected: refusing to quarantine path with '..' components: {original_path}"
+        )
+
     if drive:
-        return quarantine_root / "_drive_" / drive / rest
-    return quarantine_root / rest
+        result = quarantine_root / "_drive_" / drive / rest
+    else:
+        result = quarantine_root / rest
+
+    # Final safety check: resolved destination must be under quarantine_root
+    resolved = result.resolve()
+    resolved_root = quarantine_root.resolve()
+    if not (resolved == resolved_root or str(resolved).startswith(str(resolved_root) + "/")):
+        raise ValueError(
+            f"Path traversal detected: quarantine destination {resolved} escapes root {resolved_root}"
+        )
+
+    return result
 
 
 def _allocate_dest(dest: Path) -> Path:
@@ -275,12 +294,25 @@ def create_delete_plan(
     )
 
 
+def _format_bytes(n: int) -> str:
+    """Format byte count for human-readable display."""
+    if n < 1024:
+        return f"{n} B"
+    elif n < 1024 ** 2:
+        return f"{n / 1024:.1f} KiB"
+    elif n < 1024 ** 3:
+        return f"{n / 1024 ** 2:.1f} MiB"
+    else:
+        return f"{n / 1024 ** 3:.2f} GiB"
+
+
 def apply_delete_plan(
     *,
     plan_path: Path,
     quarantine_root: Path,
     log_path: Path,
     dry_run: bool = False,
+    yes: bool = False,
 ) -> DeleteApplyResult:
     rows = read_tsv_dict(plan_path)
     ensure_dir(log_path.parent)
@@ -291,6 +323,32 @@ def apply_delete_plan(
         "manual_review_external_links": 2,
     }
     rows_sorted = sorted(rows, key=lambda r: (order.get(r.get("action", ""), 9), r.get("inode_id", ""), r.get("path", "")))
+
+    # Confirmation prompt unless --yes or dry_run
+    if not dry_run and not yes:
+        move_count = sum(1 for r in rows_sorted if r.get("action") == "move_primary")
+        unlink_count = sum(1 for r in rows_sorted if r.get("action") == "unlink_alias")
+        review_count = sum(1 for r in rows_sorted if r.get("action") == "manual_review_external_links")
+        total_bytes = sum(int(r.get("unit_size", 0)) for r in rows_sorted if r.get("action") == "move_primary")
+        print(f"Delete plan: {plan_path}")
+        print(f"  Quarantine to: {quarantine_root}")
+        print(f"  Files to move (primary):  {move_count}")
+        print(f"  Hardlink aliases to unlink: {unlink_count}")
+        print(f"  Manual review (skipped):  {review_count}")
+        print(f"  Estimated data moved: {_format_bytes(total_bytes)}")
+        try:
+            answer = input("\nProceed with destructive deletion? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return DeleteApplyResult(
+                moved_primary=0,
+                unlinked_aliases=0,
+                skipped=len(rows_sorted),
+                manual_review=0,
+                log_path=log_path,
+            )
 
     moved_primary = 0
     unlinked_aliases = 0

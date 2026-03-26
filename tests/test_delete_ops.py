@@ -90,6 +90,7 @@ def test_apply_delete_plan_moves_primary(tmp_path: Path):
         quarantine_root=quarantine,
         log_path=log_path,
         dry_run=False,
+        yes=True,
     )
     assert result.moved_primary == 1
     assert not f1.exists()
@@ -123,6 +124,7 @@ def test_apply_delete_plan_dry_run(tmp_path: Path):
         quarantine_root=quarantine,
         log_path=log_path,
         dry_run=True,
+        yes=True,
     )
     assert result.moved_primary == 1
     # File should still exist in dry run
@@ -163,6 +165,7 @@ def test_apply_delete_plan_unlink_alias(tmp_path: Path):
         quarantine_root=quarantine,
         log_path=log_path,
         dry_run=False,
+        yes=True,
     )
     assert result.unlinked_aliases == 1
     assert not f2.exists()
@@ -186,6 +189,7 @@ def test_apply_delete_plan_manual_review(tmp_path: Path):
         quarantine_root=tmp_path / "quarantine",
         log_path=log_path,
         dry_run=False,
+        yes=True,
     )
     assert result.manual_review == 1
     assert result.moved_primary == 0
@@ -208,6 +212,7 @@ def test_apply_delete_plan_skip_missing(tmp_path: Path):
         quarantine_root=tmp_path / "quarantine",
         log_path=log_path,
         dry_run=False,
+        yes=True,
     )
     assert result.skipped == 1
     assert result.moved_primary == 0

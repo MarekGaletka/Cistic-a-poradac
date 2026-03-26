@@ -313,238 +313,295 @@ class Catalog:
                     f"Another process holds an exclusive lock on {self._db_path}. "
                     "Wait for it to finish or remove the lock file."
                 ) from None
-        self._conn = sqlite3.connect(str(self._db_path))
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.executescript(_SCHEMA_SQL)
-        # Schema version management and migration
-        cur = self._conn.execute("SELECT value FROM meta WHERE key='schema_version'")
-        row = cur.fetchone()
-        if row is None:
-            self._conn.execute(
-                "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
-                (str(SCHEMA_VERSION),),
-            )
-            self._conn.commit()
-        else:
-            current_version = int(row[0])
-            if current_version < SCHEMA_VERSION:
-                self._migrate(current_version)
-                self._conn.execute(
-                    "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.executescript(_SCHEMA_SQL)
+            # Schema version management and migration
+            cur = conn.execute("SELECT value FROM meta WHERE key='schema_version'")
+            row = cur.fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
                 )
-                self._conn.commit()
+                conn.commit()
+            else:
+                current_version = int(row[0])
+                if current_version < SCHEMA_VERSION:
+                    self._conn = conn  # _migrate needs self._conn
+                    self._migrate(current_version)
+                    conn.execute(
+                        "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                        (str(SCHEMA_VERSION),),
+                    )
+                    conn.commit()
+        except Exception:
+            conn.close()
+            self._conn = None
+            raise
+        self._conn = conn
 
     def _migrate(self, from_version: int) -> None:
-        """Apply schema migrations from from_version to SCHEMA_VERSION."""
+        """Apply schema migrations from from_version to SCHEMA_VERSION.
+
+        Each migration step runs inside a SAVEPOINT so that a failure
+        mid-step rolls back only that step's partial changes, leaving
+        the database in the last successfully-migrated state.
+        """
         assert self._conn is not None
         if from_version < 2:
-            logger.info("Migrating catalog schema v%d → v2: adding media metadata columns", from_version)
-            media_columns = [
-                ("duration_seconds", "REAL"),
-                ("width", "INTEGER"),
-                ("height", "INTEGER"),
-                ("video_codec", "TEXT"),
-                ("audio_codec", "TEXT"),
-                ("bitrate", "INTEGER"),
-                ("phash", "TEXT"),
-                ("date_original", "TEXT"),
-                ("camera_make", "TEXT"),
-                ("camera_model", "TEXT"),
-                ("gps_latitude", "REAL"),
-                ("gps_longitude", "REAL"),
-            ]
-            for col_name, col_type in media_columns:
-                with contextlib.suppress(Exception):
-                    self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash)")
-            self._conn.commit()
+            logger.info("Migrating catalog schema v%d -> v2: adding media metadata columns", from_version)
+            self._conn.execute("SAVEPOINT migrate_v2")
+            try:
+                media_columns = [
+                    ("duration_seconds", "REAL"),
+                    ("width", "INTEGER"),
+                    ("height", "INTEGER"),
+                    ("video_codec", "TEXT"),
+                    ("audio_codec", "TEXT"),
+                    ("bitrate", "INTEGER"),
+                    ("phash", "TEXT"),
+                    ("date_original", "TEXT"),
+                    ("camera_make", "TEXT"),
+                    ("camera_model", "TEXT"),
+                    ("gps_latitude", "REAL"),
+                    ("gps_longitude", "REAL"),
+                ]
+                for col_name, col_type in media_columns:
+                    with contextlib.suppress(Exception):
+                        self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash)")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v2")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v2")
+                raise
         if from_version < 3:
-            logger.info("Migrating catalog schema v%d → v3: adding metadata richness and file_metadata table", from_version)
-            with contextlib.suppress(Exception):
-                self._conn.execute("ALTER TABLE files ADD COLUMN metadata_richness REAL")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_richness ON files(metadata_richness)")
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS file_metadata (
-                    file_id      INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-                    raw_json     TEXT    NOT NULL,
-                    extracted_at TEXT    NOT NULL
-                )
-            """)
-            self._conn.commit()
+            logger.info("Migrating catalog schema v%d -> v3: adding metadata richness and file_metadata table", from_version)
+            self._conn.execute("SAVEPOINT migrate_v3")
+            try:
+                with contextlib.suppress(Exception):
+                    self._conn.execute("ALTER TABLE files ADD COLUMN metadata_richness REAL")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_richness ON files(metadata_richness)")
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS file_metadata (
+                        file_id      INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                        raw_json     TEXT    NOT NULL,
+                        extracted_at TEXT    NOT NULL
+                    )
+                """)
+                self._conn.execute("RELEASE SAVEPOINT migrate_v3")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v3")
+                raise
         if from_version < 4:
-            logger.info("Migrating catalog schema v%d → v4: adding tags and file_tags tables", from_version)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS tags (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    color TEXT NOT NULL DEFAULT '#58a6ff'
-                )
-            """)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS file_tags (
-                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-                    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-                    PRIMARY KEY (file_id, tag_id)
-                )
-            """)
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id)")
-            self._conn.commit()
+            logger.info("Migrating catalog schema v%d -> v4: adding tags and file_tags tables", from_version)
+            self._conn.execute("SAVEPOINT migrate_v4")
+            try:
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS tags (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE,
+                        color TEXT NOT NULL DEFAULT '#58a6ff'
+                    )
+                """)
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS file_tags (
+                        file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                        tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                        PRIMARY KEY (file_id, tag_id)
+                    )
+                """)
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id)")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v4")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v4")
+                raise
         if from_version < 5:
             logger.info("Migrating catalog schema v%d -> v5: adding file_notes and file_ratings tables", from_version)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS file_notes (
-                    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-                    note TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-            """)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS file_ratings (
-                    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-                    rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5)
-                )
-            """)
-            self._conn.commit()
+            self._conn.execute("SAVEPOINT migrate_v5")
+            try:
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS file_notes (
+                        file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                        note TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS file_ratings (
+                        file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                        rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5)
+                    )
+                """)
+                self._conn.execute("RELEASE SAVEPOINT migrate_v5")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v5")
+                raise
         if from_version < 6:
             logger.info("Migrating catalog schema v%d -> v6: adding persons, faces, face_privacy tables", from_version)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS persons (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name        TEXT    NOT NULL DEFAULT '',
-                    sample_face_id INTEGER,
-                    face_count  INTEGER NOT NULL DEFAULT 0,
-                    created_at  TEXT    NOT NULL,
-                    updated_at  TEXT    NOT NULL
-                )
-            """)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS faces (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-                    face_index  INTEGER NOT NULL DEFAULT 0,
-                    person_id   INTEGER REFERENCES persons(id) ON DELETE SET NULL,
-                    bbox_top    INTEGER NOT NULL,
-                    bbox_right  INTEGER NOT NULL,
-                    bbox_bottom INTEGER NOT NULL,
-                    bbox_left   INTEGER NOT NULL,
-                    encoding    BLOB,
-                    cluster_id  INTEGER DEFAULT -1,
-                    confidence  REAL,
-                    created_at  TEXT    NOT NULL
-                )
-            """)
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_file ON faces(file_id)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id)")
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS face_privacy (
-                    id    INTEGER PRIMARY KEY AUTOINCREMENT,
-                    key   TEXT NOT NULL UNIQUE,
-                    value TEXT NOT NULL
-                )
-            """)
-            self._conn.commit()
+            self._conn.execute("SAVEPOINT migrate_v6")
+            try:
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS persons (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name        TEXT    NOT NULL DEFAULT '',
+                        sample_face_id INTEGER,
+                        face_count  INTEGER NOT NULL DEFAULT 0,
+                        created_at  TEXT    NOT NULL,
+                        updated_at  TEXT    NOT NULL
+                    )
+                """)
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS faces (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                        face_index  INTEGER NOT NULL DEFAULT 0,
+                        person_id   INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+                        bbox_top    INTEGER NOT NULL,
+                        bbox_right  INTEGER NOT NULL,
+                        bbox_bottom INTEGER NOT NULL,
+                        bbox_left   INTEGER NOT NULL,
+                        encoding    BLOB,
+                        cluster_id  INTEGER DEFAULT -1,
+                        confidence  REAL,
+                        created_at  TEXT    NOT NULL
+                    )
+                """)
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_file ON faces(file_id)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id)")
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS face_privacy (
+                        id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                        key   TEXT NOT NULL UNIQUE,
+                        value TEXT NOT NULL
+                    )
+                """)
+                self._conn.execute("RELEASE SAVEPOINT migrate_v6")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v6")
+                raise
         if from_version < 7:
             logger.info("Migrating catalog schema v%d -> v7: adding shares table", from_version)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS shares (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-                    token TEXT NOT NULL UNIQUE,
-                    label TEXT NOT NULL DEFAULT '',
-                    password_hash TEXT,
-                    expires_at TEXT,
-                    max_downloads INTEGER,
-                    download_count INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL
-                )
-            """)
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)")
-            self._conn.commit()
+            self._conn.execute("SAVEPOINT migrate_v7")
+            try:
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS shares (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                        token TEXT NOT NULL UNIQUE,
+                        label TEXT NOT NULL DEFAULT '',
+                        password_hash TEXT,
+                        expires_at TEXT,
+                        max_downloads INTEGER,
+                        download_count INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v7")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v7")
+                raise
         if from_version < 8:
             logger.info("Migrating catalog schema v%d -> v8: adding quality scoring columns", from_version)
-            for col_name, col_type in [("quality_blur", "REAL"), ("quality_brightness", "REAL"), ("quality_category", "TEXT")]:
-                with contextlib.suppress(Exception):
-                    self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
-            self._conn.commit()
+            self._conn.execute("SAVEPOINT migrate_v8")
+            try:
+                for col_name, col_type in [("quality_blur", "REAL"), ("quality_brightness", "REAL"), ("quality_category", "TEXT")]:
+                    with contextlib.suppress(Exception):
+                        self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
+                self._conn.execute("RELEASE SAVEPOINT migrate_v8")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v8")
+                raise
         if from_version < 9:
             logger.info("Migrating catalog schema v%d -> v9: adding distributed backup tables", from_version)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS backup_targets (
-                    remote_name TEXT PRIMARY KEY,
-                    remote_path TEXT DEFAULT 'GML-Backup',
-                    enabled INTEGER DEFAULT 1,
-                    priority INTEGER DEFAULT 0,
-                    total_bytes INTEGER DEFAULT 0,
-                    used_bytes INTEGER DEFAULT 0,
-                    free_bytes INTEGER DEFAULT 0,
-                    last_probed_at TEXT
-                )
-            """)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS backup_manifest (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_id INTEGER NOT NULL,
-                    path TEXT NOT NULL,
-                    sha256 TEXT,
-                    size INTEGER NOT NULL,
-                    remote_name TEXT NOT NULL,
-                    remote_path TEXT NOT NULL,
-                    backed_up_at TEXT NOT NULL,
-                    verified INTEGER DEFAULT 0,
-                    verified_at TEXT,
-                    UNIQUE(file_id, remote_name)
-                )
-            """)
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_file ON backup_manifest(file_id)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256)")
-            self._conn.commit()
+            self._conn.execute("SAVEPOINT migrate_v9")
+            try:
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS backup_targets (
+                        remote_name TEXT PRIMARY KEY,
+                        remote_path TEXT DEFAULT 'GML-Backup',
+                        enabled INTEGER DEFAULT 1,
+                        priority INTEGER DEFAULT 0,
+                        total_bytes INTEGER DEFAULT 0,
+                        used_bytes INTEGER DEFAULT 0,
+                        free_bytes INTEGER DEFAULT 0,
+                        last_probed_at TEXT
+                    )
+                """)
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS backup_manifest (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_id INTEGER NOT NULL,
+                        path TEXT NOT NULL,
+                        sha256 TEXT,
+                        size INTEGER NOT NULL,
+                        remote_name TEXT NOT NULL,
+                        remote_path TEXT NOT NULL,
+                        backed_up_at TEXT NOT NULL,
+                        verified INTEGER DEFAULT 0,
+                        verified_at TEXT,
+                        UNIQUE(file_id, remote_name)
+                    )
+                """)
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_file ON backup_manifest(file_id)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256)")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v9")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v9")
+                raise
         if from_version < 10:
             logger.info("Migrating catalog schema v%d -> v10: adding source_remote column + consolidation tables", from_version)
-            # Add source_remote to files table (tracks which remote/source a file came from)
-            with contextlib.suppress(Exception):
-                self._conn.execute("ALTER TABLE files ADD COLUMN source_remote TEXT")
-            # Consolidation tables (managed by checkpoint.py, created here for schema completeness)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS consolidation_jobs (
-                    job_id TEXT PRIMARY KEY,
-                    scenario_id TEXT,
-                    job_type TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'created',
-                    current_step TEXT DEFAULT '',
-                    total_steps INTEGER DEFAULT 0,
-                    config_json TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    completed_at TEXT,
-                    error TEXT
-                )
-            """)
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS consolidation_file_state (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT NOT NULL REFERENCES consolidation_jobs(job_id),
-                    file_hash TEXT NOT NULL,
-                    source_location TEXT NOT NULL,
-                    step_name TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    dest_location TEXT,
-                    dest_verified INTEGER DEFAULT 0,
-                    bytes_transferred INTEGER DEFAULT 0,
-                    attempt_count INTEGER DEFAULT 0,
-                    last_error TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(job_id, file_hash, step_name)
-                )
-            """)
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_job_step ON consolidation_file_state(job_id, step_name)")
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status)")
-            self._conn.commit()
+            self._conn.execute("SAVEPOINT migrate_v10")
+            try:
+                # Add source_remote to files table (tracks which remote/source a file came from)
+                with contextlib.suppress(Exception):
+                    self._conn.execute("ALTER TABLE files ADD COLUMN source_remote TEXT")
+                # Consolidation tables (managed by checkpoint.py, created here for schema completeness)
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS consolidation_jobs (
+                        job_id TEXT PRIMARY KEY,
+                        scenario_id TEXT,
+                        job_type TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'created',
+                        current_step TEXT DEFAULT '',
+                        total_steps INTEGER DEFAULT 0,
+                        config_json TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        completed_at TEXT,
+                        error TEXT
+                    )
+                """)
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS consolidation_file_state (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_id TEXT NOT NULL REFERENCES consolidation_jobs(job_id),
+                        file_hash TEXT NOT NULL,
+                        source_location TEXT NOT NULL,
+                        step_name TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        dest_location TEXT,
+                        dest_verified INTEGER DEFAULT 0,
+                        bytes_transferred INTEGER DEFAULT 0,
+                        attempt_count INTEGER DEFAULT 0,
+                        last_error TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(job_id, file_hash, step_name)
+                    )
+                """)
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_job_step ON consolidation_file_state(job_id, step_name)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status)")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v10")
+            except Exception:
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v10")
+                raise
 
     def close(self) -> None:
         if self._conn:
