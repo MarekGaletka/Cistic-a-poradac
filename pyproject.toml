@@ -89,4 +89,5 @@ markers = [
   "requires_exiftool: tests that require ExifTool binary",
   "requires_ffprobe: tests that require ffprobe binary",
   "requires_ffmpeg: tests that require ffmpeg binary",
+  "slow: slow performance tests (run with pytest -m slow)",
 ]

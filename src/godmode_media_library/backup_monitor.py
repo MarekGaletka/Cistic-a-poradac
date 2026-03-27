@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
 
 from .cloud import _rclone_bin
 
@@ -174,7 +172,7 @@ def run_health_checks(remote_names: list[str] | None = None) -> list[HealthCheck
         check = check_remote_health(name)
         checks.append(check)
 
-        check_dict = asdict(check)
+        asdict(check)
 
         if not check.accessible:
             # Increment failure counter
@@ -307,9 +305,38 @@ def acknowledge_all_alerts() -> int:
 # Notifications
 # ---------------------------------------------------------------------------
 
+# Deduplication: track recent notifications to avoid repeating the same alert
+# within _DEDUP_WINDOW_SECONDS.  Stores (message, timestamp) tuples.
+_DEDUP_WINDOW_SECONDS = 3600  # 1 hour
+_DEDUP_MAX_ENTRIES = 50
+_recent_notifications: list[tuple[str, float]] = []
+
+
+def _is_duplicate_notification(message: str) -> bool:
+    """Return True if the same message was sent within the dedup window."""
+    now = time.monotonic()
+    # Prune old entries
+    cutoff = now - _DEDUP_WINDOW_SECONDS
+    _recent_notifications[:] = [
+        (msg, ts) for msg, ts in _recent_notifications if ts >= cutoff
+    ]
+    for msg, _ts in _recent_notifications:
+        if msg == message:
+            return True
+    # Record this message
+    _recent_notifications.append((message, now))
+    # Cap size
+    if len(_recent_notifications) > _DEDUP_MAX_ENTRIES:
+        _recent_notifications[:] = _recent_notifications[-_DEDUP_MAX_ENTRIES:]
+    return False
+
 
 def _send_notification(title: str, message: str, severity: str = "info") -> None:
-    """Send a macOS desktop notification."""
+    """Send a macOS desktop notification (deduplicated within 1 hour)."""
+    if _is_duplicate_notification(message):
+        logger.debug("Suppressed duplicate notification: %s", message)
+        return
+
     import platform
 
     if platform.system() != "Darwin":
@@ -318,8 +345,11 @@ def _send_notification(title: str, message: str, severity: str = "info") -> None
 
     try:
         sound = "Basso" if severity == "critical" else "Purr" if severity == "warning" else "default"
+        # Escape quotes and backslashes to prevent AppleScript injection
+        safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+        safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
         script = f'''
-        display notification "{message}" with title "{title}" sound name "{sound}"
+        display notification "{safe_message}" with title "{safe_title}" sound name "{sound}"
         '''
         subprocess.run(
             ["osascript", "-e", script],

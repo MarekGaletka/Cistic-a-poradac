@@ -7,10 +7,9 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ def _sha256_file(path: str) -> str | None:
                     break
                 h.update(chunk)
         return h.hexdigest()
-    except (OSError, IOError):
+    except OSError:
         return None
 
 

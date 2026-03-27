@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +64,7 @@ class MediaMeta:
     frame_rate: float | None = None
 
 
-def probe_file(path: Path, *, ffprobe_bin: str | None = None, timeout: float = 30.0) -> MediaMeta | None:
+def probe_file(path: Path, *, ffprobe_bin: str | None = None, timeout: float = 120.0) -> MediaMeta | None:
     """Run ffprobe on a file and return parsed MediaMeta, or None on failure.
 
     Args:

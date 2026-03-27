@@ -4,6 +4,8 @@ import { t } from "../i18n.js";
 import { $, showToast, formatBytes } from "../utils.js";
 import { api, apiPost, apiPut } from "../api.js";
 
+function _esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
 let _container = null;
 let _plan = null;
 let _manifestPage = 1;
@@ -16,52 +18,52 @@ export async function render(container) {
   container.innerHTML = `
     <div class="backup-page">
       <div class="backup-header">
-        <h2>\u2601\uFE0F Distribuovan\u00e1 z\u00e1loha</h2>
-        <p class="backup-subtitle">Rozlo\u017ete z\u00e1lohu m\u00e9di\u00ed p\u0159es v\u00edce cloud \u00falo\u017ei\u0161\u0165 pro maxim\u00e1ln\u00ed bezpe\u010dnost</p>
+        <h2>\u2601\uFE0F ${t("backup.title")}</h2>
+        <p class="backup-subtitle">${t("backup.subtitle")}</p>
       </div>
 
       <div id="backup-stats" class="backup-stats-bar">
-        <div class="loading-sm">Na\u010d\u00edt\u00e1n\u00ed...</div>
+        <div class="loading-sm">${t("general.loading")}</div>
       </div>
 
       <div class="backup-sections">
         <section class="backup-section">
-          <h3>\uD83D\uDCE1 C\u00edlov\u00e1 \u00falo\u017ei\u0161t\u011b</h3>
+          <h3>\uD83D\uDCE1 ${t("backup.targets")}</h3>
           <div class="backup-actions-row">
-            <button id="btn-probe" class="btn btn-sm">\uD83D\uDD0D Prozkoumat kapacity</button>
+            <button id="btn-probe" class="btn btn-sm">\uD83D\uDD0D ${t("backup.probe")}</button>
           </div>
           <div id="backup-targets" class="backup-targets-grid">
-            <div class="loading-sm">Na\u010d\u00edt\u00e1n\u00ed...</div>
+            <div class="loading-sm">${t("general.loading")}</div>
           </div>
         </section>
 
         <section class="backup-section">
-          <h3>\uD83D\uDCCB Pl\u00e1n z\u00e1lohy</h3>
+          <h3>\uD83D\uDCCB ${t("backup.plan")}</h3>
           <div class="backup-actions-row">
-            <button id="btn-plan" class="btn btn-primary btn-sm">\uD83D\uDCCB Vytvo\u0159it pl\u00e1n</button>
-            <button id="btn-execute" class="btn btn-accent btn-sm" disabled>\uD83D\uDE80 Spustit z\u00e1lohu</button>
-            <button id="btn-execute-dry" class="btn btn-sm" disabled>\uD83E\uDDEA Simulace</button>
+            <button id="btn-plan" class="btn btn-primary btn-sm">\uD83D\uDCCB ${t("backup.plan")}</button>
+            <button id="btn-execute" class="btn btn-accent btn-sm" disabled>\uD83D\uDE80 ${t("backup.execute")}</button>
+            <button id="btn-execute-dry" class="btn btn-sm" disabled>\uD83E\uDDEA ${t("backup.simulate")}</button>
           </div>
           <div id="backup-plan" class="backup-plan-summary"></div>
         </section>
 
         <section class="backup-section">
-          <h3>\uD83D\uDEE1\uFE0F Monitoring & Ov\u011b\u0159en\u00ed</h3>
+          <h3>\uD83D\uDEE1\uFE0F ${t("backup.monitoring_title")}</h3>
           <div id="backup-monitor-status"></div>
           <div class="backup-actions-row">
-            <button id="btn-health" class="btn btn-sm">\uD83E\uDE7A Kontrola zdrav\u00ed</button>
-            <button id="btn-verify" class="btn btn-sm">\uD83D\uDD12 Ov\u011b\u0159it z\u00e1lohy</button>
-            <button id="btn-test-notif" class="btn btn-sm">\uD83D\uDD14 Test notifikace</button>
-            <button id="btn-ack-alerts" class="btn btn-sm" style="display:none">\u2705 Potvrdit v\u0161echna upozorn\u011bn\u00ed</button>
+            <button id="btn-health" class="btn btn-sm">\uD83E\uDE7A ${t("backup.health_check")}</button>
+            <button id="btn-verify" class="btn btn-sm">\uD83D\uDD12 ${t("backup.verify")}</button>
+            <button id="btn-test-notif" class="btn btn-sm">\uD83D\uDD14 ${t("backup.test_notification")}</button>
+            <button id="btn-ack-alerts" class="btn btn-sm" style="display:none">\u2705 ${t("backup.acknowledge_all")}</button>
           </div>
           <div id="backup-alerts"></div>
           <div id="backup-verify-result"></div>
         </section>
 
         <section class="backup-section">
-          <h3>\uD83D\uDCD2 Manifest z\u00e1loh</h3>
+          <h3>\uD83D\uDCD2 ${t("backup.manifest")}</h3>
           <div class="backup-manifest-search">
-            <input type="text" id="manifest-search" class="input-sm" placeholder="Hledat soubor..." />
+            <input type="text" id="manifest-search" class="input-sm" placeholder="${t("backup.search_placeholder")}" />
           </div>
           <div id="backup-manifest" class="backup-manifest-table"></div>
         </section>
@@ -116,27 +118,27 @@ async function loadStats() {
       <div class="backup-metric-cards">
         <div class="backup-metric-card" style="border-left: 3px solid ${coverageColor}">
           <div class="backup-metric-value" style="color:${coverageColor}">${coveragePct.toFixed(1)}%</div>
-          <div class="backup-metric-label">Pokryt\u00ed</div>
+          <div class="backup-metric-label">${t("backup.coverage")}</div>
         </div>
         <div class="backup-metric-card" style="border-left: 3px solid var(--color-primary)">
           <div class="backup-metric-value">${backedUp.toLocaleString("cs-CZ")}</div>
-          <div class="backup-metric-label">Z\u00e1lohovan\u00fdch soubor\u016f</div>
+          <div class="backup-metric-label">${t("backup.backed_up_files")}</div>
         </div>
         <div class="backup-metric-card" style="border-left: 3px solid var(--color-accent)">
           <div class="backup-metric-value">${formatBytes(totalSize)}</div>
-          <div class="backup-metric-label">Celkov\u00e1 velikost</div>
+          <div class="backup-metric-label">${t("backup.total_size")}</div>
         </div>
         <div class="backup-metric-card" style="border-left: 3px solid var(--color-info)">
           <div class="backup-metric-value">${remotesUsed}</div>
-          <div class="backup-metric-label">Pou\u017eit\u00fdch \u00falo\u017ei\u0161\u0165</div>
+          <div class="backup-metric-label">${t("backup.storages_used")}</div>
         </div>
         <div class="backup-metric-card" style="border-left: 3px solid var(--color-muted)">
           <div class="backup-metric-value backup-metric-value-sm">${lastBackup}</div>
-          <div class="backup-metric-label">Posledn\u00ed z\u00e1loha</div>
+          <div class="backup-metric-label">${t("backup.last_backup")}</div>
         </div>
       </div>`;
   } catch (e) {
-    el.innerHTML = `<div class="empty">Nepoda\u0159ilo se na\u010d\u00edst statistiky: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">${t("backup.stats_error")}: ${_esc(e.message)}</div>`;
   }
 }
 
@@ -153,7 +155,7 @@ async function loadTargets() {
     const targets = data.targets || [];
 
     if (targets.length === 0) {
-      el.innerHTML = `<div class="empty">\u017d\u00e1dn\u00e1 c\u00edlov\u00e1 \u00falo\u017ei\u0161t\u011b \u2014 p\u0159ipojte cloud \u00falo\u017ei\u0161t\u011b na str\u00e1nce Cloud.</div>`;
+      el.innerHTML = `<div class="empty">${t("backup.no_targets")}</div>`;
       return;
     }
 
@@ -172,10 +174,10 @@ async function loadTargets() {
       const capacityUnknown = total === 0;
       const capacityRow = capacityUnknown
         ? `<div class="backup-capacity-manual">
-             <span style="color:var(--text-secondary);font-size:0.85rem">Kapacita nezjistitelna (Shared Drive)</span>
+             <span style="color:var(--text-secondary);font-size:0.85rem">${t("backup.capacity_unknown")}</span>
              <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.25rem">
                <select class="backup-capacity-preset" data-target="${name}">
-                 <option value="">— nastavit rucne —</option>
+                 <option value="">${t("backup.set_manually")}</option>
                  <option value="107374182400">100 GB</option>
                  <option value="214748364800">200 GB</option>
                  <option value="536870912000">500 GB</option>
@@ -185,7 +187,7 @@ async function loadTargets() {
                  <option value="6597069766656">6 TB</option>
                  <option value="10995116277760">10 TB</option>
                </select>
-               <button class="btn btn-small btn-set-capacity" data-target="${name}">Nastavit</button>
+               <button class="btn btn-small btn-set-capacity" data-target="${name}">${t("backup.set_btn")}</button>
              </div>
            </div>`
         : `<div class="storage-bar">
@@ -198,8 +200,8 @@ async function loadTargets() {
           <div class="backup-target-header">
             <span class="backup-target-name">\u2601\uFE0F ${name}</span>
             <span style="display:flex;gap:0.4rem;align-items:center">
-              ${tgt.encrypted ? '<span class="backup-encrypt-badge" title="End-to-end \u0161ifrov\u00e1no (rclone crypt)">\uD83D\uDD12 E2E</span>' : '<span class="backup-no-encrypt-badge" title="Ne\u0161ifrov\u00e1no">\uD83D\uDD13</span>'}
-              <span class="backup-target-badge">${backedFiles.toLocaleString("cs-CZ")} souboru</span>
+              ${tgt.encrypted ? `<span class="backup-encrypt-badge" title="${t("backup.encrypted")}">\uD83D\uDD12 E2E</span>` : `<span class="backup-no-encrypt-badge" title="${t("backup.not_encrypted")}">\uD83D\uDD13</span>`}
+              <span class="backup-target-badge">${backedFiles.toLocaleString("cs-CZ")} ${t("backup.files_unit")}</span>
             </span>
           </div>
 
@@ -208,11 +210,11 @@ async function loadTargets() {
           <div class="backup-target-actions">
             <label class="backup-toggle-label" style="display:flex;align-items:center;gap:0.4rem;cursor:pointer">
               <button class="backup-toggle ${enabled ? "active" : ""}" data-target="${name}"></button>
-              <span style="font-size:0.85rem">${enabled ? "Aktivni" : "Neaktivni"}</span>
+              <span style="font-size:0.85rem">${enabled ? t("backup.enabled") : t("backup.disabled")}</span>
             </label>
 
             <div style="display:flex;align-items:center;gap:0.3rem;margin-left:auto">
-              <span style="font-size:0.8rem;color:var(--text-secondary)">Priorita:</span>
+              <span style="font-size:0.8rem;color:var(--text-secondary)">${t("backup.priority")}:</span>
               <select class="backup-priority" data-target="${name}">
                 ${[1, 2, 3, 4, 5].map(p => `<option value="${p}" ${p === priority ? "selected" : ""}>${p}</option>`).join("")}
               </select>
@@ -232,15 +234,15 @@ async function loadTargets() {
           await apiPut(`/backup/targets/${encodeURIComponent(name)}`, { enabled: nowActive });
           toggle.classList.toggle("active", nowActive);
           const label = toggle.nextElementSibling;
-          if (label) label.textContent = nowActive ? "Aktivni" : "Neaktivni";
+          if (label) label.textContent = nowActive ? t("backup.enabled") : t("backup.disabled");
           const card = toggle.closest(".backup-target-card");
           if (card) {
             card.classList.toggle("target-enabled", nowActive);
             card.classList.toggle("target-disabled", !nowActive);
           }
-          showToast(`${name}: ${nowActive ? "aktivovano" : "deaktivovano"}`, "success");
+          showToast(`${name}: ${nowActive ? t("backup.activated") : t("backup.deactivated")}`, "success");
         } catch (e) {
-          showToast(`Chyba: ${e.message}`, "error");
+          showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
         }
       });
     });
@@ -251,13 +253,13 @@ async function loadTargets() {
         const name = btn.dataset.target;
         const sel = el.querySelector(`.backup-capacity-preset[data-target="${name}"]`);
         const bytes = parseInt(sel?.value, 10);
-        if (!bytes) { showToast("Vyberte kapacitu", "warning"); return; }
+        if (!bytes) { showToast(t("backup.select_capacity"), "warning"); return; }
         try {
           await apiPut(`/backup/targets/${encodeURIComponent(name)}`, { total_bytes: bytes, free_bytes: bytes });
-          showToast(`${name}: kapacita nastavena na ${formatBytes(bytes)}`, "success");
+          showToast(`${name}: ${t("backup.capacity_set")} ${formatBytes(bytes)}`, "success");
           await loadTargets();
         } catch (e) {
-          showToast(`Chyba: ${e.message}`, "error");
+          showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
         }
       });
     });
@@ -269,9 +271,9 @@ async function loadTargets() {
         const priority = parseInt(sel.value, 10);
         try {
           await apiPut(`/backup/targets/${encodeURIComponent(name)}`, { priority });
-          showToast(`${name}: priorita nastavena na ${priority}`, "success");
+          showToast(`${name}: ${t("backup.priority_set")} ${priority}`, "success");
         } catch (e) {
-          showToast(`Chyba: ${e.message}`, "error");
+          showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
         }
       });
     });
@@ -281,20 +283,20 @@ async function loadTargets() {
       btn.addEventListener("click", async () => {
         const name = btn.dataset.target;
         btn.disabled = true;
-        btn.textContent = "\u23F3 Zkoum\u00e1m...";
+        btn.textContent = `\u23F3 ${t("backup.probing")}`;
         try {
           await apiPost("/backup/probe", { targets: [name] });
-          showToast(`${name}: kapacita aktualizov\u00e1na`, "success");
+          showToast(`${name}: ${t("backup.capacity_updated")}`, "success");
           await loadTargets();
         } catch (e) {
-          showToast(`Chyba: ${e.message}`, "error");
+          showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
           btn.disabled = false;
-          btn.textContent = "\uD83D\uDD0D Prozkoumat";
+          btn.textContent = `\uD83D\uDD0D ${t("backup.probe")}`;
         }
       });
     });
   } catch (e) {
-    el.innerHTML = `<div class="empty">Nepoda\u0159ilo se na\u010d\u00edst c\u00edle: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">${t("backup.targets_error")}: ${_esc(e.message)}</div>`;
   }
 }
 
@@ -307,19 +309,19 @@ async function probeTargets() {
   if (!btn) return;
 
   btn.disabled = true;
-  btn.textContent = "\u23F3 Prob\u00edh\u00e1 pr\u016fzkum...";
+  btn.textContent = `\u23F3 ${t("backup.probe_running")}`;
 
   try {
     const result = await apiPost("/backup/probe");
     const count = result.probed ?? 0;
-    showToast(`Prozkoum\u00e1no ${count} \u00falo\u017ei\u0161\u0165`, "success");
+    showToast(t("backup.probed_count", { count }), "success");
     await loadTargets();
     await loadStats();
   } catch (e) {
-    showToast(`Chyba pr\u016fzkumu: ${e.message}`, "error");
+    showToast(`${t("backup.probe_error")}: ${e.message}`, "error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "\uD83D\uDD0D Prozkoumat kapacity";
+    btn.textContent = `\uD83D\uDD0D ${t("backup.probe")}`;
   }
 }
 
@@ -333,8 +335,8 @@ async function createPlan() {
   if (!btn || !planEl) return;
 
   btn.disabled = true;
-  btn.textContent = "\u23F3 Vypo\u010d\u00edt\u00e1v\u00e1m...";
-  planEl.innerHTML = `<div class="loading-sm">Vytvá\u0159\u00edm distribu\u010dn\u00ed pl\u00e1n...</div>`;
+  btn.textContent = `\u23F3 ${t("backup.plan_computing")}`;
+  planEl.innerHTML = `<div class="loading-sm">${t("backup.plan_creating")}</div>`;
 
   try {
     const result = await apiPost("/backup/plan");
@@ -351,8 +353,7 @@ async function createPlan() {
     if (overflow > 0) {
       overflowHtml = `
         <div class="backup-overflow-warning">
-          \u26A0\uFE0F <strong>${overflow.toLocaleString("cs-CZ")} soubor\u016f (${formatBytes(overflowSize)})</strong> se nevejde do \u017e\u00e1dn\u00e9ho \u00falo\u017ei\u0161t\u011b.
-          P\u0159idejte dal\u0161\u00ed \u00falo\u017ei\u0161t\u011b nebo uvoln\u011bte m\u00edsto.
+          \u26A0\uFE0F <strong>${overflow.toLocaleString("cs-CZ")} ${t("backup.plan_overflow_warning", { size: formatBytes(overflowSize) })}</strong>
         </div>`;
     }
 
@@ -363,10 +364,10 @@ async function createPlan() {
           <table class="backup-table">
             <thead>
               <tr>
-                <th>\u00dalo\u017ei\u0161t\u011b</th>
-                <th>Soubor\u016f</th>
-                <th>Velikost</th>
-                <th>Priorita</th>
+                <th>${t("backup.plan_storage_header")}</th>
+                <th>${t("backup.plan_files_header")}</th>
+                <th>${t("backup.plan_size_header")}</th>
+                <th>${t("backup.plan_priority_header")}</th>
               </tr>
             </thead>
             <tbody>
@@ -388,15 +389,15 @@ async function createPlan() {
         <div class="backup-plan-header">
           <div class="backup-plan-stat">
             <span class="backup-plan-stat-value">${totalFiles.toLocaleString("cs-CZ")}</span>
-            <span class="backup-plan-stat-label">soubor\u016f</span>
+            <span class="backup-plan-stat-label">${t("backup.plan_files")}</span>
           </div>
           <div class="backup-plan-stat">
             <span class="backup-plan-stat-value">${formatBytes(totalSize)}</span>
-            <span class="backup-plan-stat-label">celkem</span>
+            <span class="backup-plan-stat-label">${t("backup.plan_total_label")}</span>
           </div>
           <div class="backup-plan-stat">
             <span class="backup-plan-stat-value">${remotesUsed}</span>
-            <span class="backup-plan-stat-label">\u00falo\u017ei\u0161\u0165</span>
+            <span class="backup-plan-stat-label">${t("backup.plan_remotes")}</span>
           </div>
         </div>
         ${overflowHtml}
@@ -409,10 +410,10 @@ async function createPlan() {
     if (btnExec) btnExec.disabled = false;
     if (btnDry) btnDry.disabled = false;
   } catch (e) {
-    planEl.innerHTML = `<div class="empty">Chyba p\u0159i vytv\u00e1\u0159en\u00ed pl\u00e1nu: ${e.message}</div>`;
+    planEl.innerHTML = `<div class="empty">${t("backup.plan_error")}: ${_esc(e.message)}</div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = "\uD83D\uDCCB Vytvo\u0159it pl\u00e1n";
+    btn.textContent = `\uD83D\uDCCB ${t("backup.plan")}`;
   }
 }
 
@@ -422,7 +423,7 @@ async function createPlan() {
 
 async function executePlan(dryRun) {
   if (!_plan) {
-    showToast("Nejprve vytvo\u0159te pl\u00e1n z\u00e1lohy", "error");
+    showToast(t("backup.create_plan_first"), "error");
     return;
   }
 
@@ -433,8 +434,8 @@ async function executePlan(dryRun) {
   if (btnExec) btnExec.disabled = true;
   if (btnDry) btnDry.disabled = true;
 
-  const label = dryRun ? "Simulace" : "Z\u00e1loha";
-  showToast(`${label} spu\u0161t\u011bna...`, "info");
+  const label = dryRun ? t("backup.simulation") : t("backup.backup_label");
+  showToast(`${label} ${t("backup.started")}`, "info");
 
   try {
     const result = await apiPost("/backup/execute", {
@@ -444,7 +445,7 @@ async function executePlan(dryRun) {
 
     const taskId = result.task_id;
     if (!taskId) {
-      showToast(`${label} dokon\u010dena`, "success");
+      showToast(`${label} ${t("backup.completed_success")}`, "success");
       await refreshAll();
       return;
     }
@@ -456,13 +457,13 @@ async function executePlan(dryRun) {
           <div class="backup-progress-bar">
             <div class="backup-progress-fill" id="backup-progress-fill" style="width:0%"></div>
           </div>
-          <span class="backup-progress-label" id="backup-progress-label">${label} prob\u00edh\u00e1... (\u00faloha ${taskId})</span>
+          <span class="backup-progress-label" id="backup-progress-label">${label} ${t("backup.running_task", { task_id: taskId })}</span>
         </div>`;
     }
 
     await pollTask(taskId, label);
   } catch (e) {
-    showToast(`Chyba: ${e.message}`, "error");
+    showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
   } finally {
     if (btnExec) btnExec.disabled = false;
     if (btnDry) btnDry.disabled = false;
@@ -483,19 +484,19 @@ async function pollTask(taskId, label) {
       if (labelEl) labelEl.textContent = `${label}: ${progress}% ${status.message || ""}`;
 
       if (status.status === "completed") {
-        showToast(`${label} \u00fasp\u011b\u0161n\u011b dokon\u010dena`, "success");
+        showToast(`${label} ${t("backup.completed_success")}`, "success");
         await refreshAll();
         return;
       }
       if (status.status === "failed") {
-        showToast(`${label} selhala: ${status.error || "nezn\u00e1m\u00e1 chyba"}`, "error", 8000);
+        showToast(`${label} ${t("backup.failed")}: ${status.error || t("backup.unknown_error")}`, "error", 8000);
         return;
       }
     } catch {
       // keep polling
     }
   }
-  showToast(`${label}: \u010dasov\u00fd limit vypr\u0161el`, "error");
+  showToast(`${label}: ${t("backup.timeout")}`, "error");
 }
 
 // ---------------------------------------------------------------------------
@@ -508,8 +509,8 @@ async function verifyBackups() {
   if (!btn || !resultEl) return;
 
   btn.disabled = true;
-  btn.textContent = "\u23F3 Ov\u011b\u0159uji...";
-  resultEl.innerHTML = `<div class="loading-sm">Kontroluji existenci soubor\u016f na \u00falo\u017ei\u0161t\u00edch...</div>`;
+  btn.textContent = `\u23F3 ${t("backup.verifying")}`;
+  resultEl.innerHTML = `<div class="loading-sm">${t("backup.verifying_files")}</div>`;
 
   try {
     const result = await apiPost("/backup/verify");
@@ -526,12 +527,12 @@ async function verifyBackups() {
     if (errors.length > 0) {
       errorsHtml = `
         <div class="backup-verify-errors">
-          <strong>Chyb\u011bj\u00edc\u00ed soubory:</strong>
+          <strong>${t("backup.missing_files")}:</strong>
           <ul>
             ${errors.slice(0, 20).map(err => `
               <li><code>${err.file || err.path}</code> \u2014 ${err.remote || "?"}</li>
             `).join("")}
-            ${errors.length > 20 ? `<li class="text-muted">... a dal\u0161\u00edch ${errors.length - 20}</li>` : ""}
+            ${errors.length > 20 ? `<li class="text-muted">${t("backup.and_more", { count: errors.length - 20 })}</li>` : ""}
           </ul>
         </div>`;
     }
@@ -541,17 +542,17 @@ async function verifyBackups() {
         <div class="backup-verify-header">
           <span class="backup-verify-icon">${statusIcon}</span>
           <div class="backup-verify-stats">
-            <span class="backup-verify-main">${pct}% ov\u011b\u0159eno</span>
-            <span class="backup-verify-detail">${verified.toLocaleString("cs-CZ")} / ${total.toLocaleString("cs-CZ")} soubor\u016f v po\u0159\u00e1dku${missing > 0 ? `, ${missing.toLocaleString("cs-CZ")} chyb\u00ed` : ""}</span>
+            <span class="backup-verify-main">${pct}% ${t("backup.verified_pct")}</span>
+            <span class="backup-verify-detail">${verified.toLocaleString("cs-CZ")} / ${total.toLocaleString("cs-CZ")} ${t("backup.verified_detail")}${missing > 0 ? `, ${missing.toLocaleString("cs-CZ")} ${t("backup.missing_label")}` : ""}</span>
           </div>
         </div>
         ${errorsHtml}
       </div>`;
   } catch (e) {
-    resultEl.innerHTML = `<div class="empty">Chyba ov\u011b\u0159en\u00ed: ${e.message}</div>`;
+    resultEl.innerHTML = `<div class="empty">${t("backup.verify_error")}: ${_esc(e.message)}</div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = "\uD83D\uDD12 Ov\u011b\u0159it z\u00e1lohy";
+    btn.textContent = `\uD83D\uDD12 ${t("backup.verify")}`;
   }
 }
 
@@ -575,22 +576,22 @@ async function loadManifest(search = "") {
     const totalPages = Math.ceil(totalItems / limit) || 1;
 
     if (items.length === 0) {
-      el.innerHTML = `<div class="empty">\u017d\u00e1dn\u00e9 z\u00e1lohy v manifestu${search ? ` pro "${search}"` : ""}</div>`;
+      el.innerHTML = `<div class="empty">${search ? t("backup.no_manifest_search", { search: _esc(search) }) : t("backup.no_manifest")}</div>`;
       return;
     }
 
     el.innerHTML = `
       <div class="backup-manifest-info">
-        Zobrazeno ${((_manifestPage - 1) * limit) + 1}\u2013${Math.min(_manifestPage * limit, totalItems)} z ${totalItems.toLocaleString("cs-CZ")} z\u00e1znam\u016f
+        ${t("backup.manifest_showing", { from: ((_manifestPage - 1) * limit) + 1, to: Math.min(_manifestPage * limit, totalItems), total: totalItems.toLocaleString("cs-CZ") })}
       </div>
       <table class="backup-table backup-manifest-list">
         <thead>
           <tr>
-            <th>Soubor</th>
-            <th>Velikost</th>
-            <th>\u00dalo\u017ei\u0161t\u011b</th>
-            <th>Z\u00e1lohov\u00e1no</th>
-            <th>Stav</th>
+            <th>${t("backup.manifest_file")}</th>
+            <th>${t("backup.manifest_size")}</th>
+            <th>${t("backup.manifest_storage")}</th>
+            <th>${t("backup.manifest_backed_at")}</th>
+            <th>${t("backup.manifest_status")}</th>
           </tr>
         </thead>
         <tbody>
@@ -603,7 +604,7 @@ async function loadManifest(search = "") {
               : "\u2014";
             const verified = item.verified;
             const statusIcon = verified === true ? "\u2705" : verified === false ? "\u274C" : "\u2014";
-            const statusTitle = verified === true ? "Ov\u011b\u0159eno" : verified === false ? "Neov\u011b\u0159eno" : "Nezkontrolov\u00e1no";
+            const statusTitle = verified === true ? t("backup.verified") : verified === false ? t("backup.not_verified") : t("backup.manifest_unchecked");
             return `
               <tr>
                 <td class="manifest-filename" title="${item.path || name}">${name}</td>
@@ -616,9 +617,9 @@ async function loadManifest(search = "") {
         </tbody>
       </table>
       <div class="backup-manifest-pagination">
-        <button class="btn btn-sm btn-manifest-prev" ${_manifestPage <= 1 ? "disabled" : ""}>\u2190 P\u0159edchoz\u00ed</button>
-        <span class="backup-manifest-page-info">Str\u00e1nka ${_manifestPage} / ${totalPages}</span>
-        <button class="btn btn-sm btn-manifest-next" ${_manifestPage >= totalPages ? "disabled" : ""}>Dal\u0161\u00ed \u2192</button>
+        <button class="btn btn-sm btn-manifest-prev" ${_manifestPage <= 1 ? "disabled" : ""}>\u2190 ${t("backup.prev_page")}</button>
+        <span class="backup-manifest-page-info">${t("backup.manifest_page", { current: _manifestPage, total: totalPages })}</span>
+        <button class="btn btn-sm btn-manifest-next" ${_manifestPage >= totalPages ? "disabled" : ""}>${t("backup.next_page")} \u2192</button>
       </div>`;
 
     // Pagination buttons
@@ -643,7 +644,7 @@ async function loadManifest(search = "") {
       });
     }
   } catch (e) {
-    el.innerHTML = `<div class="empty">Nepoda\u0159ilo se na\u010d\u00edst manifest: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty">${t("backup.manifest_error")}: ${_esc(e.message)}</div>`;
   }
 }
 
@@ -673,10 +674,10 @@ async function loadMonitorStatus() {
     const overall = data.overall || "ok";
     const lastCheck = data.last_check_at
       ? new Date(data.last_check_at).toLocaleString("cs-CZ")
-      : "nikdy";
+      : t("backup.last_check_never");
 
     const statusColor = overall === "ok" ? "#3fb950" : overall === "warning" ? "#d29922" : "#f85149";
-    const statusLabel = overall === "ok" ? "V poradku" : overall === "warning" ? "Varovani" : "Kriticke";
+    const statusLabel = overall === "ok" ? t("backup.monitor_ok") : overall === "warning" ? t("backup.monitor_warning") : t("backup.monitor_critical");
     const statusIcon = overall === "ok" ? "\u2705" : overall === "warning" ? "\u26A0\uFE0F" : "\u274C";
 
     el.innerHTML = `
@@ -684,10 +685,10 @@ async function loadMonitorStatus() {
         <span style="font-size:1.5rem">${statusIcon}</span>
         <div>
           <div style="font-weight:600;color:${statusColor}">${statusLabel}</div>
-          <div style="font-size:0.8rem;color:var(--text-secondary)">Posledni kontrola: ${lastCheck}</div>
+          <div style="font-size:0.8rem;color:var(--text-secondary)">${t("backup.last_check")}: ${lastCheck}</div>
         </div>
-        ${data.critical_count > 0 ? `<span style="background:#f85149;color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:600">${data.critical_count} kriticke</span>` : ""}
-        ${data.warning_count > 0 ? `<span style="background:#d29922;color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:600">${data.warning_count} varovani</span>` : ""}
+        ${data.critical_count > 0 ? `<span style="background:#f85149;color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:600">${t("backup.critical_count", { count: data.critical_count })}</span>` : ""}
+        ${data.warning_count > 0 ? `<span style="background:#d29922;color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:600">${t("backup.warning_count", { count: data.warning_count })}</span>` : ""}
       </div>`;
 
     // Show alerts
@@ -717,37 +718,37 @@ async function runHealthCheck() {
   const btn = $("#btn-health");
   if (!btn) return;
   btn.disabled = true;
-  btn.textContent = "\u23F3 Kontroluji...";
+  btn.textContent = `\u23F3 ${t("backup.health_checking")}`;
   try {
     const { task_id } = await apiPost("/backup/monitor/check");
-    const result = await pollTask(task_id, "Kontrola zdravi");
+    const result = await pollTask(task_id, t("backup.health_label"));
     if (result) {
-      showToast(`Kontrola: ${result.healthy}/${result.checked} zdravych`, result.unhealthy > 0 ? "warning" : "success");
+      showToast(t("backup.health_result", { healthy: result.healthy, checked: result.checked }), result.unhealthy > 0 ? "warning" : "success");
     }
     await loadMonitorStatus();
   } catch (e) {
-    showToast(`Chyba: ${e.message}`, "error");
+    showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "\uD83E\uDE7A Kontrola zdravi";
+    btn.textContent = `\uD83E\uDE7A ${t("backup.health_check")}`;
   }
 }
 
 async function testNotification() {
   try {
     await apiPost("/backup/monitor/test-notification");
-    showToast("Testovaci notifikace odeslana", "success");
+    showToast(t("backup.test_notif_sent"), "success");
   } catch (e) {
-    showToast(`Chyba: ${e.message}`, "error");
+    showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
   }
 }
 
 async function acknowledgeAlerts() {
   try {
     const { acknowledged } = await apiPost("/backup/monitor/acknowledge");
-    showToast(`Potvrzeno ${acknowledged} upozorneni`, "success");
+    showToast(t("backup.acknowledged_count", { count: acknowledged }), "success");
     await loadMonitorStatus();
   } catch (e) {
-    showToast(`Chyba: ${e.message}`, "error");
+    showToast(`${t("backup.error_prefix")}: ${e.message}`, "error");
   }
 }

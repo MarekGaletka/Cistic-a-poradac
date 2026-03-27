@@ -135,15 +135,13 @@ def _collect_data(cat: Any) -> dict:
         "total_files": total_files,
     }
 
-    # ── Time coverage ─────────────────────────────────────────────
-    date_rows = conn.execute("SELECT date_original FROM files WHERE date_original IS NOT NULL ORDER BY date_original").fetchall()
-    dates_parsed = []
-    for (d,) in date_rows:
-        try:
-            if len(d) >= 7:
-                dates_parsed.append(d[:7])  # YYYY-MM
-        except (TypeError, IndexError):
-            pass
+    # ── Time coverage (aggregated in SQL to avoid loading all rows) ──
+    date_month_rows = conn.execute(
+        "SELECT DISTINCT SUBSTR(date_original, 1, 7) AS ym "
+        "FROM files WHERE date_original IS NOT NULL AND LENGTH(date_original) >= 7 "
+        "ORDER BY ym"
+    ).fetchall()
+    dates_parsed = [row[0] for row in date_month_rows if row[0]]
 
     coverage_data = _compute_coverage(dates_parsed, min_date, max_date)
     data["coverage"] = coverage_data
@@ -154,7 +152,6 @@ def _collect_data(cat: Any) -> dict:
         # Check for media_scores table or quality columns
         image_exts = ("jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif", "raw", "cr2", "nef", "arw", "dng")
         video_exts = ("mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp")
-        screenshot_exts = ("png",)
 
         img_placeholders = ",".join("?" * len(image_exts))
         vid_placeholders = ",".join("?" * len(video_exts))

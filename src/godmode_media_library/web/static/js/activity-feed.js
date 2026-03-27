@@ -2,13 +2,14 @@
 
 import { api } from "./api.js";
 import { formatBytes } from "./utils.js";
+import { t } from "./i18n.js";
 
 /**
  * Render an activity feed into a container element.
  * Shows recent tasks, scans, backups, and alerts.
  */
 export async function renderActivityFeed(container) {
-  container.innerHTML = '<div class="loading-sm">Načítání...</div>';
+  container.innerHTML = `<div class="loading-sm">${t("activity.loading")}</div>`;
 
   try {
     const [tasksData, monitorData] = await Promise.all([
@@ -19,15 +20,15 @@ export async function renderActivityFeed(container) {
     const events = [];
 
     // Add completed tasks
-    for (const t of (tasksData.tasks || [])) {
+    for (const task of (tasksData.tasks || [])) {
       events.push({
-        time: t.finished_at || t.started_at || "",
-        icon: _taskIcon(t.command),
-        label: _taskLabel(t.command),
-        detail: t.status === "completed"
-          ? _taskDetail(t)
-          : t.status === "failed" ? `Chyba: ${t.error || "neznámá"}` : "Probíhá...",
-        severity: t.status === "failed" ? "error" : t.status === "completed" ? "ok" : "running",
+        time: task.finished_at || task.started_at || "",
+        icon: _taskIcon(task.command),
+        label: _taskLabel(task.command),
+        detail: task.status === "completed"
+          ? _taskDetail(task)
+          : task.status === "failed" ? t("activity.error_status", { error: task.error || "?" }) : t("activity.in_progress"),
+        severity: task.status === "failed" ? "error" : task.status === "completed" ? "ok" : "running",
       });
     }
 
@@ -36,7 +37,7 @@ export async function renderActivityFeed(container) {
       events.push({
         time: a.timestamp || "",
         icon: a.severity === "critical" ? "🔴" : "🟡",
-        label: "Upozornění zálohy",
+        label: t("activity.backup_alert"),
         detail: a.message,
         severity: a.severity === "critical" ? "error" : "warning",
       });
@@ -46,7 +47,7 @@ export async function renderActivityFeed(container) {
     events.sort((a, b) => (b.time || "").localeCompare(a.time || ""));
 
     if (events.length === 0) {
-      container.innerHTML = '<div class="activity-empty">Zatím žádná aktivita</div>';
+      container.innerHTML = `<div class="activity-empty">${t("activity.empty")}</div>`;
       return;
     }
 
@@ -64,7 +65,7 @@ export async function renderActivityFeed(container) {
     }).join("");
 
   } catch (e) {
-    container.innerHTML = `<div class="activity-empty">Chyba: ${e.message}</div>`;
+    container.innerHTML = `<div class="activity-empty">${t("activity.error_unknown", { message: e.message })}</div>`;
   }
 }
 
@@ -82,25 +83,25 @@ function _taskIcon(command) {
 }
 
 function _taskLabel(command) {
-  if (!command) return "Úloha";
-  if (command.includes("scan")) return "Skenování";
-  if (command.includes("backup:distribute")) return "Distribuovaná záloha";
-  if (command.includes("backup:verify")) return "Ověření záloh";
-  if (command.includes("backup:health")) return "Kontrola zdraví";
-  if (command.includes("bitrot")) return "Bit rot sken";
-  if (command.includes("scenario")) return command.replace("scenario:", "Scénář: ");
-  if (command.includes("report")) return "Report";
-  if (command.includes("pipeline")) return "Pipeline";
+  if (!command) return t("activity.task_label");
+  if (command.includes("scan")) return t("activity.label_scan");
+  if (command.includes("backup:distribute")) return t("activity.label_backup_distribute");
+  if (command.includes("backup:verify")) return t("activity.label_backup_verify");
+  if (command.includes("backup:health")) return t("activity.label_backup_health");
+  if (command.includes("bitrot")) return t("activity.label_bitrot");
+  if (command.includes("scenario")) return command.replace("scenario:", t("activity.label_scenario_prefix"));
+  if (command.includes("report")) return t("activity.label_report");
+  if (command.includes("pipeline")) return t("activity.label_pipeline");
   return command;
 }
 
 function _taskDetail(task) {
   const r = task.result;
-  if (!r) return "Dokončeno";
-  if (r.total_checked !== undefined) return `${r.healthy || 0} OK, ${r.corrupted || 0} poškozených`;
-  if (r.uploaded !== undefined) return `${r.uploaded} nahráno, ${r.errors || 0} chyb`;
-  if (r.scanned !== undefined) return `${r.scanned} souborů`;
-  if (r.verified !== undefined) return `${r.verified} ověřeno, ${r.missing || 0} chybí`;
-  if (r.checked !== undefined) return `${r.healthy || 0}/${r.checked} zdravých`;
-  return "Dokončeno";
+  if (!r) return t("activity.detail_completed");
+  if (r.total_checked !== undefined) return t("activity.detail_corrupted", { healthy: r.healthy || 0, corrupted: r.corrupted || 0 });
+  if (r.uploaded !== undefined) return t("activity.detail_uploaded", { uploaded: r.uploaded, errors: r.errors || 0 });
+  if (r.scanned !== undefined) return t("activity.detail_scanned", { scanned: r.scanned });
+  if (r.verified !== undefined) return t("activity.detail_verified", { verified: r.verified, missing: r.missing || 0 });
+  if (r.checked !== undefined) return t("activity.detail_health", { healthy: r.healthy || 0, checked: r.checked });
+  return t("activity.detail_completed");
 }

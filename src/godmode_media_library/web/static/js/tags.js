@@ -311,7 +311,7 @@ function _renderManagerList(overlay) {
     html += `<div class="tag-manager-item" data-tag-id="${tag.id}">
       <span class="tag-picker-color" style="background:${tag.color}"></span>
       <span style="flex:1;font-size:13px">${escapeHtml(tag.name)}</span>
-      <span style="font-size:11px;color:var(--text-muted)">${tag.file_count} souborů</span>
+      <span style="font-size:11px;color:var(--text-muted)">${t("tags.file_count", { count: tag.file_count })}</span>
       <span class="tag-manager-delete" data-tag-id="${tag.id}" data-tag-name="${escapeHtml(tag.name)}" title="${t("action.delete")}">&times;</span>
     </div>`;
   }

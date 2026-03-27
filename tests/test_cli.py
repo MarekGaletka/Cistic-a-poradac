@@ -279,8 +279,9 @@ def test_cmd_tree_apply_dry_run(tmp_path: Path, capsys):
 def test_main_with_config(monkeypatch, capsys):
     """Exercise main() with the config subcommand."""
     monkeypatch.setattr("sys.argv", ["gml", "config"])
-    ret = main()
-    assert ret == 0
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "min_size_kb" in captured.out
 
@@ -288,8 +289,9 @@ def test_main_with_config(monkeypatch, capsys):
 def test_main_with_verbose_config(monkeypatch, capsys):
     """Exercise main() with -v flag."""
     monkeypatch.setattr("sys.argv", ["gml", "-v", "config"])
-    ret = main()
-    assert ret == 0
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
 
 
 def test_cmd_audit(tmp_media_tree, tmp_path, capsys):

@@ -242,7 +242,37 @@ export async function render(container) {
   // Spacebar → Quick Look
   if (_spacebarHandler) document.removeEventListener("keydown", _spacebarHandler);
   _spacebarHandler = (e) => {
-    if (e.key !== " " || e.target.matches("input, textarea, select")) return;
+    // Skip if files page is no longer active (handler leaked across pages)
+    if (!document.contains(_container)) { document.removeEventListener("keydown", _spacebarHandler); _spacebarHandler = null; return; }
+    if (e.target.matches("input, textarea, select")) return;
+
+    // Cmd+A / Ctrl+A → Select all visible files
+    if (e.key === "a" && (e.metaKey || e.ctrlKey)) {
+      if (!_currentFiles.length) return;
+      e.preventDefault();
+      // Auto-enter selection mode if not already
+      if (!_selectionMode) {
+        _selectionMode = true;
+        const selBar = container.querySelector("#selection-bar");
+        if (selBar) selBar.classList.remove("hidden");
+      }
+      selectAll(_currentFiles.map(f => f.path));
+      updateSelectionCount(container);
+      resetAndReload();
+      return;
+    }
+
+    // Delete / Backspace → Open delete confirmation for selected files
+    if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (!_selectionMode || getSelectedCount() === 0) return;
+      e.preventDefault();
+      // Click the delete button in the floating action bar
+      const deleteBtn = document.querySelector('#floating-action-bar [data-action="delete"]');
+      if (deleteBtn) deleteBtn.click();
+      return;
+    }
+
+    if (e.key !== " ") return;
     if (isQuickLookOpen()) return; // Quick Look handles its own spacebar
     if (!_focusedPath) return;
     e.preventDefault();

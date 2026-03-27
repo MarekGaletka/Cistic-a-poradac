@@ -16,9 +16,10 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +432,11 @@ def get_templates() -> list[dict]:
         {
             "id": "tpl_perfect_scenario",
             "name": "Dokonalý scénář \u2728",
-            "description": "Kompletní 10kroková cesta k dokonalé knihovně: připojení zdrojů → stažení → sken → integrita → deduplikace → metadata → časová analýza → kvalita → reorganizace → záloha + report",
+            "description": (
+                "Kompletní 10kroková cesta k dokonalé knihovně: připojení zdrojů → stažení → sken"
+                " → integrita → deduplikace → metadata → časová analýza → kvalita"
+                " → reorganizace → záloha + report"
+            ),
             "icon": "\U0001f451",
             "color": "#f0883e",
             "steps": [
@@ -631,8 +636,8 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         return {"total_checked": result.total_checked, "corrupted": result.corrupted, "healthy": result.healthy}
 
     if step_type == "scan":
-        from .scanner import incremental_scan
         from .config import load_config
+        from .scanner import incremental_scan
 
         cfg = load_config()
         roots = config.get("roots") or cfg.prefer_roots
@@ -664,8 +669,9 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             cat.close()
 
     if step_type == "quarantine_cleanup":
-        from .recovery import list_quarantine, delete_from_quarantine
         import time as _time
+
+        from .recovery import delete_from_quarantine, list_quarantine
 
         older_than_days = config.get("older_than_days", 30)
         entries = list_quarantine()
@@ -743,7 +749,6 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
                 GROUP BY month ORDER BY month
             """)
             months = cur.fetchall()
-            gaps = []
             for i in range(1, len(months)):
                 prev_m = months[i - 1][0]
                 curr_m = months[i][0]
@@ -778,8 +783,8 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
 
     if step_type == "generate_report":
         try:
-            from .report import generate_report
             from .catalog import Catalog
+            from .report import generate_report
 
             cat = Catalog(catalog_path)
             cat.open()
@@ -792,7 +797,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             return {"note": "Modul report není dostupný"}
 
     if step_type == "wait_for_sources":
-        from .cloud import rclone_is_reachable, check_volume_mounted, list_remotes
+        from .cloud import check_volume_mounted, list_remotes, rclone_is_reachable
 
         remotes_config = config.get("remotes") or []
         timeout_min = config.get("timeout_minutes", 5)
@@ -818,8 +823,8 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         return {"available": available, "unavailable": unavailable, "total": len(remotes_config)}
 
     if step_type == "cloud_catalog_scan":
-        from .cloud import rclone_ls, rclone_is_reachable, list_remotes
         from .catalog import Catalog
+        from .cloud import list_remotes, rclone_is_reachable, rclone_ls
 
         remotes_config = config.get("remotes") or []
         if not remotes_config:
@@ -846,18 +851,19 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         return {"cataloged": total_cataloged, "remotes_scanned": len(remotes_config)}
 
     if step_type == "cloud_stream_reorganize":
-        from .cloud import RcloneTransferError, rclone_copyto, rclone_is_reachable, retry_with_backoff, wait_for_connectivity
-        from .catalog import Catalog
+        import sqlite3 as _sqlite3
+        from pathlib import PurePosixPath
+
         from . import checkpoint as ckpt
+        from .catalog import Catalog
+        from .cloud import RcloneTransferError, rclone_copyto, rclone_is_reachable, retry_with_backoff, wait_for_connectivity
         from .consolidation_types import (
             ERROR_TRUNCATE_LEN,
+            JOB_TYPE_CLOUD_STREAM,
             FileStatus,
             JobStatus,
             Phase,
-            JOB_TYPE_CLOUD_STREAM,
         )
-        from pathlib import PurePosixPath
-        import sqlite3 as _sqlite3
 
         dest_remote = config.get("dest_remote", "gws-backup")
         dest_path = config.get("dest_path", "GML-Consolidated")
@@ -991,8 +997,8 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             cat.close()
 
     if step_type == "cloud_verify_integrity":
-        from .cloud import rclone_check_file, rclone_is_reachable
         from .catalog import Catalog
+        from .cloud import rclone_check_file, rclone_is_reachable
 
         remote = config.get("remote", "gws-backup")
         sample_pct = config.get("sample_pct", 10)
@@ -1021,7 +1027,7 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
             cat.close()
 
     if step_type == "sync_to_disk":
-        from .cloud import rclone_copy, check_volume_mounted
+        from .cloud import check_volume_mounted, rclone_copy
 
         source_remote = config.get("source_remote", "gws-backup")
         source_path = config.get("source_path", "GML-Consolidated")
@@ -1095,9 +1101,8 @@ def check_volume_triggers() -> list[dict]:
                 mounted_volumes.add(vol.name)
 
     for sc in scenarios:
-        if sc.trigger.type == "volume_mount" and sc.trigger.volume_name:
-            if sc.trigger.volume_name in mounted_volumes:
-                triggered.append(_scenario_to_dict(sc))
+        if sc.trigger.type == "volume_mount" and sc.trigger.volume_name and sc.trigger.volume_name in mounted_volumes:
+            triggered.append(_scenario_to_dict(sc))
 
     return triggered
 

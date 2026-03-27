@@ -220,8 +220,18 @@ def create_merge_plan(
                 )
         else:
             # Non-list conflict — survivor value preserved, log conflict
+            survivor_val = path_values.get(survivor_path)
             for p, v in path_values.items():
                 if p != survivor_path:
+                    logger.info(
+                        "Merge conflict for tag '%s' on %s: keeping survivor value %r "
+                        "(discarded %r from %s)",
+                        tag,
+                        survivor_path,
+                        survivor_val,
+                        v,
+                        p,
+                    )
                     plan.conflicts.append(
                         MergeAction(
                             tag=tag,
@@ -299,10 +309,10 @@ def execute_merge(
     cmd = [binary, "-q", "-q", "-api", "LargeFileSupport=1"]
 
     for action in copyable:
+        # Keep group prefix (e.g. EXIF:, XMP:) so that tags like
+        # EXIF:DateTimeOriginal and XMP:DateTimeOriginal are written
+        # to their correct groups instead of colliding as bare names.
         tag_name = action.tag
-        # Strip group prefix for writing (ExifTool auto-determines group)
-        if ":" in tag_name:
-            tag_name = tag_name.split(":", 1)[1]
 
         if action.action_type == "merge_list":
             # Use += to append list values

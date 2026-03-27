@@ -39,10 +39,6 @@ export function showGlobalProgress(taskId) {
         showToast(t("task.completed_toast"), "success");
         clearInterval(_globalPollInterval);
         _globalPollInterval = null;
-        // Auto-navigate to dashboard after scan
-        if (window._godmodeNavigate) {
-          setTimeout(() => window._godmodeNavigate("dashboard"), 1500);
-        }
       } else if (data.status === "failed") {
         failGlobalProgress();
         showToast(t("task.failed_toast", { error: data.error || "unknown" }), "error");
@@ -135,7 +131,8 @@ export function pollTask(taskId) {
   }
   ws.onmessage = (event) => {
     if (!document.getElementById("task-output")) { ws.close(); return; }
-    const data = JSON.parse(event.data);
+    let data;
+    try { data = JSON.parse(event.data); } catch (e) { console.warn("WS: invalid JSON", e); return; }
     if (data.error && !data.status) {
       el.innerHTML = `<div class="task-status failed">${t("general.error", { message: data.error })}</div>`;
       return;

@@ -49,7 +49,7 @@ class PlanPolicy:
     prefer_earliest_origin_time: bool = True
     prefer_richer_metadata: bool = True
     prefer_roots: tuple[str, ...] = ()
-    require_metadata_merge: bool = True
+
 
 
 @dataclass(frozen=True)

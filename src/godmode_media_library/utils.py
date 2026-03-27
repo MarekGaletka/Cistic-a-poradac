@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import hashlib
+import logging
 import os
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -47,18 +48,36 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def iter_files(roots: Iterable[Path]) -> Iterator[Path]:
+    _logger = logging.getLogger(__name__)
+    visited_real_dirs: set[str] = set()
     for root in roots:
         if not root.exists() or not root.is_dir():
             continue
-        for path in root.rglob("*"):
-            if path.is_symlink():
+        real_root = os.path.realpath(root)
+        if real_root in visited_real_dirs:
+            _logger.warning("Symlink loop detected: root %s -> %s (already visited), skipping", root, real_root)
+            continue
+        visited_real_dirs.add(real_root)
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+            # Check real path of current directory to detect symlink loops
+            real_dir = os.path.realpath(dirpath)
+            if real_dir in visited_real_dirs and dirpath != str(root):
+                _logger.warning("Symlink loop detected: %s -> %s (already visited), skipping", dirpath, real_dir)
+                dirnames.clear()  # prevent further descent
                 continue
-            if path.is_file():
-                yield path
+            visited_real_dirs.add(real_dir)
+            for fname in filenames:
+                fpath = Path(dirpath) / fname
+                if fpath.is_symlink():
+                    continue
+                yield fpath
 
 
 def safe_stat_birthtime(path: Path) -> float | None:
-    st = path.stat()
+    try:
+        st = path.stat()
+    except OSError:
+        return None
     birth = getattr(st, "st_birthtime", None)
     if birth is not None:
         return float(birth)
@@ -99,8 +118,11 @@ def read_tsv_dict(path: Path) -> list[dict[str, str]]:
 
 
 def path_startswith(path: Path, prefixes: tuple[str, ...]) -> int | None:
-    path_text = str(path)
+    resolved = path.resolve()
     for idx, prefix in enumerate(prefixes):
-        if path_text.startswith(prefix):
-            return idx
+        try:
+            if resolved.is_relative_to(Path(prefix).resolve()):
+                return idx
+        except (TypeError, ValueError):
+            continue
     return None

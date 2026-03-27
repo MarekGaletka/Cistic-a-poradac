@@ -728,9 +728,28 @@ function bindEvents() {
           if (mwl) applyTransform(mwl);
         }
         break;
+      case " ":
+        if (!e.target.matches("input, textarea, select")) {
+          e.preventDefault();
+          // Toggle play/pause for video, or toggle fullscreen for images
+          const video = document.querySelector("#lightbox-media.lightbox-video");
+          if (video) {
+            if (video.paused) video.play();
+            else video.pause();
+          } else {
+            // Toggle fullscreen for image viewing
+            if (document.fullscreenElement) {
+              document.exitFullscreen().catch(() => {});
+            } else if (_overlay) {
+              _overlay.requestFullscreen().catch(() => {});
+            }
+          }
+        }
+        break;
       case "1": case "2": case "3": case "4": case "5":
         if (!e.target.matches("input, textarea, select")) {
           e.preventDefault();
+          e.stopPropagation();
           _setRatingFromKey(parseInt(e.key, 10));
         }
         break;

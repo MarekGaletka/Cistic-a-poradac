@@ -151,9 +151,74 @@ def create_plan(
                 )
             )
 
-    plan.sort(key=lambda x: (str(x.move_path), x.digest))
+    plan = _resolve_dependency_order(plan)
     manual.sort(key=lambda x: (str(x.path), x.digest))
     return plan, manual
+
+
+def _resolve_dependency_order(plan: list[PlanRow]) -> list[PlanRow]:
+    """Sort plan rows so that dependency chains are respected.
+
+    A dependency exists when row A moves file X, and row B's keep_path is X.
+    In that case, B must execute before A (we must finish using X as a "keep"
+    reference before X gets moved away by another row).
+
+    Uses topological sort; warns and falls back to stable sort if cycles exist.
+    """
+    import logging as _log
+
+    _logger = _log.getLogger(__name__)
+
+    # Build a map: move_path -> index of the row that moves it
+    move_index: dict[Path, int] = {}
+    for i, row in enumerate(plan):
+        move_index[row.move_path] = i
+
+    # Build adjacency: if row[i].keep_path == row[j].move_path,
+    # then row[i] depends on row[j] (j must come first).
+    from collections import defaultdict, deque
+
+    adj: dict[int, list[int]] = defaultdict(list)   # j -> [i, ...] (j before i)
+    in_degree: dict[int, int] = defaultdict(int)
+
+    for i, row in enumerate(plan):
+        j = move_index.get(row.keep_path)
+        if j is not None and j != i:
+            # row i depends on row j's move_path still existing as keep reference.
+            # Actually: row i uses keep_path which is row j's move_path.
+            # Row j will remove that file. So row i must run BEFORE row j.
+            adj[i].append(j)
+            in_degree[j] = in_degree.get(j, 0) + 1
+
+    # Kahn's algorithm for topological sort
+    queue: deque[int] = deque()
+    for i in range(len(plan)):
+        if in_degree.get(i, 0) == 0:
+            queue.append(i)
+
+    ordered_indices: list[int] = []
+    while queue:
+        node = queue.popleft()
+        ordered_indices.append(node)
+        for neighbor in adj.get(node, []):
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    if len(ordered_indices) != len(plan):
+        # Cycle detected — log warning and use original order
+        cycle_nodes = set(range(len(plan))) - set(ordered_indices)
+        cycle_paths = [str(plan[i].move_path) for i in list(cycle_nodes)[:5]]
+        _logger.warning(
+            "Dependency cycle detected in plan involving %d rows (e.g. %s). "
+            "Using default sort order; manual review recommended.",
+            len(cycle_nodes),
+            ", ".join(cycle_paths),
+        )
+        plan.sort(key=lambda x: (str(x.move_path), x.digest))
+        return plan
+
+    return [plan[i] for i in ordered_indices]
 
 
 def write_plan_files(

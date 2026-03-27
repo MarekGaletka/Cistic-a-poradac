@@ -77,7 +77,7 @@ function _clusterIcon(cluster) {
 export async function render(container) {
   container.innerHTML = `
     <div class="page-header"><h2>${t("map.title")}</h2></div>
-    <div id="map-container"></div>`;
+    <div class="loading"><div class="spinner"></div>${t("general.loading")}</div>`;
 
   try {
     const data = await api("/files?has_gps=true&limit=10000");

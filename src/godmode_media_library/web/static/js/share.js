@@ -181,6 +181,6 @@ async function _loadShares(overlay, filePath) {
       });
     });
   } catch {
-    listEl.innerHTML = `<div style="color:var(--red);padding:8px">Error loading shares</div>`;
+    listEl.innerHTML = `<div style="color:var(--red);padding:8px">${t("share.load_error")}</div>`;
   }
 }

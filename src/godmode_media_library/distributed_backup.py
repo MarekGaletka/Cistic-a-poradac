@@ -6,11 +6,11 @@ import json
 import logging
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from .catalog import Catalog
-from .cloud import list_remotes, rclone_about, _rclone_bin
+from .cloud import _rclone_bin, list_remotes, rclone_about
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,7 @@ def get_files_for_backup(catalog: Catalog, limit: int = 0) -> list[dict]:
 
     files = []
     for r in rows:
-        d = dict(zip(cols, r))
+        d = dict(zip(cols, r, strict=False))
         d["priority"] = _compute_file_priority(d)
         files.append(d)
 
@@ -754,7 +754,7 @@ def auto_heal(catalog: Catalog, progress_fn: Callable | None = None) -> dict:
         return {"status": "ok", "message": "\u017d\u00e1dn\u00e9 soubory na nezdrav\u00fdch remotech", "healed": 0}
 
     # 3. Remove affected entries
-    for row_id, file_id, remote_name in affected:
+    for row_id, _file_id, _remote_name in affected:
         catalog.conn.execute("DELETE FROM backup_manifest WHERE id = ?", (row_id,))
     catalog.conn.commit()
 

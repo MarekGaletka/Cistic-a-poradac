@@ -8,10 +8,10 @@ import logging
 import mimetypes
 import os
 import time
+from urllib.parse import quote as _url_quote
 from collections import defaultdict
-from pathlib import Path
-
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +25,29 @@ logger = logging.getLogger(__name__)
 # Rate limiting state
 _rate_limit_hits: dict[str, list[float]] = defaultdict(list)
 _RATE_LIMIT_WINDOW = 60.0  # seconds
-_RATE_LIMIT_MAX = 600  # requests per window (generous for local UI)
+_RATE_LIMIT_MAX = 120  # requests per window (~2/sec, suitable for single-user)
+_RATE_LIMIT_MAX_IPS = 10_000  # max unique IPs tracked
+
+# Auth failure rate limiting — track failed auth attempts per IP
+_auth_failures: dict[str, list[float]] = defaultdict(list)
+_AUTH_FAILURE_WINDOW = 60.0  # seconds
+_AUTH_FAILURE_MAX = 10  # max failures per IP per window
+_AUTH_FAILURE_MAX_IPS = 10_000  # max unique IPs tracked
+
+
+def _prune_rate_dict(d: dict[str, list[float]], window: float, max_ips: int) -> None:
+    """Evict entries older than *window* seconds; cap dict to *max_ips*."""
+    now = time.monotonic()
+    cutoff = now - window
+    # Remove stale entries
+    stale = [ip for ip, hits in d.items() if not hits or hits[-1] < cutoff]
+    for ip in stale:
+        del d[ip]
+    # Hard cap: if still too many IPs, drop the oldest
+    if len(d) > max_ips:
+        by_latest = sorted(d.items(), key=lambda kv: kv[1][-1] if kv[1] else 0)
+        for ip, _ in by_latest[: len(d) - max_ips]:
+            del d[ip]
 
 
 def create_app(catalog_path: Path | None = None) -> FastAPI:
@@ -38,6 +60,11 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
     from ..catalog import Catalog, default_catalog_path
 
     api_token = os.environ.get("GML_API_TOKEN", "")
+    if not api_token:
+        logger.warning(
+            "GML_API_TOKEN is not set — API authentication is disabled. "
+            "Set GML_API_TOKEN to secure the API."
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -58,11 +85,16 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
     app.state.catalog_path = catalog_path or default_catalog_path()
 
-    # CORS — allow configurable origins (default: localhost only)
+    # CORS — allow configurable origins.
+    # In debug/dev mode (GML_DEBUG=1), allow all origins for convenience.
+    # In production (default), restrict to localhost only.
+    debug_mode = os.environ.get("GML_DEBUG", "").strip() in ("1", "true", "yes")
     origins = os.environ.get("GML_CORS_ORIGINS", "").split(",")
     origins = [o.strip() for o in origins if o.strip()]
     if not origins:
-        origins = ["http://localhost:*", "http://127.0.0.1:*"]
+        origins = ["*"] if debug_mode else ["http://localhost:*", "http://127.0.0.1:*"]
+    if "*" in origins:
+        logger.warning("CORS allow_origins='*' is enabled (GML_DEBUG mode). Do not use in production.")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
@@ -83,6 +115,24 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         # Allow static files, docs, and openapi schema without auth
         if not path.startswith("/api/"):
             return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+
+        # Periodically evict stale entries to bound memory
+        _prune_rate_dict(_auth_failures, _AUTH_FAILURE_WINDOW, _AUTH_FAILURE_MAX_IPS)
+
+        # Check if this IP is rate-limited due to too many auth failures
+        now = time.monotonic()
+        failures = _auth_failures[client_ip]
+        cutoff = now - _AUTH_FAILURE_WINDOW
+        _auth_failures[client_ip] = [t for t in failures if t > cutoff]
+        if len(_auth_failures[client_ip]) >= _AUTH_FAILURE_MAX:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many authentication failures. Try again later."},
+                headers={"Retry-After": str(int(_AUTH_FAILURE_WINDOW))},
+            )
+
         # Check Bearer token or X-API-Token header
         auth_header = request.headers.get("authorization", "")
         token_header = request.headers.get("x-api-token", "")
@@ -95,8 +145,14 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             provided = token_header
         elif token_param:
             provided = token_param
+            logger.warning(
+                "API token passed via query parameter — use Authorization header instead for security"
+            )
 
         if not hmac.compare_digest(provided, api_token):
+            # Record this auth failure for rate limiting
+            _auth_failures[client_ip].append(now)
+
             # For WebSocket upgrades, reject with 403 (WS doesn't support 401)
             if request.headers.get("upgrade", "").lower() == "websocket":
                 return JSONResponse(
@@ -125,6 +181,9 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             client_ip = request.client.host if request.client else "unknown"
             now = time.monotonic()
 
+            # Periodically evict stale entries to bound memory
+            _prune_rate_dict(_rate_limit_hits, _RATE_LIMIT_WINDOW, _RATE_LIMIT_MAX_IPS)
+
             hits = _rate_limit_hits[client_ip]
             cutoff = now - _RATE_LIMIT_WINDOW
             _rate_limit_hits[client_ip] = [t for t in hits if t > cutoff]
@@ -146,6 +205,13 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' ws: wss:"
+        )
         # Prevent browser caching of JS/CSS so changes are picked up immediately
         path = request.url.path
         if path.endswith((".js", ".css", ".html")):
@@ -206,16 +272,35 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
             # Password check
             if share["has_password"]:
-                provided_pw = password
-                if not provided_pw and request:
-                    provided_pw = request.headers.get("x-share-password", "")
+                # Prefer X-Share-Password header or POST body over query param
+                provided_pw = None
+                if request:
+                    provided_pw = request.headers.get("x-share-password", "") or None
+                if not provided_pw and password:
+                    provided_pw = password
+                    logger.warning(
+                        "Share password passed via query parameter — use X-Share-Password header instead for security"
+                    )
                 if not provided_pw:
                     return JSONResponse(
                         status_code=401,
                         content={"detail": "Password required"},
                     )
-                pw_hash = hashlib.sha256(provided_pw.encode("utf-8")).hexdigest()
-                if pw_hash != share["password_hash"]:
+                stored = share["password_hash"]
+                if ":" in stored:
+                    # PBKDF2 format: hex(salt):hex(dk)
+                    salt_hex, dk_hex = stored.split(":", 1)
+                    salt = bytes.fromhex(salt_hex)
+                    expected_dk = bytes.fromhex(dk_hex)
+                    provided_dk = hashlib.pbkdf2_hmac(
+                        "sha256", provided_pw.encode("utf-8"), salt, 100_000,
+                    )
+                    pw_ok = hmac.compare_digest(provided_dk, expected_dk)
+                else:
+                    # Legacy SHA-256 format (pre-migration shares)
+                    pw_hash = hashlib.sha256(provided_pw.encode("utf-8")).hexdigest()
+                    pw_ok = hmac.compare_digest(pw_hash, stored)
+                if not pw_ok:
                     return JSONResponse(
                         status_code=403,
                         content={"detail": "Invalid password"},
@@ -240,7 +325,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                 file_streamer(),
                 media_type=content_type,
                 headers={
-                    "Content-Disposition": f'attachment; filename="{file_path.name}"',
+                    "Content-Disposition": "attachment; filename*=UTF-8''" + _url_quote(file_path.name, safe=''),
                     "Content-Length": str(file_path.stat().st_size),
                 },
             )

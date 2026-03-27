@@ -30,12 +30,15 @@ export async function render(container) {
   _planResult = null;
   _planId = null;
 
+  container.innerHTML = `<div class="loading"><div class="spinner"></div>${t("general.loading")}</div>`;
+
   // Load detected sources
   try {
     const data = await api("/reorganize/sources");
     _detectedSources = data.sources || [];
-  } catch {
+  } catch (e) {
     _detectedSources = [];
+    showToast(t("general.error", { message: e.message }), "error");
   }
 
   _renderWizard();
@@ -136,7 +139,7 @@ function _renderSourcesStep() {
         <div class="reorg-source-info">
           <span class="reorg-source-name">${escapeHtml(src.name)}</span>
           <span class="reorg-source-path">${escapeHtml(src.path)}</span>
-          <span class="reorg-source-type">${typeLabel}${src.file_count > 0 ? ` \u00B7 ~${src.file_count} soubor\u016f` : ""}</span>
+          <span class="reorg-source-type">${typeLabel}${src.file_count > 0 ? ` \u00B7 ~${src.file_count} ${t("reorganize.files_approx")}` : ""}</span>
         </div>
         <span class="reorg-source-check">${isSelected ? "\u2713" : ""}</span>
       </button>`;
@@ -337,13 +340,13 @@ function _renderPreviewStep() {
       ${_renderCategoryBreakdown(r)}
       ${_renderSourceBreakdown(r)}
 
-      ${r.errors && r.errors.length > 0 ? `<div class="reorg-errors"><h4>Chyby (${r.errors.length})</h4><ul>${r.errors.slice(0, 10).map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul></div>` : ""}
+      ${r.errors && r.errors.length > 0 ? `<div class="reorg-errors"><h4>${t("reorg.errors_title")} (${r.errors.length})</h4><ul>${r.errors.slice(0, 10).map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul></div>` : ""}
     </div>`;
 }
 
 function _renderCategoryBreakdown(r) {
   if (!r.categories || Object.keys(r.categories).length === 0) return "";
-  const catLabels = { images: "\uD83D\uDCF7 Obr\u00e1zky", videos: "\uD83C\uDFAC Videa", audio: "\uD83C\uDFB5 Audio", documents: "\uD83D\uDCC4 Dokumenty", other: "\uD83D\uDCC1 Ostatn\u00ed" };
+  const catLabels = { images: t("reorg.cat_images"), videos: t("reorg.cat_videos"), audio: t("reorg.cat_audio"), documents: t("reorg.cat_documents"), other: t("reorg.cat_other") };
   let html = `<h4 class="reorg-section-label">${t("reorg.by_category")}</h4><div class="reorg-breakdown">`;
   for (const [cat, count] of Object.entries(r.categories)) {
     html += `<div class="reorg-breakdown-row"><span>${catLabels[cat] || cat}</span><span class="reorg-breakdown-val">${count.toLocaleString("cs-CZ")}</span></div>`;
@@ -359,7 +362,7 @@ function _renderSourceBreakdown(r) {
     const name = src.split("/").pop() || src;
     html += `<div class="reorg-breakdown-row">
       <span>\uD83D\uDCC1 ${escapeHtml(name)}</span>
-      <span class="reorg-breakdown-val">${stats.files.toLocaleString("cs-CZ")} soubor\u016f \u00B7 ${formatBytes(stats.size)}${stats.duplicates > 0 ? ` \u00B7 ${stats.duplicates} duplicit` : ""}</span>
+      <span class="reorg-breakdown-val">${stats.files.toLocaleString("cs-CZ")} ${t("reorganize.files_approx")} \u00B7 ${formatBytes(stats.size)}${stats.duplicates > 0 ? ` \u00B7 ${stats.duplicates} duplicit` : ""}</span>
     </div>`;
   }
   html += "</div>";

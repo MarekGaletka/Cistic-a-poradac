@@ -340,7 +340,7 @@ def test_exclusive_lock_prevents_second_open(tmp_path: Path) -> None:
     cat1.open(exclusive=True)
     try:
         cat2 = Catalog(db_path, exclusive=True)
-        with pytest.raises(RuntimeError, match="Another process"):
+        with pytest.raises(RuntimeError, match="Another gml process"):
             cat2.open(exclusive=True)
     finally:
         cat1.close()

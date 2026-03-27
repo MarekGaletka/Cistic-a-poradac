@@ -481,7 +481,7 @@ function _renderAppMineResults(container) {
         }
 
         if (errors.length > 0) {
-          console.warn("Signal decrypt errors:", errors);
+          // errors are handled by the UI toast above
         }
       });
     } catch (e) {

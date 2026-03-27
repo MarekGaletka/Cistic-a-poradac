@@ -25,6 +25,7 @@ import * as gallery from "./pages/gallery.js";
 import * as people from "./pages/people.js";
 import * as cloud from "./pages/cloud.js";
 import * as backup from "./pages/backup.js";
+import * as consolidation from "./pages/consolidation.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -42,6 +43,7 @@ const pages = {
   people,
   cloud,
   backup,
+  consolidation,
 };
 
 let _currentPage = null;
@@ -479,10 +481,24 @@ function showShortcutsModal() {
   overlay.setAttribute("role", "dialog");
   overlay.innerHTML = `<div class="shortcuts-modal">
     <h3>${t("shortcuts.title")}</h3>
+    <h4 style="margin:12px 0 6px;opacity:0.7;font-size:12px;text-transform:uppercase">${t("shortcuts.section_general")}</h4>
     <div class="shortcuts-row"><span>${t("shortcuts.navigate")}</span><span class="shortcuts-key">1-6</span></div>
     <div class="shortcuts-row"><span>${t("shortcuts.search")}</span><span class="shortcuts-key">/</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.command_palette")}</span><span class="shortcuts-key">\u2318K</span></div>
     <div class="shortcuts-row"><span>${t("shortcuts.close")}</span><span class="shortcuts-key">Esc</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.confirm_modal")}</span><span class="shortcuts-key">Enter</span></div>
     <div class="shortcuts-row"><span>${t("shortcuts.help")}</span><span class="shortcuts-key">?</span></div>
+    <h4 style="margin:12px 0 6px;opacity:0.7;font-size:12px;text-transform:uppercase">${t("shortcuts.section_files")}</h4>
+    <div class="shortcuts-row"><span>${t("shortcuts.select_all")}</span><span class="shortcuts-key">\u2318A</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.delete_selected")}</span><span class="shortcuts-key">Delete</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.quick_look")}</span><span class="shortcuts-key">Space</span></div>
+    <h4 style="margin:12px 0 6px;opacity:0.7;font-size:12px;text-transform:uppercase">${t("shortcuts.section_lightbox")}</h4>
+    <div class="shortcuts-row"><span>${t("shortcuts.prev_next")}</span><span class="shortcuts-key">\u2190 \u2192</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.play_pause_fullscreen")}</span><span class="shortcuts-key">Space</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.info_panel")}</span><span class="shortcuts-key">I</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.favorite")}</span><span class="shortcuts-key">F</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.rotate")}</span><span class="shortcuts-key">R / Shift+R</span></div>
+    <div class="shortcuts-row"><span>${t("shortcuts.rate")}</span><span class="shortcuts-key">1-5</span></div>
   </div>`;
   overlay.addEventListener("click", (ev) => { if (ev.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
@@ -500,8 +516,10 @@ document.addEventListener("keydown", e => {
 
   if (e.target.matches("input, textarea, select")) return;
 
-  // Number keys 1-6 navigate to pages
+  // Number keys 1-6 navigate to pages (skip if lightbox is open)
+  const lightboxOverlay = document.getElementById("lightbox-overlay");
   if (_pageKeys[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (lightboxOverlay && !lightboxOverlay.classList.contains("hidden")) return;
     e.preventDefault();
     const page = _pageKeys[e.key];
     location.hash = page;
@@ -527,6 +545,19 @@ document.addEventListener("keydown", e => {
 
   if (e.key === "Enter" && e.target.matches("tr[role='button'], [role='button']")) {
     e.target.click();
+    return;
+  }
+
+  // Enter → confirm/submit primary button in open modal
+  if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+    const modal = $(".modal-overlay");
+    if (modal) {
+      const primaryBtn = modal.querySelector("button.primary, button[type='submit']");
+      if (primaryBtn && !primaryBtn.disabled) {
+        e.preventDefault();
+        primaryBtn.click();
+      }
+    }
   }
 });
 

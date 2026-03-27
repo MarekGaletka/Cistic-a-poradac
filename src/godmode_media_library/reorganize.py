@@ -7,14 +7,15 @@ structure.
 
 from __future__ import annotations
 
+import contextlib
 import logging
-import os
 import shutil
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 from .tree_ops import _date_bucket, _file_category
 from .utils import ensure_dir, iter_files, safe_stat_birthtime, sha256_file
@@ -210,7 +211,7 @@ def _should_exclude(path: Path, patterns: list[str]) -> bool:
             return True
         if pat in path_str:
             return True
-    return True if name.startswith(".") and ".*" in patterns else False
+    return bool(name.startswith(".") and ".*" in patterns)
 
 
 def _origin_timestamp(path: Path) -> float:
@@ -302,7 +303,7 @@ def plan_reorganization(
     logger.info("Discovery found %d files across %d sources", len(raw_paths), len(config.sources))
 
     entries: list[ReorganizeFileEntry] = []
-    for idx, path in enumerate(raw_paths):
+    for _idx, path in enumerate(raw_paths):
         try:
             st = path.stat()
         except OSError as exc:
@@ -403,7 +404,7 @@ def plan_reorganization(
             if entry.sha256:
                 hash_groups[entry.sha256].append(idx)
 
-        for sha, indices in hash_groups.items():
+        for _sha, indices in hash_groups.items():
             if len(indices) < 2:
                 continue
             # Pick the "richest" file: largest size as proxy for richest metadata
@@ -523,10 +524,8 @@ def execute_reorganization(
                     entry.status = "error"
                     result.errors.append(f"Size mismatch after copy: {src} ({src_size}) -> {dst} ({dst_size})")
                     # Remove bad copy
-                    try:
+                    with contextlib.suppress(OSError):
                         dst.unlink()
-                    except OSError:
-                        pass
                     result.files_skipped += 1
                     continue
             except OSError as exc:

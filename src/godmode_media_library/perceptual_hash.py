@@ -12,6 +12,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_heif_registered = False
+
+# Hashable image extensions — formats that Pillow can open natively
+# (or via pillow-heif for HEIC/HEIF).
+# NOTE: RAW camera formats (dng, cr2, cr3, nef, arw, raw) are listed in
+# asset_sets.IMAGE_EXTS but are intentionally excluded here because Pillow
+# cannot decode them without a third-party raw processor.
 _IMAGE_EXTS = {
     "jpg",
     "jpeg",
@@ -64,11 +71,13 @@ def dhash(path: Path, *, hash_size: int = HASH_SIZE) -> str | None:
 
     from PIL import Image
 
-    # Register HEIF opener if available
-    if path.suffix.lower() in (".heic", ".heif") and _check_heif():
+    # Register HEIF opener if available (once per process)
+    global _heif_registered
+    if not _heif_registered and path.suffix.lower() in (".heic", ".heif") and _check_heif():
         import pillow_heif
 
         pillow_heif.register_heif_opener()
+        _heif_registered = True
 
     try:
         with Image.open(path) as img:
@@ -120,6 +129,65 @@ def _is_same_hash_type(hash_a: str, hash_b: str) -> bool:
     return len(hash_a) == len(hash_b)
 
 
+def _bucket_key(hex_hash: str, prefix_bits: int = 16) -> str:
+    """Return the first `prefix_bits` bits of a hex hash as a bucket key.
+
+    With 16 prefix bits (4 hex chars), hashes are split into up to 65536
+    buckets, reducing pairwise comparisons from O(n^2) to O(n * bucket_size).
+    Two hashes that differ in more than `threshold` bits can still land in the
+    same bucket, but hashes that differ in the prefix alone by more than the
+    threshold will be in separate buckets. We use multi-probe: we also check
+    neighboring buckets by flipping each prefix bit, ensuring we never miss
+    pairs within the Hamming distance threshold.
+    """
+    prefix_hex_chars = (prefix_bits + 3) // 4  # ceil division
+    return hex_hash[:prefix_hex_chars]
+
+
+def _nearby_bucket_keys(key: str, threshold: int, prefix_bits: int = 16) -> set[str]:
+    """Return bucket keys within Hamming distance of `threshold` from `key`.
+
+    For small prefix_bits (16) and typical thresholds (<=10), this generates
+    all keys reachable by flipping up to `min(threshold, 4)` bits
+    in the prefix. When threshold >= prefix_bits, all buckets could match so
+    we return an empty set as a signal to skip the optimization.
+
+    The prefix length adapts to the threshold: for threshold > 4, we use a
+    shorter effective prefix (8 bits) to create larger buckets and reduce
+    false negatives.
+    """
+    if threshold >= prefix_bits:
+        # Threshold is too large relative to prefix — bucketing won't help
+        return set()
+
+    prefix_hex_chars = (prefix_bits + 3) // 4
+    prefix_int = int(key, 16)
+    keys: set[str] = set()
+
+    # Adapt flip bits to threshold: for small thresholds (<=4), 2-bit flips
+    # suffice. For larger thresholds, use min(threshold, 4) to cover more
+    # neighboring buckets and avoid false negatives.
+    max_flips = min(threshold, 4)
+
+    # 0-bit flip: same bucket
+    keys.add(key)
+
+    # 1-bit flips
+    if max_flips >= 1:
+        for bit in range(prefix_bits):
+            flipped = prefix_int ^ (1 << bit)
+            keys.add(f"{flipped:0{prefix_hex_chars}x}")
+
+    # 2-bit flips
+    if max_flips >= 2:
+        for b1 in range(prefix_bits):
+            for b2 in range(b1 + 1, prefix_bits):
+                flipped = prefix_int ^ (1 << b1) ^ (1 << b2)
+                keys.add(f"{flipped:0{prefix_hex_chars}x}")
+
+    return keys
+
+
 def find_similar(
     hashes: dict[str, str],
     *,
@@ -132,50 +200,102 @@ def find_similar(
 
     For video hashes, uses average per-frame Hamming distance.
 
+    Uses bit-prefix bucketing with multi-probe to reduce comparisons from
+    O(n^2) to approximately O(n * bucket_size). Hashes are grouped by their
+    first 16 bits; each hash is compared only against hashes in nearby
+    buckets (those whose prefix is within 2 bit-flips).
+
     Args:
-        hashes: Dict mapping file path → hex hash string.
+        hashes: Dict mapping file path -> hex hash string.
         threshold: Maximum Hamming distance to consider similar.
 
     Returns:
         List of SimilarPair sorted by distance ascending.
     """
-    items = list(hashes.items())
-    pairs: list[SimilarPair] = []
-
-    # Standard image hash length (hash_size=8 → 16 hex chars)
+    # Standard image hash length (hash_size=8 -> 16 hex chars)
     image_hash_len = HASH_SIZE * HASH_SIZE // 4
+    # Adapt prefix length to threshold to avoid false negatives
+    PREFIX_BITS = 8 if threshold > 4 else 16
 
-    for i in range(len(items)):
-        path_a, hash_a = items[i]
-        for j in range(i + 1, len(items)):
-            path_b, hash_b = items[j]
+    # Group hashes by length (type), then by prefix bucket
+    # Structure: {hash_length: {bucket_key: [(path, hash_hex)]}}
+    from collections import defaultdict
 
-            # Only compare hashes of same length/type
-            if not _is_same_hash_type(hash_a, hash_b):
-                continue
+    by_length: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for path, hex_hash in hashes.items():
+        bk = _bucket_key(hex_hash, PREFIX_BITS)
+        by_length[len(hex_hash)][bk].append((path, hex_hash))
 
-            if len(hash_a) == image_hash_len:
-                # Standard image comparison
-                dist = hamming_distance(hash_a, hash_b)
-            elif len(hash_a) > image_hash_len:
-                # Video composite hash — average frame distance
-                from .video_hash import video_hamming_distance
+    pairs: list[SimilarPair] = []
+    seen: set[tuple[str, str]] = set()  # avoid duplicate pairs from multi-probe
 
-                dist_float = video_hamming_distance(hash_a, hash_b)
-                dist = int(round(dist_float))
-            else:
-                continue
+    for hash_len, buckets in by_length.items():
+        if hash_len < image_hash_len:
+            continue  # skip unknown short hashes
 
-            if dist <= threshold:
-                pairs.append(
-                    SimilarPair(
-                        path_a=path_a,
-                        path_b=path_b,
-                        distance=dist,
-                        hash_a=hash_a,
-                        hash_b=hash_b,
-                    )
-                )
+        is_video = hash_len > image_hash_len
+        probe_keys_cache: dict[str, set[str]] = {}
+
+        for bk, items_in_bucket in buckets.items():
+            # Intra-bucket: compare all pairs within this bucket
+            for i in range(len(items_in_bucket)):
+                path_a, hash_a = items_in_bucket[i]
+                for j in range(i + 1, len(items_in_bucket)):
+                    path_b, hash_b = items_in_bucket[j]
+                    pair_key = (path_a, path_b) if path_a < path_b else (path_b, path_a)
+                    if pair_key in seen:
+                        continue
+                    seen.add(pair_key)
+
+                    if is_video:
+                        from .video_hash import video_hamming_distance
+                        dist = int(round(video_hamming_distance(hash_a, hash_b)))
+                    else:
+                        dist = hamming_distance(hash_a, hash_b)
+
+                    if dist <= threshold:
+                        pairs.append(
+                            SimilarPair(
+                                path_a=path_a, path_b=path_b,
+                                distance=dist, hash_a=hash_a, hash_b=hash_b,
+                            )
+                        )
+
+            # Inter-bucket: compare this bucket against nearby buckets
+            if bk not in probe_keys_cache:
+                probe_keys_cache[bk] = _nearby_bucket_keys(bk, threshold, PREFIX_BITS)
+            neighbor_keys = probe_keys_cache[bk]
+
+            if not neighbor_keys:
+                # threshold >= PREFIX_BITS: bucketing can't filter, compare all buckets
+                neighbor_keys = set(buckets.keys())
+
+            for nbk in neighbor_keys:
+                if nbk <= bk or nbk not in buckets:
+                    # Only compare bk < nbk to avoid double-processing bucket pairs
+                    continue
+                for path_a, hash_a in items_in_bucket:
+                    for path_b, hash_b in buckets[nbk]:
+                        pair_key = (path_a, path_b) if path_a < path_b else (path_b, path_a)
+                        if pair_key in seen:
+                            continue
+                        seen.add(pair_key)
+
+                        if is_video:
+                            from .video_hash import video_hamming_distance
+                            dist = int(round(video_hamming_distance(hash_a, hash_b)))
+                        else:
+                            dist = hamming_distance(hash_a, hash_b)
+
+                        if dist <= threshold:
+                            pairs.append(
+                                SimilarPair(
+                                    path_a=path_a, path_b=path_b,
+                                    distance=dist, hash_a=hash_a, hash_b=hash_b,
+                                )
+                            )
 
     pairs.sort(key=lambda p: (p.distance, p.path_a))
     return pairs

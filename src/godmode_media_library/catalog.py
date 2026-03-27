@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import logging
 import os
 import sqlite3
@@ -13,7 +14,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -182,7 +183,9 @@ CREATE TABLE IF NOT EXISTS backup_targets (
     total_bytes INTEGER DEFAULT 0,
     used_bytes INTEGER DEFAULT 0,
     free_bytes INTEGER DEFAULT 0,
-    last_probed_at TEXT
+    last_probed_at TEXT,
+    encrypted INTEGER DEFAULT 0,
+    crypt_remote TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS backup_manifest (
@@ -304,15 +307,17 @@ class Catalog:
             lock_path = self._db_path.with_suffix(".lock")
             self._lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
             try:
-                import fcntl
-
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 os.close(self._lock_fd)
                 self._lock_fd = None
                 raise RuntimeError(
-                    f"Another process holds an exclusive lock on {self._db_path}. Wait for it to finish or remove the lock file."
+                    "Another gml process is writing to the catalog. Try again later."
                 ) from None
+            except BaseException:
+                os.close(self._lock_fd)
+                self._lock_fd = None
+                raise
         conn = sqlite3.connect(str(self._db_path))
         try:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -338,8 +343,10 @@ class Catalog:
                     )
                     conn.commit()
         except Exception:
+            logger.exception("Catalog open failed")
             conn.close()
             self._conn = None
+            self._release_lock()
             raise
         self._conn = conn
 
@@ -370,18 +377,20 @@ class Catalog:
                     ("gps_longitude", "REAL"),
                 ]
                 for col_name, col_type in media_columns:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(sqlite3.OperationalError):
+                        # Safe: col_name/col_type are hardcoded constants above, not user input
                         self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_phash ON files(phash)")
                 self._conn.execute("RELEASE SAVEPOINT migrate_v2")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v2 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v2")
                 raise
         if from_version < 3:
             logger.info("Migrating catalog schema v%d -> v3: adding metadata richness and file_metadata table", from_version)
             self._conn.execute("SAVEPOINT migrate_v3")
             try:
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(sqlite3.OperationalError):
                     self._conn.execute("ALTER TABLE files ADD COLUMN metadata_richness REAL")
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_richness ON files(metadata_richness)")
                 self._conn.execute("""
@@ -392,7 +401,8 @@ class Catalog:
                     )
                 """)
                 self._conn.execute("RELEASE SAVEPOINT migrate_v3")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v3 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v3")
                 raise
         if from_version < 4:
@@ -415,7 +425,8 @@ class Catalog:
                 """)
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id)")
                 self._conn.execute("RELEASE SAVEPOINT migrate_v4")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v4 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v4")
                 raise
         if from_version < 5:
@@ -436,7 +447,8 @@ class Catalog:
                     )
                 """)
                 self._conn.execute("RELEASE SAVEPOINT migrate_v5")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v5 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v5")
                 raise
         if from_version < 6:
@@ -480,7 +492,8 @@ class Catalog:
                     )
                 """)
                 self._conn.execute("RELEASE SAVEPOINT migrate_v6")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v6 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v6")
                 raise
         if from_version < 7:
@@ -503,7 +516,8 @@ class Catalog:
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token)")
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)")
                 self._conn.execute("RELEASE SAVEPOINT migrate_v7")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v7 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v7")
                 raise
         if from_version < 8:
@@ -511,10 +525,12 @@ class Catalog:
             self._conn.execute("SAVEPOINT migrate_v8")
             try:
                 for col_name, col_type in [("quality_blur", "REAL"), ("quality_brightness", "REAL"), ("quality_category", "TEXT")]:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(sqlite3.OperationalError):
+                        # Safe: col_name/col_type are hardcoded constants above, not user input
                         self._conn.execute(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}")  # noqa: S608
                 self._conn.execute("RELEASE SAVEPOINT migrate_v8")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v8 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v8")
                 raise
         if from_version < 9:
@@ -552,7 +568,8 @@ class Catalog:
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_remote ON backup_manifest(remote_name)")
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_bm_sha ON backup_manifest(sha256)")
                 self._conn.execute("RELEASE SAVEPOINT migrate_v9")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v9 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v9")
                 raise
         if from_version < 10:
@@ -560,7 +577,7 @@ class Catalog:
             self._conn.execute("SAVEPOINT migrate_v10")
             try:
                 # Add source_remote to files table (tracks which remote/source a file came from)
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(sqlite3.OperationalError):
                     self._conn.execute("ALTER TABLE files ADD COLUMN source_remote TEXT")
                 # Consolidation tables (managed by checkpoint.py, created here for schema completeness)
                 self._conn.execute("""
@@ -599,23 +616,36 @@ class Catalog:
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_job_step ON consolidation_file_state(job_id, step_name)")
                 self._conn.execute("CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status)")
                 self._conn.execute("RELEASE SAVEPOINT migrate_v10")
-            except Exception:
+            except sqlite3.Error:
+                logger.exception("Migration v10 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v10")
                 raise
+        if from_version < 11:
+            logger.info("Migrating catalog schema v%d -> v11: adding encrypted/crypt_remote to backup_targets", from_version)
+            self._conn.execute("SAVEPOINT migrate_v11")
+            try:
+                with contextlib.suppress(sqlite3.OperationalError):
+                    self._conn.execute("ALTER TABLE backup_targets ADD COLUMN encrypted INTEGER DEFAULT 0")
+                with contextlib.suppress(sqlite3.OperationalError):
+                    self._conn.execute("ALTER TABLE backup_targets ADD COLUMN crypt_remote TEXT DEFAULT ''")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v11")
+            except sqlite3.Error:
+                logger.exception("Migration v11 failed")
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v11")
+                raise
+
+    def _release_lock(self) -> None:
+        """Release the advisory file lock if held."""
+        if self._lock_fd is not None:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            os.close(self._lock_fd)
+            self._lock_fd = None
 
     def close(self) -> None:
         if self._conn:
             self._conn.close()
             self._conn = None
-        if self._lock_fd is not None:
-            try:
-                import fcntl
-
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
-            except ImportError:
-                pass  # Windows — no flock needed
-            os.close(self._lock_fd)
-            self._lock_fd = None
+        self._release_lock()
 
     def __enter__(self) -> Catalog:
         self.open(exclusive=self._exclusive)
@@ -745,17 +775,59 @@ class Catalog:
         row = cur.fetchone()
         return (row[0], row[1]) if row else None
 
+    def get_all_mtime_size_for_root(self, root: str) -> dict[str, tuple[float, int]]:
+        """Batch lookup: returns {path: (mtime, size)} for all files under *root*.
+
+        Uses a prefix query (LIKE 'root%') so it works for any subtree.
+        """
+        prefix = root.rstrip("/") + "/"
+        cur = self.conn.execute(
+            "SELECT path, mtime, size FROM files WHERE path LIKE ? || '%'",
+            (prefix,),
+        )
+        return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
     def mark_removed(self, paths: list[str]) -> int:
-        """Delete catalog entries for removed files. Returns count deleted."""
+        """Delete catalog entries for removed files. Returns count deleted.
+
+        Also decrements nlink on remaining hardlinks sharing the same inode/device.
+        """
         if not paths:
             return 0
+        # Collect inode/device pairs before deletion so we can update remaining hardlinks
         placeholders = ",".join("?" for _ in paths)
+        inode_rows = self.conn.execute(
+            f"SELECT DISTINCT inode, device FROM files WHERE path IN ({placeholders}) AND inode IS NOT NULL AND device IS NOT NULL",  # noqa: S608
+            paths,
+        ).fetchall()
         cur = self.conn.execute(f"DELETE FROM files WHERE path IN ({placeholders})", paths)  # noqa: S608
-        return cur.rowcount
+        deleted = cur.rowcount
+        # Decrement nlink on remaining files that shared the same inode/device
+        for inode, device in inode_rows:
+            self.conn.execute(
+                "UPDATE files SET nlink = MAX(nlink - 1, 1) WHERE inode = ? AND device = ? AND nlink > 1",
+                (inode, device),
+            )
+        return deleted
 
     def delete_file_by_path(self, path: str) -> bool:
-        """Remove a file entry from catalog. Returns True if found and deleted."""
+        """Remove a file entry from catalog. Returns True if found and deleted.
+
+        Also decrements nlink on remaining hardlinks sharing the same inode/device.
+        """
+        # Look up inode/device before deletion
+        inode_row = self.conn.execute(
+            "SELECT inode, device FROM files WHERE path = ? AND inode IS NOT NULL AND device IS NOT NULL",
+            (path,),
+        ).fetchone()
         cur = self.conn.execute("DELETE FROM files WHERE path = ?", (path,))
+        if cur.rowcount > 0 and inode_row is not None:
+            inode, device = inode_row
+            self.conn.execute(
+                "UPDATE files SET nlink = MAX(nlink - 1, 1) WHERE inode = ? AND device = ? AND nlink > 1",
+                (inode, device),
+            )
+            return True
         return cur.rowcount > 0
 
     def update_file_path(self, old_path: str, new_path: str) -> bool:
@@ -1035,6 +1107,7 @@ class Catalog:
         """Create a share link for a file. Returns share dict with token."""
         import datetime as dt
         import hashlib as _hl
+        import os as _os
         import secrets
 
         cur = self.conn.execute("SELECT id FROM files WHERE path = ?", (path,))
@@ -1046,7 +1119,9 @@ class Catalog:
         token = secrets.token_hex(16)
         password_hash = None
         if password:
-            password_hash = _hl.sha256(password.encode("utf-8")).hexdigest()
+            salt = _os.urandom(16)
+            dk = _hl.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+            password_hash = salt.hex() + ":" + dk.hex()
 
         expires_at = None
         if expires_hours is not None and expires_hours > 0:

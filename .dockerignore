@@ -1,0 +1,16 @@
+.git
+__pycache__
+.venv
+tests
+build
+dist
+*.egg-info
+.coverage
+htmlcov
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.pyc
+*.pyo
+.env
+.DS_Store

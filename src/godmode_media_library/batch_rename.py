@@ -94,12 +94,24 @@ def apply_renames(
             result.errors.append(f"Conflict: {action.original} and {targets[target_str]} both map to {action.new_path}")
             result.skipped += 1
             continue
-        targets[target_str] = action.original
 
         if action.new_path.exists() and action.new_path != action.original:
-            result.errors.append(f"Target exists: {action.new_path}")
-            result.skipped += 1
-            continue
+            # Resolve collision by appending a counter suffix
+            counter = 1
+            stem = action.new_path.stem
+            suffix = action.new_path.suffix
+            parent = action.new_path.parent
+            while True:
+                candidate = parent / f"{stem}_{counter}{suffix}"
+                candidate_str = str(candidate)
+                if not candidate.exists() and candidate_str not in targets:
+                    break
+                counter += 1
+            logger.warning("Collision resolved: %s -> %s (target %s existed)", action.original, candidate, action.new_path)
+            action.new_path = candidate
+            action.new_name = candidate.name
+
+        targets[str(action.new_path)] = action.original
 
         if not action.original.exists():
             result.errors.append(f"Source missing: {action.original}")

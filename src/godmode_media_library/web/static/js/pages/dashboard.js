@@ -241,8 +241,7 @@ async function renderDashboard(container, stats) {
 
   // Memories (On This Day) section
   if (memoriesData && memoriesData.memories && memoriesData.memories.length > 0) {
-    const monthNames = ["ledna", "února", "března", "dubna", "května", "června",
-      "července", "srpna", "září", "října", "listopadu", "prosince"];
+    const monthNames = t("months.genitive").split(",");
     html += `<div class="memories-section">
       <div class="memories-section-header">
         <span class="memories-icon">&#128248;</span>
@@ -450,7 +449,7 @@ async function renderDashboard(container, stats) {
 
   // Activity feed section
   html += `<div class="dashboard-section">
-    <h3>📋 Nedávná aktivita</h3>
+    <h3>📋 ${t("activity.recent_title")}</h3>
     <div id="activity-feed"></div>
   </div>`;
 

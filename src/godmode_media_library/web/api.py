@@ -1,20 +1,36 @@
-"""REST API endpoints for GOD MODE Media Library."""
+"""REST API endpoints for GOD MODE Media Library.
+
+NOTE: Many handler functions use lazy (function-level) imports for internal
+package modules (e.g. ``from ..recovery import ...``).  This is intentional —
+it avoids circular dependencies through the web layer and keeps module import
+time fast.  Only stdlib and always-available third-party packages are imported
+at the top of the file.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import hashlib
 import io
 import json
 import logging
+import os
+import platform
+import random
+import re
 import shutil
 import sqlite3
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,8 +38,13 @@ if TYPE_CHECKING:
     from ..catalog import Catalog
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+
+from ..deps import check_all, resolve_bin
+from ..disk_space import check_disk_space
+from ..metadata_richness import compute_group_diff
+from ..perceptual_hash import find_similar
 
 logger = logging.getLogger(__name__)
 
@@ -113,11 +134,14 @@ class TagFilesRequest(BaseModel):
     tag_id: int
 
 
+_DEFAULT_SHARE_EXPIRY_HOURS: float = 7 * 24  # 7 days
+
+
 class CreateShareRequest(BaseModel):
     path: str
     label: str = ""
     password: str | None = None
-    expires_hours: float | None = None
+    expires_hours: float | None = None  # Default: 7 days. Set to 0 to disable expiry.
     max_downloads: int | None = None
 
 
@@ -138,10 +162,80 @@ class ReorganizeExecuteRequest(BaseModel):
     delete_originals: bool = False
 
 
-_DEFAULT_QUARANTINE_ROOT = Path.home() / ".config" / "gml" / "quarantine"
+_DEFAULT_QUARANTINE_ROOT = (Path.home() / ".config" / "gml" / "quarantine").resolve()
 
 # Directories that should not be browsable for security
 _BLOCKED_PREFIXES = ("/etc", "/var", "/private", "/sbin", "/usr", "/bin", "/tmp", "/dev", "/proc", "/sys")
+
+_MAX_PATH_LENGTH = 4096  # Reasonable OS limit
+
+
+def _check_path_within_roots(request: Request, file_path: Path) -> None:
+    """Verify that a file path is within managed (configured/scanned) roots.
+
+    Raises HTTPException 403 if the path is outside all known roots.
+    """
+    resolved = file_path.resolve()
+    resolved_str = str(resolved)
+
+    # Get all managed roots (configured + scan history)
+    roots: list[str] = []
+    cat = _open_catalog(request)
+    try:
+        # Configured roots
+        cur = cat.conn.execute("SELECT value FROM meta WHERE key = 'configured_roots'")
+        row = cur.fetchone()
+        if row:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                roots.extend(json.loads(row[0]))
+        # Scan history roots
+        try:
+            for scan_row in cat.conn.execute("SELECT DISTINCT root FROM scans"):
+                for r in (scan_row[0] or "").split(";"):
+                    r = r.strip()
+                    if r:
+                        roots.append(r)
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            pass
+    finally:
+        cat.close()
+
+    if not roots:
+        raise HTTPException(
+            status_code=403,
+            detail="No managed roots configured. Add roots before deleting files.",
+        )
+
+    # Check if path is within any managed root — if so, allow it
+    for root in roots:
+        root_resolved = Path(root).resolve()
+        root_str = str(root_resolved)
+        if resolved_str == root_str or resolved_str.startswith(root_str + "/"):
+            return  # Path is within a managed root
+
+    # Block sensitive system directories (only for paths NOT within managed roots)
+    if any(resolved_str == prefix or resolved_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
+        raise HTTPException(status_code=403, detail="Access denied: system directory")
+
+    raise HTTPException(status_code=403, detail="File outside managed roots — deletion denied")
+
+
+def _sanitize_path(path_str: str, *, param_name: str = "path") -> str:
+    """Validate and sanitize a user-supplied path string.
+
+    Raises HTTPException for null bytes, excessive length, or dot-only paths.
+    Returns the cleaned path string.
+    """
+    if "\x00" in path_str:
+        raise HTTPException(status_code=400, detail=f"Invalid {param_name}: null bytes not allowed")
+    if len(path_str) > _MAX_PATH_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Invalid {param_name}: path too long")
+    stripped = path_str.strip().rstrip("/")
+    # Reject paths that resolve to just "." or ".."
+    basename = stripped.rsplit("/", 1)[-1] if "/" in stripped else stripped
+    if basename in (".", ".."):
+        raise HTTPException(status_code=400, detail=f"Invalid {param_name}: relative-only path not allowed")
+    return stripped
 
 
 # ── Background task tracking ──────────────────────────────────────────
@@ -162,10 +256,25 @@ class TaskStatus:
 
 _tasks: dict[str, TaskStatus] = {}
 _tasks_lock = threading.Lock()
-_reorganize_plans: dict[str, Any] = {}
+_reorganize_plans: dict[str, tuple[float, Any]] = {}  # plan_id -> (created_monotonic, plan)
+_reorganize_plans_lock = threading.Lock()
+_REORGANIZE_PLAN_TTL = 3600.0  # 1 hour
+_REORGANIZE_PLAN_MAX = 100
 
 _ws_connections: dict[str, list[WebSocket]] = {}
 _ws_lock = threading.Lock()
+
+
+def _evict_old_plans() -> None:
+    """Remove reorganize plans older than TTL or exceeding max count."""
+    now = time.monotonic()
+    expired = [pid for pid, (ts, _) in _reorganize_plans.items() if (now - ts) > _REORGANIZE_PLAN_TTL]
+    for pid in expired:
+        del _reorganize_plans[pid]
+    if len(_reorganize_plans) > _REORGANIZE_PLAN_MAX:
+        by_age = sorted(_reorganize_plans.items(), key=lambda kv: kv[1][0])
+        for pid, _ in by_age[: len(_reorganize_plans) - _REORGANIZE_PLAN_MAX]:
+            del _reorganize_plans[pid]
 
 
 def _evict_old_tasks() -> None:
@@ -184,7 +293,7 @@ def _evict_old_tasks() -> None:
 
 def _create_task(command: str) -> TaskStatus:
     task = TaskStatus(
-        id=str(uuid.uuid4())[:8],
+        id=uuid.uuid4().hex[:16],
         command=command,
         started_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -268,7 +377,7 @@ def _finish_task(task_id: str, result: dict | None = None, error: str | None = N
 
 
 def _open_catalog(request: Request):
-    from ..catalog import Catalog
+    from ..catalog import Catalog  # Lazy import to avoid circular dependency
 
     cat = Catalog(request.app.state.catalog_path)
     cat.open()
@@ -445,16 +554,30 @@ def get_files(
 
 @router.post("/files/favorite")
 def toggle_favorite(request: Request, body: FavoriteRequest) -> dict:
-    """Toggle favorite status for a file."""
-    favorites = _get_favorites_list(request)
+    """Toggle favorite status for a file (atomic read-modify-write)."""
+    _sanitize_path(body.path, param_name="path")
     path = body.path
-    if path in favorites:
-        favorites.remove(path)
-        is_favorite = False
-    else:
-        favorites.append(path)
-        is_favorite = True
-    _set_favorites(request, favorites)
+    cat = _open_catalog(request)
+    try:
+        cur = cat.conn.execute("SELECT value FROM meta WHERE key = 'favorites'")
+        row = cur.fetchone()
+        try:
+            favorites = json.loads(row[0]) if row else []
+        except (json.JSONDecodeError, TypeError):
+            favorites = []
+        if path in favorites:
+            favorites.remove(path)
+            is_favorite = False
+        else:
+            favorites.append(path)
+            is_favorite = True
+        cat.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('favorites', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(favorites),),
+        )
+        cat.conn.commit()
+    finally:
+        cat.close()
     return {"path": path, "is_favorite": is_favorite}
 
 
@@ -472,6 +595,7 @@ def list_favorites(request: Request) -> dict:
 @router.get("/files/{file_path:path}/note")
 def get_file_note(request: Request, file_path: str) -> dict:
     """Get note for a file."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     cat = _open_catalog(request)
     try:
         result = cat.get_file_note(f"/{file_path}")
@@ -485,6 +609,7 @@ def get_file_note(request: Request, file_path: str) -> dict:
 @router.put("/files/{file_path:path}/note")
 def set_file_note(request: Request, file_path: str, body: NoteRequest) -> dict:
     """Set or update a note for a file."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     cat = _open_catalog(request)
     try:
         cat.set_file_note(f"/{file_path}", body.note)
@@ -496,6 +621,7 @@ def set_file_note(request: Request, file_path: str, body: NoteRequest) -> dict:
 @router.delete("/files/{file_path:path}/note")
 def delete_file_note(request: Request, file_path: str) -> dict:
     """Remove a note from a file."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     cat = _open_catalog(request)
     try:
         deleted = cat.delete_file_note(f"/{file_path}")
@@ -510,6 +636,7 @@ def delete_file_note(request: Request, file_path: str) -> dict:
 @router.put("/files/{file_path:path}/rating")
 def set_file_rating(request: Request, file_path: str, body: RatingRequest) -> dict:
     """Set a rating (1-5) for a file."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     if body.rating < 1 or body.rating > 5:
         raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
     cat = _open_catalog(request)
@@ -523,6 +650,7 @@ def set_file_rating(request: Request, file_path: str, body: RatingRequest) -> di
 @router.delete("/files/{file_path:path}/rating")
 def delete_file_rating(request: Request, file_path: str) -> dict:
     """Clear a rating from a file."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     cat = _open_catalog(request)
     try:
         deleted = cat.delete_file_rating(f"/{file_path}")
@@ -537,6 +665,7 @@ def delete_file_rating(request: Request, file_path: str) -> dict:
 @router.get("/files/{file_path:path}")
 def get_file_detail(request: Request, file_path: str) -> dict:
     """Get file details including deep metadata."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     cat = _open_catalog(request)
     try:
         path = f"/{file_path}"
@@ -604,8 +733,6 @@ def get_duplicate_group(request: Request, group_id: str) -> dict:
 @router.get("/duplicates/{group_id}/diff")
 def get_duplicate_diff(request: Request, group_id: str) -> dict:
     """Compute metadata diff for a duplicate group."""
-    from ..metadata_richness import compute_group_diff
-
     cat = _open_catalog(request)
     try:
         group_meta = cat.get_group_metadata(group_id)
@@ -630,8 +757,6 @@ def get_similar(
     limit: int = Query(default=100, le=1000),
 ) -> dict:
     """Find visually similar files via perceptual hash."""
-    from ..perceptual_hash import find_similar
-
     cat = _open_catalog(request)
     try:
         hashes = cat.get_all_phashes()
@@ -654,8 +779,6 @@ def get_similar(
 @router.get("/memories")
 def get_memories(request: Request) -> dict:
     """Get photos from this day in previous years (On This Day)."""
-    from datetime import date
-
     today = date.today()
     cat = _open_catalog(request)
     try:
@@ -696,9 +819,6 @@ def get_memories(request: Request) -> dict:
 @router.get("/system-info")
 def get_system_info(request: Request) -> dict:
     """System information for the Doctor page."""
-    import platform
-    import sys
-
     cat = _open_catalog(request)
     try:
         stats = cat.stats()
@@ -723,8 +843,6 @@ def get_system_info(request: Request) -> dict:
 @router.get("/deps")
 def get_deps() -> dict:
     """Check dependency status."""
-    from ..deps import check_all
-
     statuses = check_all()
     return {
         "dependencies": [
@@ -769,6 +887,7 @@ def _thumb_cache_put(path: str, size: int, data: bytes) -> None:
 @router.get("/thumbnail/{file_path:path}")
 def get_thumbnail(request: Request, file_path: str, size: int = Query(default=200, le=800)) -> StreamingResponse:
     """Generate and serve a thumbnail for an image file. Uses persistent disk cache."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     full_path = Path(f"/{file_path}").resolve()
 
     # Security: verify the file is within the catalog (exists in DB)
@@ -800,18 +919,13 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
         raise HTTPException(status_code=400, detail="Not a supported media file")
 
     try:
-        from PIL import Image
+        from PIL import Image  # Lazy import: optional dependency, may not be installed
     except ImportError:
         raise HTTPException(status_code=500, detail="Pillow not installed") from None
 
     # Video thumbnail: extract a frame with ffmpeg
     if ext in video_exts:
         try:
-            import subprocess
-            import tempfile
-
-            from ..deps import resolve_bin
-
             _ffmpeg = resolve_bin("ffmpeg") or "ffmpeg"
 
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -858,7 +972,7 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
 
     if ext in (".heic", ".heif"):
         try:
-            import pillow_heif
+            import pillow_heif  # Lazy import: optional dependency, may not be installed
 
             pillow_heif.register_heif_opener()
         except ImportError:
@@ -888,19 +1002,11 @@ def get_preview(request: Request, file_path: str, size: int = Query(default=120,
     Used by recovery/app-mine to preview files not yet in the catalog.
     Only serves image thumbnails — no video frame extraction for speed.
     """
+    file_path = _sanitize_path(file_path, param_name="file_path")
     full_path = Path(f"/{file_path}").resolve()
 
-    # Security: block access to sensitive system directories
-    full_str = str(full_path)
-    if any(full_str == prefix or full_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    # Also verify file is within one of the configured scan roots
-    scan_roots = getattr(request.app.state, "scan_roots", None)
-    if scan_roots:
-        resolved_roots = [Path(r).resolve() for r in scan_roots]
-        if not any(full_path == root or str(full_path).startswith(str(root) + "/") for root in resolved_roots):
-            raise HTTPException(status_code=403, detail="File outside allowed roots")
+    # Security: validate file is within managed roots and not in system dirs
+    _check_path_within_roots(request, full_path)
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -912,13 +1018,13 @@ def get_preview(request: Request, file_path: str, size: int = Query(default=120,
         raise HTTPException(status_code=400, detail="Not a supported image")
 
     try:
-        from PIL import Image
+        from PIL import Image  # Lazy import: optional dependency, may not be installed
     except ImportError:
         raise HTTPException(status_code=500, detail="Pillow not installed") from None
 
     if ext in (".heic", ".heif"):
         try:
-            import pillow_heif
+            import pillow_heif  # Lazy import: optional dependency, may not be installed
 
             pillow_heif.register_heif_opener()
         except ImportError:
@@ -951,8 +1057,8 @@ def start_scan(
 
     def _run_scan():
         try:
-            from ..catalog import Catalog
-            from ..scanner import incremental_scan
+            from ..catalog import Catalog  # Lazy import to avoid circular dependency
+            from ..scanner import incremental_scan  # Lazy import to avoid circular dependency
 
             cat = Catalog(request.app.state.catalog_path)
             scan_roots = [Path(r) for r in cfg.roots] if cfg.roots else []
@@ -989,7 +1095,7 @@ def start_scan(
 @router.post("/backfill-metadata")
 def backfill_metadata(request: Request):
     """Backfill date_original and GPS from already-stored ExifTool metadata + filesystem dates."""
-    from ..scanner import backfill_metadata_from_stored, _backfill_dates_from_filesystem
+    from ..scanner import _backfill_dates_from_filesystem, backfill_metadata_from_stored
 
     cat = _open_catalog(request)
     try:
@@ -1013,8 +1119,8 @@ def start_pipeline(
 
     def _run_pipeline():
         try:
-            from ..catalog import Catalog
-            from ..pipeline import PipelineConfig, run_pipeline
+            from ..catalog import Catalog  # Lazy import to avoid circular dependency
+            from ..pipeline import PipelineConfig, run_pipeline  # Lazy import to avoid circular dependency
 
             pipeline_roots = [Path(r) for r in cfg.roots] if cfg.roots else []
             if not pipeline_roots:
@@ -1063,8 +1169,8 @@ def start_verify(
 
     def _run_verify():
         try:
-            from ..catalog import Catalog
-            from ..verify import verify_catalog
+            from ..catalog import Catalog  # Lazy import to avoid circular dependency
+            from ..verify import verify_catalog  # Lazy import to avoid circular dependency
 
             cat = Catalog(request.app.state.catalog_path)
             with cat:
@@ -1112,6 +1218,17 @@ def get_task(task_id: str) -> dict:
 
 @router.websocket("/ws/tasks/{task_id}")
 async def ws_task(websocket: WebSocket, task_id: str):
+    # Explicit token authentication for WebSocket connections.
+    # WebSocket upgrade requests may bypass HTTP middleware, so we check here.
+    api_token = os.environ.get("GML_API_TOKEN", "")
+    if api_token:
+        import hmac as _hmac
+
+        token_param = websocket.query_params.get("token", "")
+        if not token_param or not _hmac.compare_digest(token_param, api_token):
+            await websocket.close(code=4003, reason="Invalid or missing API token")
+            return
+
     await websocket.accept()
     with _ws_lock:
         _ws_connections.setdefault(task_id, []).append(websocket)
@@ -1150,13 +1267,31 @@ def _quarantine_dest(quarantine_root: Path, original_path: Path) -> Path:
 @router.post("/files/quarantine")
 def quarantine_files(request: Request, body: QuarantineRequest) -> dict:
     """Move files to quarantine directory."""
-    quarantine_root = Path(body.quarantine_root) if body.quarantine_root else _DEFAULT_QUARANTINE_ROOT
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("AUDIT: %s quarantine request for %d files", client_ip, len(body.paths))
+    if body.quarantine_root:
+        quarantine_root = Path(body.quarantine_root).resolve()
+        # Security: quarantine root must not be a system directory
+        qr_str = str(quarantine_root)
+        if any(qr_str == prefix or qr_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
+            raise HTTPException(
+                status_code=403,
+                detail="Quarantine root must not be a system directory",
+            )
+    else:
+        quarantine_root = _DEFAULT_QUARANTINE_ROOT
     cat = _open_catalog(request)
     moved = 0
     skipped = 0
     errors: list[str] = []
     try:
         for path_str in body.paths:
+            try:
+                path_str = _sanitize_path(path_str, param_name="file path")
+            except HTTPException:
+                skipped += 1
+                errors.append(f"Invalid path: {path_str[:200]}")
+                continue
             p = Path(path_str)
             if not p.exists():
                 skipped += 1
@@ -1169,7 +1304,15 @@ def quarantine_files(request: Request, body: QuarantineRequest) -> dict:
                 continue
             dest = _quarantine_dest(quarantine_root, p)
             try:
-                dest.parent.mkdir(parents=True, exist_ok=True)
+                file_size = p.stat().st_size
+            except OSError:
+                file_size = 0
+            if file_size and not check_disk_space(dest.parent, file_size):
+                skipped += 1
+                errors.append(f"Insufficient disk space to quarantine {path_str}")
+                continue
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 if dest.exists():
                     suffix = 1
                     candidate = Path(f"{dest}.dup{suffix}")
@@ -1192,13 +1335,29 @@ def quarantine_files(request: Request, body: QuarantineRequest) -> dict:
 @router.post("/files/delete")
 def delete_files(request: Request, body: DeleteRequest) -> dict:
     """Permanently delete files."""
+    client_ip = request.client.host if request.client else "unknown"
+    for path_str in body.paths:
+        logger.warning("AUDIT: %s deleted file %s", client_ip, path_str)
     cat = _open_catalog(request)
     deleted = 0
     skipped = 0
     errors: list[str] = []
     try:
         for path_str in body.paths:
+            try:
+                path_str = _sanitize_path(path_str, param_name="file path")
+            except HTTPException:
+                skipped += 1
+                errors.append(f"Invalid path: {path_str[:200]}")
+                continue
             p = Path(path_str)
+            # Verify file is within managed roots before allowing deletion
+            try:
+                _check_path_within_roots(request, p)
+            except HTTPException:
+                skipped += 1
+                errors.append(f"Path outside managed roots: {path_str[:200]}")
+                continue
             if not p.exists():
                 skipped += 1
                 errors.append(f"File not found on disk: {path_str}")
@@ -1225,12 +1384,30 @@ def rename_files(request: Request, body: RenameRequest) -> dict:
     errors: list[str] = []
     try:
         for item in body.renames:
+            try:
+                item.path = _sanitize_path(item.path, param_name="file path")
+            except HTTPException:
+                skipped += 1
+                errors.append(f"Invalid path: {item.path[:200]}")
+                continue
+            # Validate new_name: no path separators or traversal sequences
+            basename = os.path.basename(item.new_name)
+            if (
+                "/" in item.new_name
+                or "\\" in item.new_name
+                or ".." in item.new_name
+                or not basename
+                or basename != item.new_name
+            ):
+                skipped += 1
+                errors.append(f"Invalid new name (path separators or traversal not allowed): {item.new_name[:200]}")
+                continue
             p = Path(item.path)
             if not p.exists():
                 skipped += 1
                 errors.append(f"File not found: {item.path}")
                 continue
-            new_path = p.parent / item.new_name
+            new_path = p.parent / basename
             if new_path.exists():
                 skipped += 1
                 errors.append(f"Target already exists: {new_path}")
@@ -1251,7 +1428,17 @@ def rename_files(request: Request, body: RenameRequest) -> dict:
 @router.post("/files/move")
 def move_files(request: Request, body: MoveRequest) -> dict:
     """Move files to a destination directory."""
-    dest_dir = Path(body.destination)
+    _sanitize_path(body.destination, param_name="destination")
+    dest_dir = Path(body.destination).resolve()
+
+    # Security: validate destination is not a system directory
+    dest_str = str(dest_dir)
+    if any(dest_str == prefix or dest_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
+        raise HTTPException(status_code=403, detail="Access denied: destination is a system directory")
+
+    # Validate destination is within managed roots
+    _check_path_within_roots(request, dest_dir)
+
     if not dest_dir.is_dir():
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -1264,6 +1451,12 @@ def move_files(request: Request, body: MoveRequest) -> dict:
     errors: list[str] = []
     try:
         for path_str in body.paths:
+            try:
+                path_str = _sanitize_path(path_str, param_name="file path")
+            except HTTPException:
+                skipped += 1
+                errors.append(f"Invalid path: {path_str[:200]}")
+                continue
             p = Path(path_str)
             if not p.exists():
                 skipped += 1
@@ -1290,6 +1483,8 @@ def move_files(request: Request, body: MoveRequest) -> dict:
 @router.post("/duplicates/{group_id}/quarantine")
 def quarantine_duplicate_group(request: Request, group_id: str, body: DuplicateKeepRequest) -> dict:
     """Quarantine all files in a duplicate group except the keeper."""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("AUDIT: %s quarantine duplicate group %s (keep=%s)", client_ip, group_id, body.keep_path)
     quarantine_root = _DEFAULT_QUARANTINE_ROOT
     cat = _open_catalog(request)
     quarantined = 0
@@ -1317,7 +1512,14 @@ def quarantine_duplicate_group(request: Request, group_id: str, body: DuplicateK
                 continue
             dest = _quarantine_dest(quarantine_root, p)
             try:
-                dest.parent.mkdir(parents=True, exist_ok=True)
+                file_size = p.stat().st_size
+            except OSError:
+                file_size = 0
+            if file_size and not check_disk_space(dest.parent, file_size):
+                errors.append(f"Insufficient disk space to quarantine {row.path}")
+                continue
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 if dest.exists():
                     suffix = 1
                     candidate = Path(f"{dest}.dup{suffix}")
@@ -1398,7 +1600,14 @@ def merge_duplicate_group(request: Request, group_id: str, body: DuplicateKeepRe
                 continue
             dest = _quarantine_dest(quarantine_root, p)
             try:
-                dest.parent.mkdir(parents=True, exist_ok=True)
+                file_size = p.stat().st_size
+            except OSError:
+                file_size = 0
+            if file_size and not check_disk_space(dest.parent, file_size):
+                errors.append(f"Insufficient disk space to quarantine {row.path}")
+                continue
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 if dest.exists():
                     suffix = 1
                     candidate = Path(f"{dest}.dup{suffix}")
@@ -1445,12 +1654,28 @@ def list_tasks() -> dict:
 @router.post("/files/restore")
 def restore_files(request: Request, body: RestoreRequest) -> dict:
     """Restore files from quarantine."""
-    quarantine_root = Path(body.quarantine_root) if body.quarantine_root else _DEFAULT_QUARANTINE_ROOT
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("AUDIT: %s restore request for %d files from quarantine", client_ip, len(body.paths))
+    if body.quarantine_root:
+        quarantine_root = Path(body.quarantine_root).resolve()
+        qr_str = str(quarantine_root)
+        if any(qr_str == prefix or qr_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
+            raise HTTPException(
+                status_code=403,
+                detail="Quarantine root must not be a system directory",
+            )
+    else:
+        quarantine_root = _DEFAULT_QUARANTINE_ROOT
     cat = _open_catalog(request)
     restored = 0
     errors: list[str] = []
     try:
         for path_str in body.paths:
+            try:
+                path_str = _sanitize_path(path_str, param_name="file path")
+            except HTTPException:
+                errors.append(f"Invalid path: {path_str[:200]}")
+                continue
             original_path = Path(path_str)
             quarantined_path = _quarantine_dest(quarantine_root, original_path)
             if not quarantined_path.exists():
@@ -1512,6 +1737,8 @@ def browse_filesystem(
     path: str | None = Query(default=None),
 ) -> dict:
     """Browse filesystem directories for folder picker."""
+    if path:
+        path = _sanitize_path(path)
     browse_path = Path(path).resolve() if path else Path.home()
 
     if not _is_path_allowed(browse_path):
@@ -1615,6 +1842,7 @@ def save_roots(request: Request, body: RootsRequest) -> dict:
 @router.delete("/roots")
 def remove_root(request: Request, body: RemoveRootRequest) -> dict:
     """Remove a specific root folder."""
+    _sanitize_path(body.path, param_name="path")
     roots = _get_configured_roots(request)
     path_to_remove = str(Path(body.path).resolve())
     roots = [r for r in roots if r != path_to_remove]
@@ -1707,6 +1935,7 @@ def get_sources(request: Request) -> dict:
 @router.get("/stream/{file_path:path}")
 def stream_file(request: Request, file_path: str) -> StreamingResponse:
     """Stream a media file for preview."""
+    file_path = _sanitize_path(file_path, param_name="file_path")
     full_path = Path(f"/{file_path}").resolve()
     cat = _open_catalog(request)
     try:
@@ -1747,12 +1976,10 @@ def stream_file(request: Request, file_path: str) -> StreamingResponse:
     ext = full_path.suffix.lower()
     media_type = media_types.get(ext, "application/octet-stream")
 
-    from fastapi.responses import FileResponse
-
     return FileResponse(
         str(full_path),
         media_type=media_type,
-        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 
@@ -1836,9 +2063,15 @@ def delete_tag(request: Request, tag_id: int) -> dict:
 @router.post("/files/tag")
 def tag_files(request: Request, body: TagFilesRequest) -> dict:
     """Add a tag to files."""
+    sanitized_paths = []
+    for p in body.paths:
+        try:
+            sanitized_paths.append(_sanitize_path(p, param_name="file path"))
+        except HTTPException:
+            continue
     cat = _open_catalog(request)
     try:
-        count = cat.bulk_tag(body.paths, body.tag_id)
+        count = cat.bulk_tag(sanitized_paths, body.tag_id)
         return {"tagged": count}
     finally:
         cat.close()
@@ -1847,9 +2080,15 @@ def tag_files(request: Request, body: TagFilesRequest) -> dict:
 @router.delete("/files/tag")
 def untag_files(request: Request, body: TagFilesRequest) -> dict:
     """Remove a tag from files."""
+    sanitized_paths = []
+    for p in body.paths:
+        try:
+            sanitized_paths.append(_sanitize_path(p, param_name="file path"))
+        except HTTPException:
+            continue
     cat = _open_catalog(request)
     try:
-        count = cat.bulk_untag(body.paths, body.tag_id)
+        count = cat.bulk_untag(sanitized_paths, body.tag_id)
         return {"untagged": count}
     finally:
         cat.close()
@@ -1861,13 +2100,20 @@ def untag_files(request: Request, body: TagFilesRequest) -> dict:
 @router.post("/shares")
 def create_share(request: Request, body: CreateShareRequest) -> dict:
     """Create a share link for a file."""
+    _sanitize_path(body.path, param_name="path")
     cat = _open_catalog(request)
     try:
+        # Apply default expiration (7 days) unless caller explicitly set 0
+        effective_expires = body.expires_hours
+        if effective_expires is None:
+            effective_expires = _DEFAULT_SHARE_EXPIRY_HOURS
+        elif effective_expires == 0:
+            effective_expires = None  # Caller explicitly requested no expiry
         share = cat.create_share(
             path=body.path,
             label=body.label,
             password=body.password,
-            expires_hours=body.expires_hours,
+            expires_hours=effective_expires,
             max_downloads=body.max_downloads,
         )
         return share
@@ -1892,6 +2138,7 @@ def list_shares(request: Request, limit: int = 100, offset: int = 0) -> dict:
 @router.get("/shares/file")
 def shares_for_file(request: Request, path: str = Query(...)) -> dict:
     """List shares for a specific file."""
+    path = _sanitize_path(path, param_name="path")
     cat = _open_catalog(request)
     try:
         shares = cat.get_shares_for_file(path)
@@ -2113,7 +2360,7 @@ async def get_dedup_rules(request: Request):
 @router.put("/config/dedup-rules")
 async def put_dedup_rules(request: Request, body: DedupRulesRequest):
     """Update deduplication rules. Saves to global config.toml."""
-    import tomllib
+    import tomllib  # Lazy import: Python 3.11+ only
 
     from ..config import _global_config_path
 
@@ -2189,8 +2436,10 @@ def start_reorganize_plan(request: Request, background_tasks: BackgroundTasks, c
 
             plan = plan_reorganization(rc, catalog_path=cat_path, progress_fn=on_progress)
 
-            # Store plan for later execution
-            _reorganize_plans[task.id] = plan
+            # Store plan for later execution (with eviction)
+            with _reorganize_plans_lock:
+                _evict_old_plans()
+                _reorganize_plans[task.id] = (time.monotonic(), plan)
 
             # Build summary for the client
             summary = {
@@ -2216,9 +2465,12 @@ def start_reorganize_plan(request: Request, background_tasks: BackgroundTasks, c
 @router.post("/reorganize/execute")
 def start_reorganize_execute(request: Request, background_tasks: BackgroundTasks, body: ReorganizeExecuteRequest):
     """Execute a previously planned reorganization."""
-    plan = _reorganize_plans.get(body.plan_id)
-    if not plan:
+    with _reorganize_plans_lock:
+        _evict_old_plans()
+        plan_entry = _reorganize_plans.get(body.plan_id)
+    if not plan_entry:
         raise HTTPException(status_code=404, detail="Plan not found. Please re-scan.")
+    plan = plan_entry[1]  # unwrap (timestamp, plan) tuple
 
     from ..reorganize import execute_reorganization
 
@@ -2249,119 +2501,13 @@ def start_reorganize_execute(request: Request, background_tasks: BackgroundTasks
             )
 
             # Clean up the plan
-            _reorganize_plans.pop(body.plan_id, None)
+            with _reorganize_plans_lock:
+                _reorganize_plans.pop(body.plan_id, None)
         except Exception as e:
             _finish_task(task.id, error=str(e))
 
     background_tasks.add_task(run_execute)
     return {"task_id": task.id, "status": "started"}
-
-
-@router.get("/preview/{file_path:path}")
-def get_file_preview(request: Request, file_path: str) -> dict:
-    """Generate preview data for a file."""
-    full_path = Path(f"/{file_path}").resolve()
-
-    # Security check
-    cat = _open_catalog(request)
-    try:
-        row = cat.get_file_by_path(str(full_path))
-        if row is None:
-            raise HTTPException(status_code=404, detail="Not in catalog")
-    finally:
-        cat.close()
-
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    ext = full_path.suffix.lower()
-    result: dict[str, Any] = {
-        "path": str(full_path),
-        "type": "unknown",
-        "name": full_path.name,
-        "size": full_path.stat().st_size,
-    }
-
-    # Text files
-    if ext in _TEXT_EXTS or full_path.name.lower() in _TEXT_NAMES:
-        try:
-            content = full_path.read_text(encoding="utf-8", errors="replace")[:50000]
-            lang = _detect_language(ext)
-            result.update(
-                {
-                    "type": "text",
-                    "content": content,
-                    "language": lang,
-                    "lines": content.count("\n") + 1,
-                }
-            )
-        except OSError:
-            result["type"] = "unknown"
-        return result
-
-    # PDF
-    if ext == ".pdf":
-        result.update({"type": "pdf", "url": f"/api/stream/{file_path}"})
-        return result
-
-    # Archives
-    if ext in _ARCHIVE_EXTS:
-        import tarfile
-        import zipfile
-
-        try:
-            entries: list[dict[str, Any]] = []
-            if ext == ".zip":
-                with zipfile.ZipFile(full_path) as zf:
-                    for info in zf.infolist()[:100]:
-                        entries.append(
-                            {
-                                "name": info.filename,
-                                "size": info.file_size,
-                                "is_dir": info.is_dir(),
-                            }
-                        )
-            elif ext in {".tar", ".gz", ".bz2", ".xz"}:
-                with tarfile.open(full_path) as tf:
-                    for member in tf.getmembers()[:100]:
-                        entries.append(
-                            {
-                                "name": member.name,
-                                "size": member.size,
-                                "is_dir": member.isdir(),
-                            }
-                        )
-            result.update(
-                {
-                    "type": "archive",
-                    "entries": entries,
-                    "total_entries": len(entries),
-                }
-            )
-        except (OSError, zipfile.BadZipFile, tarfile.TarError):
-            result["type"] = "unknown"
-        return result
-
-    # Audio
-    if ext in _AUDIO_EXTS:
-        audio_media_types = {
-            ".mp3": "audio/mpeg",
-            ".wav": "audio/wav",
-            ".flac": "audio/flac",
-            ".ogg": "audio/ogg",
-            ".m4a": "audio/mp4",
-            ".aac": "audio/aac",
-        }
-        result.update(
-            {
-                "type": "audio",
-                "url": f"/api/stream/{file_path}",
-                "media_type": audio_media_types.get(ext, "audio/mpeg"),
-            }
-        )
-        return result
-
-    return result
 
 
 # ── Recovery endpoints ────────────────────────────────────────────────
@@ -2489,6 +2635,11 @@ def restore_quarantine(request: Request, body: QuarantineRestoreRequest):
     """Restore files from quarantine."""
     from ..recovery import restore_from_quarantine
 
+    for p in body.paths:
+        _sanitize_path(p, param_name="path")
+    if body.restore_to:
+        _sanitize_path(body.restore_to, param_name="restore_to")
+        _check_path_within_roots(request, Path(body.restore_to).resolve())
     qroot = getattr(request.app.state, "quarantine_root", None)
     return restore_from_quarantine(
         body.paths,
@@ -2537,10 +2688,14 @@ def start_deep_scan(request: Request, background_tasks: BackgroundTasks):
 
 
 @router.post("/recovery/recover-files")
-def start_recover_files(body: RecoverFilesRequest):
+def start_recover_files(request: Request, body: RecoverFilesRequest):
     """Copy/move found files to a recovery destination."""
     from ..recovery import recover_files
 
+    _sanitize_path(body.destination, param_name="destination")
+    _check_path_within_roots(request, Path(body.destination).resolve())
+    for p in body.paths:
+        _sanitize_path(p, param_name="path")
     return recover_files(body.paths, body.destination, body.delete_source)
 
 
@@ -2577,10 +2732,12 @@ def start_integrity_check(request: Request, background_tasks: BackgroundTasks):
 
 
 @router.post("/recovery/repair")
-def repair_single_file(body: RepairRequest):
+def repair_single_file(request: Request, body: RepairRequest):
     """Attempt to repair a single corrupted file."""
     from ..recovery import repair_file
 
+    _sanitize_path(body.path, param_name="path")
+    _check_path_within_roots(request, Path(body.path).resolve())
     return repair_file(body.path)
 
 
@@ -2786,7 +2943,7 @@ class BackupExecuteRequest(BaseModel):
 @router.get("/backup/stats")
 def backup_stats(request: Request):
     """Get overall backup health statistics."""
-    from ..distributed_backup import get_backup_stats, ensure_backup_tables
+    from ..distributed_backup import ensure_backup_tables, get_backup_stats
 
     cat = _open_catalog(request)
     try:
@@ -2810,7 +2967,7 @@ def backup_stats(request: Request):
 @router.get("/backup/targets")
 def backup_targets(request: Request):
     """List all backup targets with capacity info."""
-    from ..distributed_backup import get_targets, ensure_backup_tables
+    from ..distributed_backup import ensure_backup_tables, get_targets
 
     cat = _open_catalog(request)
     try:
@@ -2865,7 +3022,7 @@ def backup_probe(request: Request):
 @router.put("/backup/targets/{remote_name}")
 def update_backup_target(remote_name: str, body: BackupTargetUpdate, request: Request):
     """Enable/disable a target or change its priority."""
-    from ..distributed_backup import set_target_enabled, set_target_priority, ensure_backup_tables
+    from ..distributed_backup import ensure_backup_tables, set_target_enabled, set_target_priority
 
     cat = _open_catalog(request)
     try:
@@ -2933,7 +3090,7 @@ def backup_execute(request: Request, background_tasks: BackgroundTasks, body: Ba
     catalog_path = str(request.app.state.catalog_path)
 
     def run():
-        from ..catalog import Catalog
+        from ..catalog import Catalog  # Lazy import to avoid circular dependency
 
         cat = Catalog(catalog_path)
         cat.open()
@@ -2965,7 +3122,7 @@ def backup_verify(request: Request, background_tasks: BackgroundTasks):
     catalog_path = str(request.app.state.catalog_path)
 
     def run():
-        from ..catalog import Catalog
+        from ..catalog import Catalog  # Lazy import to avoid circular dependency
 
         cat = Catalog(catalog_path)
         cat.open()
@@ -3133,7 +3290,7 @@ def bitrot_scan(request: Request, background_tasks: BackgroundTasks, limit: int 
     catalog_path = str(request.app.state.catalog_path)
 
     def run():
-        from ..catalog import Catalog
+        from ..catalog import Catalog  # Lazy import to avoid circular dependency
 
         cat = Catalog(catalog_path)
         cat.open()
@@ -3268,7 +3425,7 @@ def backup_auto_heal(request: Request, background_tasks: BackgroundTasks):
     catalog_path = str(request.app.state.catalog_path)
 
     def run():
-        from ..catalog import Catalog
+        from ..catalog import Catalog  # Lazy import to avoid circular dependency
 
         cat = Catalog(catalog_path)
         cat.open()
@@ -3355,9 +3512,9 @@ async def gallery_collections(request: Request):
 @router.get("/gallery/score/{file_path:path}")
 async def gallery_file_score(request: Request, file_path: str):
     """Get detailed quality score breakdown for a single file."""
-    import sqlite3
+    file_path = _sanitize_path(file_path, param_name="file_path")
 
-    from godmode_media_library.media_score import score_file
+    from godmode_media_library.media_score import score_file  # Lazy import to avoid circular dependency
 
     catalog_path = str(request.app.state.catalog_path)
     db = sqlite3.connect(catalog_path)
@@ -3387,7 +3544,7 @@ async def gallery_file_score(request: Request, file_path: str):
     db.close()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Soubor nenalezen v katalogu")
+        raise HTTPException(status_code=404, detail="File not found in catalog")
 
     ms = score_file(dict(row))
     return ms.to_dict()
@@ -3404,9 +3561,7 @@ async def gallery_slideshow(
 
     Supports named collections or 'best_of' for top scored files.
     """
-    import random
-
-    from godmode_media_library.media_score import get_smart_collections, score_catalog
+    from godmode_media_library.media_score import get_smart_collections, score_catalog  # Lazy import to avoid circular dependency
 
     catalog_path = str(request.app.state.catalog_path)
 
@@ -3435,7 +3590,7 @@ class PersonMergeRequest(BaseModel):
 
 
 class FaceAssignRequest(BaseModel):
-    person_id: int
+    person_id: int | None = None
 
 
 class FaceDetectRequest(BaseModel):
@@ -3617,12 +3772,20 @@ def get_face_thumbnail(request: Request, face_id: int, size: int = Query(150, ge
 
 @router.put("/faces/{face_id}/person")
 def assign_face_to_person(request: Request, face_id: int, body: FaceAssignRequest):
-    """Assign a face to a person."""
+    """Assign a face to a person, or unassign (person_id=null)."""
     cat = _open_catalog(request)
     try:
         face = cat.get_face_by_id(face_id)
         if face is None:
             raise HTTPException(404, "Face not found")
+        if body.person_id is None:
+            # Unassign — remove face from its current person
+            old_person_id = face.get("person_id")
+            cat.conn.execute("UPDATE faces SET person_id = NULL WHERE id = ?", (face_id,))
+            if old_person_id:
+                cat._refresh_person_counts([old_person_id])
+            cat.commit()
+            return {"status": "ok", "face_id": face_id, "person_id": None}
         person = cat.get_person(body.person_id)
         if person is None:
             raise HTTPException(404, "Person not found")
@@ -3778,6 +3941,36 @@ def create_person(request: Request, body: PersonRenameRequest):
         cat.close()
 
 
+@router.post("/persons/cleanup")
+def cleanup_auto_persons(request: Request):
+    """Delete all auto-generated Person_NNN persons and unassign their faces.
+
+    This is useful before re-clustering to clear duplicates. User-named
+    persons (any name that doesn't match Person_NNN) are preserved.
+    """
+    cat = _open_catalog(request)
+    try:
+        auto_re = re.compile(r"^Person_\d{3,}$")
+        all_persons = cat.get_all_persons()
+        deleted = 0
+        faces_freed = 0
+        for p in all_persons:
+            if auto_re.match(p["name"]):
+                cnt = cat.conn.execute(
+                    "SELECT COUNT(*) FROM faces WHERE person_id = ?", (p["id"],)
+                ).fetchone()[0]
+                cat.conn.execute(
+                    "UPDATE faces SET person_id = NULL WHERE person_id = ?", (p["id"],)
+                )
+                cat.conn.execute("DELETE FROM persons WHERE id = ?", (p["id"],))
+                deleted += 1
+                faces_freed += cnt
+        cat.conn.commit()
+        return {"status": "ok", "persons_deleted": deleted, "faces_freed": faces_freed}
+    finally:
+        cat.close()
+
+
 # ── Cloud API ──────────────────────────────────────────────────────
 
 
@@ -3794,61 +3987,88 @@ class CloudMountRequest(BaseModel):
     mount_point: str = ""
 
 
+def _safe_disk_count(root: str, max_seconds: float = 3.0) -> int:
+    """Count files on disk, skipping hidden dirs and respecting timeout."""
+    count = 0
+    deadline = time.monotonic() + max_seconds
+    try:
+        for _dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            count += len(filenames)
+            if time.monotonic() > deadline:
+                break
+    except OSError:
+        pass
+    return count
+
+
+# Cache for full cloud status response — invalidated after 30s
+_cloud_status_cache: dict = {"data": None, "ts": 0.0}
+_CLOUD_CACHE_TTL = 30.0
+
+
 @router.get("/cloud/status")
 def cloud_status(request: Request):
     """Get cloud storage status — rclone remotes + native paths, enriched with scan info."""
-    from godmode_media_library.cloud import get_cloud_status
+    from godmode_media_library.cloud import get_cloud_status  # Lazy import to avoid circular dependency
+
+    # Return cached full response if fresh
+    now = time.monotonic()
+    if _cloud_status_cache["data"] and (now - _cloud_status_cache["ts"]) < _CLOUD_CACHE_TTL:
+        return copy.deepcopy(_cloud_status_cache["data"])
 
     status = get_cloud_status()
+    sources = status.get("sources", [])
 
-    def _safe_disk_count(root: str, max_seconds: float = 3.0) -> int:
-        """Count files on disk, skipping hidden dirs and respecting timeout."""
-        import os
-        import time
+    # Collect paths for parallel disk counting
+    path_map: dict[int, str] = {}
+    for i, src in enumerate(sources):
+        p = src.get("mount_path") or src.get("sync_path") or ""
+        if p and Path(p).is_dir():
+            path_map[i] = p
 
-        count = 0
-        deadline = time.monotonic() + max_seconds
-        try:
-            for dirpath, dirnames, filenames in os.walk(root):
-                # Skip hidden directories (.Trash, .DS_Store dirs, etc.)
-                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-                count += len(filenames)
-                if time.monotonic() > deadline:
-                    break  # Return partial count rather than hang
-        except OSError as exc:
-            logger.debug("os.walk failed for %s: %s", root, exc)
-        return count
+    # Run all os.walk counts in parallel (instead of sequential 3s × N)
+    disk_counts: dict[int, int] = {}
+    if path_map:
+        with ThreadPoolExecutor(max_workers=min(8, len(path_map))) as pool:
+            futures = {pool.submit(_safe_disk_count, p): idx for idx, p in path_map.items()}
+            for fut in futures:
+                try:
+                    disk_counts[futures[fut]] = fut.result(timeout=5)
+                except Exception:
+                    disk_counts[futures[fut]] = 0
 
-    # Enrich each source with scan/file info from catalog + disk file count
+    # Enrich with catalog data (single DB connection, fast queries)
     cat = _open_catalog(request)
     try:
-        for src in status.get("sources", []):
+        for i, src in enumerate(sources):
             path = src.get("mount_path") or src.get("sync_path") or ""
             if not path:
-                src["scanned"] = False
-                src["last_scan"] = None
-                src["file_count"] = 0
-                src["disk_count"] = 0
+                src.update({"scanned": False, "last_scan": None, "file_count": 0, "disk_count": 0})
                 continue
-            # Count indexed files under this path
             count_row = cat.conn.execute(
                 "SELECT COUNT(*) FROM files WHERE path LIKE ? || '%'",
                 (path.rstrip("/"),),
             ).fetchone()
             src["file_count"] = count_row[0] if count_row else 0
-            # Last scan time
             scan_row = cat.conn.execute(
                 "SELECT MAX(finished_at) FROM scans WHERE root LIKE '%' || ? || '%'",
                 (path.rstrip("/"),),
             ).fetchone()
             src["last_scan"] = scan_row[0] if scan_row and scan_row[0] else None
             src["scanned"] = src["file_count"] > 0
-            # Count actual files on disk (safe, skips hidden dirs, 3s timeout)
-            src["disk_count"] = _safe_disk_count(path) if Path(path).is_dir() else 0
+            src["disk_count"] = disk_counts.get(i, 0)
     finally:
         cat.close()
 
+    # Cache the full enriched response
+    _cloud_status_cache["data"] = copy.deepcopy(status)
+    _cloud_status_cache["ts"] = time.monotonic()
+
     return status
+
+
+_remotes_cache: dict = {"data": None, "ts": 0.0}
 
 
 @router.get("/cloud/remotes")
@@ -3856,45 +4076,53 @@ def cloud_remotes():
     """List configured rclone remotes."""
     from godmode_media_library.cloud import check_rclone, list_remotes, rclone_version
 
+    now = time.monotonic()
+    if _remotes_cache["data"] and (now - _remotes_cache["ts"]) < _CLOUD_CACHE_TTL:
+        return _remotes_cache["data"]
+
     if not check_rclone():
         return {"installed": False, "remotes": [], "version": None}
-    return {
+    result = {
         "installed": True,
         "version": rclone_version(),
         "remotes": [{"name": r.name, "type": r.type, "label": r.provider_label, "icon": r.icon} for r in list_remotes()],
     }
+    _remotes_cache["data"] = result
+    _remotes_cache["ts"] = now
+    return result
 
 
 @router.get("/cloud/native")
 def cloud_native_paths(request: Request):
     """Detect natively synced cloud storage paths (iCloud, MEGA, pCloud, etc.)."""
-    from godmode_media_library.cloud import detect_native_cloud_paths
+    from godmode_media_library.cloud import detect_native_cloud_paths  # Lazy import to avoid circular dependency
 
     paths = detect_native_cloud_paths()
 
-    def _safe_count(root: str) -> int:
-        import os, time
+    # Parallel disk counting
+    path_map: dict[int, str] = {}
+    for i, p in enumerate(paths):
+        pp = p.get("path", "")
+        if pp and Path(pp).is_dir():
+            path_map[i] = pp
 
-        count, deadline = 0, time.monotonic() + 3.0
-        try:
-            for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-                count += len(filenames)
-                if time.monotonic() > deadline:
-                    break
-        except OSError as exc:
-            logger.debug("os.walk failed for %s: %s", root, exc)
-        return count
+    disk_counts: dict[int, int] = {}
+    if path_map:
+        with ThreadPoolExecutor(max_workers=min(8, len(path_map))) as pool:
+            futures = {pool.submit(_safe_disk_count, pp): idx for idx, pp in path_map.items()}
+            for fut in futures:
+                try:
+                    disk_counts[futures[fut]] = fut.result(timeout=5)
+                except Exception:
+                    disk_counts[futures[fut]] = 0
 
-    # Enrich with scan info + disk count
+    # Enrich with scan info
     cat = _open_catalog(request)
     try:
-        for p in paths:
+        for i, p in enumerate(paths):
             path = p.get("path", "")
             if not path:
-                p["scanned"] = False
-                p["file_count"] = 0
-                p["disk_count"] = 0
+                p.update({"scanned": False, "file_count": 0, "disk_count": 0})
                 continue
             count_row = cat.conn.execute(
                 "SELECT COUNT(*) FROM files WHERE path LIKE ? || '%'",
@@ -3902,7 +4130,7 @@ def cloud_native_paths(request: Request):
             ).fetchone()
             p["file_count"] = count_row[0] if count_row else 0
             p["scanned"] = p["file_count"] > 0
-            p["disk_count"] = _safe_count(path) if Path(path).is_dir() else 0
+            p["disk_count"] = disk_counts.get(i, 0)
     finally:
         cat.close()
 
@@ -3941,7 +4169,7 @@ def cloud_browse(remote_name: str, path: str = Query("")):
         return {"remote": remote_name, "path": path, "items": items}
     except RuntimeError as e:
         logger.error("Cloud listing failed for %s/%s: %s", remote_name, path, e)
-        raise HTTPException(500, "Cloud listing failed") from e
+        raise HTTPException(500, "Nepodařilo se načíst obsah cloudu") from e
 
 
 @router.get("/cloud/remote/{remote_name}/about")
@@ -4076,7 +4304,7 @@ def cloud_mount_remote(body: CloudMountRequest):
         return {"mount_path": path, "success": success}
     except RuntimeError as e:
         logger.error("Cloud mount failed: %s", e)
-        return {"mount_path": "", "success": False, "message": "Mount operation failed"}
+        return {"mount_path": "", "success": False, "message": "Připojení se nezdařilo"}
 
 
 @router.post("/cloud/unmount")
@@ -4102,7 +4330,7 @@ def cloud_provider_fields(provider_key: str):
 
     info = PROVIDERS.get(provider_key)
     if not info:
-        raise HTTPException(404, f"Unknown provider: {provider_key}")
+        raise HTTPException(404, f"Neznámý poskytovatel: {provider_key}")
     return {
         "provider": info["label"],
         "icon": info["icon"],
@@ -4137,7 +4365,7 @@ def cloud_oauth_finalize(body: CloudConnectRequest):
 
     token = body.credentials.get("token", "")
     if not token:
-        raise HTTPException(400, "Missing OAuth token")
+        raise HTTPException(400, "Chybí OAuth token")
     result = finalize_oauth(body.provider_key, body.name, token)
     if not result["success"]:
         raise HTTPException(400, result["message"])
@@ -4388,7 +4616,7 @@ class ConsolidationStartRequest(BaseModel):
     verify_pct: int = Field(default=100, ge=0, le=100)
     bwlimit: str | None = None
     dry_run: bool = False
-    media_only: bool = True
+    media_only: bool = False
 
     @field_validator("dest_remote", "dest_path")
     @classmethod
@@ -4402,11 +4630,8 @@ class ConsolidationStartRequest(BaseModel):
     @field_validator("bwlimit")
     @classmethod
     def validate_bwlimit(cls, v: str | None) -> str | None:
-        if v is not None:
-            import re
-
-            if not re.match(r"^\d+[KMGkmg]?$", v):
-                raise ValueError("bwlimit must be like '10M', '1G', '512K' or a number")
+        if v is not None and not re.match(r"^\d+[KMGkmg]?$", v):
+            raise ValueError("bwlimit must be like '10M', '1G', '512K' or a number")
         return v
 
 
@@ -4439,7 +4664,18 @@ def consolidation_status(request: Request):
     from ..consolidation import get_consolidation_status
 
     catalog_path = str(request.app.state.catalog_path)
-    return get_consolidation_status(catalog_path)
+    status = get_consolidation_status(catalog_path)
+
+    # Enrich with disk space info if a disk_path is configured
+    disk_path = status.get("disk_path")
+    if disk_path:
+        try:
+            usage = shutil.disk_usage(disk_path)
+            status["disk_free_gb"] = round(usage.free / (1024**3), 2)
+        except OSError:
+            pass
+
+    return status
 
 
 @router.post("/consolidation/preview")
@@ -4448,7 +4684,7 @@ def consolidation_preview(body: ConsolidationStartRequest, request: Request, bac
 
     ALWAYS run this before starting a real consolidation.
     """
-    from ..consolidation import preview_consolidation, ConsolidationConfig
+    from ..consolidation import ConsolidationConfig, preview_consolidation
 
     task = _create_task("consolidation:preview")
     catalog_path = str(request.app.state.catalog_path)
@@ -4482,23 +4718,38 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
 
     Recommended: run /consolidation/preview first to see what will happen.
     """
-    from ..consolidation import run_consolidation, ConsolidationConfig, get_consolidation_status
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("AUDIT: %s started consolidation (dry_run=%s)", client_ip, body.dry_run)
+    from ..consolidation import ConsolidationConfig, get_consolidation_status, run_consolidation
 
     # Guard: prevent starting a second consolidation while one is running
     catalog_path_str = str(request.app.state.catalog_path)
     try:
         status = get_consolidation_status(catalog_path_str)
         if status.get("has_active_job"):
-            from fastapi import HTTPException
 
             raise HTTPException(
                 status_code=409,
-                detail="Consolidation job is already running. Pause it first or wait for completion.",
+                detail="Konsolidace již běží. Nejdřív ji pozastavte nebo počkejte na dokončení.",
             )
     except Exception as exc:
         if hasattr(exc, "status_code"):  # Re-raise HTTPException
             raise
         logger.warning("Could not check active consolidation: %s", exc)
+
+    # Pre-flight: check disk space on local destination
+    dest_disk = body.disk_path or body.dest_path
+    if dest_disk:
+        try:
+            usage = shutil.disk_usage(dest_disk)
+            free_gb = usage.free / (1024**3)
+            if free_gb < 1.0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Nedostatek místa na disku: pouze {free_gb:.1f} GB volných na {dest_disk}",
+                )
+        except OSError:
+            pass  # Path might not exist yet, skip check
 
     task = _create_task("consolidation:ultimate")
     catalog_path = str(request.app.state.catalog_path)
@@ -4534,7 +4785,12 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
 
 @router.post("/consolidation/pause")
 def consolidation_pause(request: Request):
-    """Pause an active consolidation job."""
+    """Pause an active consolidation job.
+
+    Uses in-process Event signaling to avoid SQLite write lock contention.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("AUDIT: %s paused consolidation", client_ip)
     from ..consolidation import pause_consolidation
 
     catalog_path = str(request.app.state.catalog_path)
@@ -4571,3 +4827,247 @@ def consolidation_failed(request: Request):
 
     catalog_path = str(request.app.state.catalog_path)
     return {"failed_files": get_failed_files_report(catalog_path)}
+
+
+# ── Consolidation: Disk Sync & Catalog Stats ─────────────────────────
+
+# System volumes to exclude from available-disks listing
+_EXCLUDED_VOLUMES = {"Macintosh HD", "Macintosh HD - Data", "Recovery", "Preboot", "VM", "Update", "com.apple.TimeMachine.localsnapshots"}
+
+
+class SyncToDiskRequest(BaseModel):
+    dest_remote: str = "gws-backup"
+    dest_path: str = "GML-Consolidated"
+    disk_path: str = Field(min_length=1, max_length=500)
+
+    @field_validator("dest_remote", "dest_path", "disk_path")
+    @classmethod
+    def no_dangerous_chars(cls, v: str) -> str:
+        if "\x00" in v or "\n" in v or "\r" in v:
+            raise ValueError("Contains invalid characters (null/newline)")
+        if ".." in v:
+            raise ValueError("Path traversal (..) not allowed")
+        return v
+
+
+class SyncDiskRequest(BaseModel):
+    dest_remote: str = "gws-backup"
+    dest_path: str = "GML-Consolidated"
+    disk_path: str = Field(min_length=1, max_length=500)
+    delete_extra: bool = True
+
+    @field_validator("dest_remote", "dest_path", "disk_path")
+    @classmethod
+    def no_dangerous_chars(cls, v: str) -> str:
+        if "\x00" in v or "\n" in v or "\r" in v:
+            raise ValueError("Contains invalid characters (null/newline)")
+        if ".." in v:
+            raise ValueError("Path traversal (..) not allowed")
+        return v
+
+
+def _validate_disk_path(disk_path: str) -> Path:
+    """Validate that disk_path is a real, mounted directory. Returns resolved Path."""
+    _sanitize_path(disk_path, param_name="disk_path")
+    p = Path(disk_path).resolve()
+    if not p.exists():
+        raise HTTPException(status_code=400, detail=f"Cesta k disku neexistuje: {disk_path}")
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"Cesta k disku není složka: {disk_path}")
+    return p
+
+
+def _run_rclone_sync(task_id: str, source: str, dest: str, *, sync_mode: bool = False):
+    """Run rclone copy or sync in a subprocess, updating task progress."""
+    cmd = ["rclone", "sync" if sync_mode else "copy", source, dest, "--progress", "--stats-one-line", "-v"]
+    logger.info("Running rclone: %s", " ".join(cmd))
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        lines_buf = []
+        for line in iter(proc.stdout.readline, ""):
+            line = line.strip()
+            if not line:
+                continue
+            lines_buf.append(line)
+            # Keep last 20 log lines for progress reporting
+            if len(lines_buf) > 20:
+                lines_buf = lines_buf[-20:]
+            _update_progress(task_id, {"rclone_log": lines_buf, "status": "transferring"})
+        proc.wait(timeout=7200)  # 2 hour max for rclone sync
+        if proc.returncode != 0:
+            _finish_task(task_id, error=f"rclone exited with code {proc.returncode}. Last output: {' | '.join(lines_buf[-5:])}")
+        else:
+            _finish_task(task_id, result={"status": "completed", "last_output": lines_buf[-5:] if lines_buf else []})
+    except FileNotFoundError:
+        _finish_task(task_id, error="rclone is not installed or not on PATH")
+    except Exception as e:
+        logger.exception("rclone sync failed")
+        _finish_task(task_id, error=str(e))
+
+
+@router.post("/consolidation/sync-to-disk")
+def consolidation_sync_to_disk(body: SyncToDiskRequest, request: Request, background_tasks: BackgroundTasks):
+    """Download consolidated data from cloud to local disk (rclone copy, non-destructive)."""
+    disk = _validate_disk_path(body.disk_path)
+
+    # Check free space
+    try:
+        usage = shutil.disk_usage(str(disk))
+        free_gb = usage.free / (1024**3)
+        if free_gb < 1.0:
+            raise HTTPException(status_code=400, detail=f"Nedostatek místa na disku: pouze {free_gb:.1f} GB volných na {body.disk_path}")
+    except OSError:
+        pass
+
+    source = f"{body.dest_remote}:{body.dest_path}"
+    task = _create_task("consolidation:sync-to-disk")
+
+    def run():
+        _run_rclone_sync(task.id, source, str(disk), sync_mode=False)
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "syncing", "source": source, "dest": str(disk)}
+
+
+@router.get("/consolidation/catalog-stats")
+def consolidation_catalog_stats(request: Request):
+    """Get catalog statistics for the consolidation report dashboard."""
+    cat = _open_catalog(request)
+    try:
+        conn = cat._conn
+
+        # Total files and size by category (derived from extension)
+        # Group extensions into categories: Media (image/video/audio), Documents, Software, Other
+        category_stats = []
+        rows = conn.execute(
+            "SELECT CASE "
+            "  WHEN LOWER(ext) IN ("
+            "'.jpg','.jpeg','.png','.gif','.bmp','.tiff','.tif',"
+            "'.heic','.heif','.webp','.svg','.raw','.cr2','.nef','.arw','.dng',"
+            "'.mp4','.mov','.avi','.mkv','.wmv','.flv','.m4v','.3gp','.mpg','.mpeg','.webm',"
+            "'.mp3','.wav','.aac','.flac','.ogg','.wma','.m4a','.aiff','.alac'"
+            ") THEN 'Media' "
+            "  WHEN LOWER(ext) IN ("
+            "'.pdf','.doc','.docx','.xls','.xlsx','.ppt','.pptx',"
+            "'.txt','.rtf','.csv','.pages','.numbers','.keynote','.odt','.ods'"
+            ") THEN 'Documents' "
+            "  WHEN LOWER(ext) IN ("
+            "'.app','.dmg','.pkg','.exe','.msi','.deb','.rpm',"
+            "'.zip','.tar','.gz','.rar','.7z','.iso'"
+            ") THEN 'Software' "
+            "  ELSE 'Other' "
+            "END AS category, COUNT(*) AS count, "
+            "COALESCE(SUM(size), 0) AS total_size FROM files GROUP BY category ORDER BY total_size DESC"
+        ).fetchall()
+        for row in rows:
+            category_stats.append({"category": row[0], "count": row[1], "total_size": row[2]})
+
+        # Duplicate groups count
+        dup_row = conn.execute(
+            "SELECT COUNT(*) FROM (SELECT sha256 FROM files WHERE sha256 IS NOT NULL AND sha256 != '' GROUP BY sha256 HAVING COUNT(*) > 1)"
+        ).fetchone()
+        duplicate_groups = dup_row[0] if dup_row else 0
+
+        # Files by extension (top 20)
+        ext_stats = []
+        ext_rows = conn.execute(
+            "SELECT LOWER(REPLACE(COALESCE(ext, ''), '.', '')) AS extension, "
+            "COUNT(*) AS count, COALESCE(SUM(size), 0) AS total_size "
+            "FROM files GROUP BY extension ORDER BY count DESC LIMIT 20"
+        ).fetchall()
+        for row in ext_rows:
+            ext_stats.append({"extension": row[0] or "(none)", "count": row[1], "total_size": row[2]})
+
+        # Files by year (use date_original if available, otherwise derive year from mtime)
+        year_stats = []
+        year_rows = conn.execute(
+            "SELECT COALESCE(SUBSTR(date_original, 1, 4), "
+            "  CAST(STRFTIME('%Y', mtime, 'unixepoch') AS TEXT), 'Unknown') AS year, "
+            "COUNT(*) AS count, COALESCE(SUM(size), 0) AS total_size "
+            "FROM files GROUP BY year ORDER BY year"
+        ).fetchall()
+        for row in year_rows:
+            year_stats.append({"year": row[0], "count": row[1], "total_size": row[2]})
+
+        # Grand totals
+        totals_row = conn.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM files").fetchone()
+
+        return {
+            "total_files": totals_row[0] if totals_row else 0,
+            "total_size": totals_row[1] if totals_row else 0,
+            "categories": category_stats,
+            "duplicate_groups": duplicate_groups,
+            "by_extension": ext_stats,
+            "by_year": year_stats,
+        }
+    finally:
+        cat.close()
+
+
+@router.post("/consolidation/sync-disk")
+def consolidation_sync_disk(body: SyncDiskRequest, request: Request, background_tasks: BackgroundTasks):
+    """Synchronize disk with cloud destination (one-way: cloud -> disk).
+
+    Uses rclone sync to make the disk identical to the cloud copy.
+    When delete_extra=True (default), files on disk that don't exist in cloud are removed.
+    """
+    disk = _validate_disk_path(body.disk_path)
+
+    # Check free space
+    try:
+        usage = shutil.disk_usage(str(disk))
+        free_gb = usage.free / (1024**3)
+        if free_gb < 1.0:
+            raise HTTPException(status_code=400, detail=f"Nedostatek místa na disku: pouze {free_gb:.1f} GB volných na {body.disk_path}")
+    except OSError:
+        pass
+
+    source = f"{body.dest_remote}:{body.dest_path}"
+    task = _create_task("consolidation:sync-disk")
+
+    def run():
+        # rclone sync is inherently destructive (makes dest match source).
+        # When delete_extra is False, fall back to rclone copy (non-destructive).
+        _run_rclone_sync(task.id, source, str(disk), sync_mode=body.delete_extra)
+
+    background_tasks.add_task(run)
+    return {
+        "task_id": task.id,
+        "status": "syncing",
+        "source": source,
+        "dest": str(disk),
+        "delete_extra": body.delete_extra,
+    }
+
+
+@router.get("/consolidation/available-disks")
+def consolidation_available_disks():
+    """List mounted external volumes for disk sync target selection."""
+    volumes_dir = Path("/Volumes")
+    disks = []
+
+    if not volumes_dir.is_dir():
+        return {"disks": disks}
+
+    for entry in sorted(volumes_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        if entry.name in _EXCLUDED_VOLUMES:
+            continue
+        # Skip hidden volumes
+        if entry.name.startswith("."):
+            continue
+        try:
+            usage = shutil.disk_usage(str(entry))
+            disks.append({
+                "name": entry.name,
+                "path": str(entry),
+                "total_size": usage.total,
+                "free_space": usage.free,
+                "used_space": usage.used,
+            })
+        except OSError:
+            # Volume not accessible, skip
+            continue
+
+    return {"disks": disks}

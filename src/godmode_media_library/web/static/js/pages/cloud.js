@@ -69,15 +69,15 @@ function renderStatusBar(status) {
 }
 
 function _statusBadge(done) {
-  if (done) return `<span class="cloud-badge cloud-badge-ok" title="Hotovo">✓</span>`;
-  return `<span class="cloud-badge cloud-badge-none" title="Neprovedeno">●</span>`;
+  if (done) return `<span class="cloud-badge cloud-badge-ok" title="${t("cloud.done")}">✓</span>`;
+  return `<span class="cloud-badge cloud-badge-none" title="${t("cloud.not_done")}">●</span>`;
 }
 
 function _verifyBar(diskCount, catCount) {
   if (diskCount === 0 && catCount === 0) {
     return `<div class="cloud-verify-bar verify-empty">
       <div class="cloud-verify-icon">⚠</div>
-      <span>Složka je prázdná — zkontrolujte připojení</span>
+      <span>${t("cloud.folder_empty")}</span>
     </div>`;
   }
   const allIndexed = diskCount > 0 && catCount >= diskCount;
@@ -88,7 +88,7 @@ function _verifyBar(diskCount, catCount) {
     <div class="cloud-verify-bar ${barClass}">
       <div class="cloud-verify-icon">${allIndexed ? "✓" : partial ? "◐" : "○"}</div>
       <div class="cloud-verify-info">
-        <span>${diskCount} na disku → ${catCount} indexováno${!allIndexed && diskCount > 0 ? ` (${pct}%)` : ""}</span>
+        <span>${diskCount} ${t("cloud.disk_status")} → ${catCount} ${t("cloud.indexed")}${!allIndexed && diskCount > 0 ? ` (${pct}%)` : ""}</span>
         <div class="cloud-verify-progress"><div class="cloud-verify-fill" style="width:${Math.min(pct, 100)}%"></div></div>
       </div>
     </div>`;
@@ -186,11 +186,13 @@ function renderSources(sources) {
   function _btnSpinner(btn) {
     btn.disabled = true;
     btn._origHtml = btn.innerHTML;
-    btn.innerHTML = `<span class="cloud-badge cloud-badge-spin"></span> ${btn.textContent.trim()}`;
+    btn._origText = btn.textContent.trim();
+    btn.innerHTML = `<span class="cloud-badge cloud-badge-spin"></span> ${btn._origText}`;
   }
   // Helper: set button to done state (green check)
   function _btnDone(btn) {
-    btn.innerHTML = `<span class="cloud-badge cloud-badge-ok">✓</span> ${btn.textContent.trim()}`;
+    const savedText = btn._origText || btn.textContent.trim();
+    btn.innerHTML = `<span class="cloud-badge cloud-badge-ok">✓</span> ${savedText}`;
     btn.disabled = false;
   }
   // Helper: restore button
@@ -354,9 +356,9 @@ function renderNativePaths(paths) {
     btn.addEventListener("click", () => {
       const sublist = btn.closest(".cloud-native-group").nextElementSibling;
       if (sublist && sublist.classList.contains("cloud-native-sublist")) {
-        const expanded = sublist.classList.toggle("hidden");
-        btn.innerHTML = expanded ? "&#9660;" : "&#9650;";
-        btn.setAttribute("aria-expanded", String(!expanded));
+        const hidden = sublist.classList.toggle("hidden");
+        btn.innerHTML = hidden ? "&#9660;" : "&#9650;";
+        btn.setAttribute("aria-expanded", String(!hidden));
       }
     });
   });
@@ -630,7 +632,7 @@ async function showBackupModal(remoteName) {
                 <label class="backup-source-item">
                   <input type="checkbox" name="source_${i}" value="${s.path}" checked />
                   <span>${s.name || s.path}</span>
-                  <span class="backup-source-count">${s.file_count} souborů</span>
+                  <span class="backup-source-count">${s.file_count} ${t("cloud.files_unit")}</span>
                 </label>
               `).join("")}
             </div>
@@ -675,10 +677,10 @@ async function showBackupModal(remoteName) {
 
     const submitBtn = form.querySelector('[type="submit"]');
     submitBtn.disabled = true;
-    submitBtn.innerHTML = `<span class="cloud-badge cloud-badge-spin"></span> Zálohuji...`;
+    submitBtn.innerHTML = `<span class="cloud-badge cloud-badge-spin"></span> ${t("cloud.backup_uploading")}`;
     statusEl.classList.remove("hidden");
     statusEl.className = "cloud-connect-status";
-    statusEl.textContent = `Zálohuji ${selectedPaths.length} zdrojů na ${remoteName}:${remotePath}...`;
+    statusEl.textContent = t("cloud.backup_status", { count: selectedPaths.length, remote: remoteName, path: remotePath });
 
     try {
       const result = await apiPost("/cloud/backup", {
@@ -689,7 +691,7 @@ async function showBackupModal(remoteName) {
       });
       statusEl.className = "cloud-connect-status status-success";
       statusEl.textContent = dryRun
-        ? `Zkušební běh dokončen (úloha ${result.task_id})`
+        ? t("cloud.backup_dry_complete", { task_id: result.task_id })
         : t("cloud.backup_started", { count: selectedPaths.length, name: remoteName });
       showToast(t("cloud.backup_started", { count: selectedPaths.length, name: remoteName }), "success");
       setTimeout(() => { overlay.remove(); loadStatus(); }, 3000);

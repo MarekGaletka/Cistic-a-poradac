@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -55,10 +56,6 @@ CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status);
 CREATE INDEX IF NOT EXISTS idx_cfs_job_step_status ON consolidation_file_state(job_id, step_name, status);
 """
 
-# Cache keyed by connection id() — cleared when ensure_tables sees a new connection
-_tables_cache: dict[int, bool] = {}
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -105,15 +102,22 @@ class FileTransferState:
 # ---------------------------------------------------------------------------
 
 
+import weakref
+
+_setup_done_conns: weakref.WeakSet = weakref.WeakSet()  # tracks conn objects; auto-removed when GC'd
+
+
 def ensure_tables(conn: sqlite3.Connection) -> None:
-    cid = id(conn)
-    if cid in _tables_cache:
+    # Use a WeakSet of connection objects to avoid repeated setup.
+    # WeakSet automatically drops entries when the connection is GC'd,
+    # preventing leaks after id() recycling.
+    if conn in _setup_done_conns:
         return
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")  # WAL for concurrent reads + crash safety
     conn.executescript(_CHECKPOINT_SQL)
-    _tables_cache[cid] = True
+    _setup_done_conns.add(conn)
 
 
 def _ensure(catalog: Catalog) -> None:
@@ -128,10 +132,8 @@ def _ensure(catalog: Catalog) -> None:
 def _row_to_job(row: sqlite3.Row) -> ConsolidationJob:
     config = {}
     if row["config_json"]:
-        try:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
             config = json.loads(row["config_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
     return ConsolidationJob(
         job_id=row["job_id"],
         job_type=row["job_type"],
@@ -178,7 +180,7 @@ def create_job(
 ) -> ConsolidationJob:
     _ensure(catalog)
     now = _now()
-    job_id = uuid4().hex[:8]
+    job_id = uuid4().hex[:16]
     config = config or {}
     conn = catalog.conn
     with conn:
@@ -202,8 +204,9 @@ def create_job(
 def get_job(catalog: Catalog, job_id: str) -> ConsolidationJob | None:
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
-    cur = conn.execute("SELECT * FROM consolidation_jobs WHERE job_id = ?", (job_id,))
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    cur.execute("SELECT * FROM consolidation_jobs WHERE job_id = ?", (job_id,))
     row = cur.fetchone()
     return _row_to_job(row) if row else None
 
@@ -211,14 +214,15 @@ def get_job(catalog: Catalog, job_id: str) -> ConsolidationJob | None:
 def list_jobs(catalog: Catalog, status: str | None = None) -> list[ConsolidationJob]:
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
     if status:
-        cur = conn.execute(
+        cur.execute(
             "SELECT * FROM consolidation_jobs WHERE status = ? ORDER BY created_at DESC",
             (status,),
         )
     else:
-        cur = conn.execute(
+        cur.execute(
             "SELECT * FROM consolidation_jobs ORDER BY created_at DESC",
         )
     return [_row_to_job(r) for r in cur.fetchall()]
@@ -346,8 +350,9 @@ def get_pending_files(
 ) -> list[FileTransferState]:
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
-    cur = conn.execute(
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    cur.execute(
         """SELECT * FROM consolidation_file_state
            WHERE job_id = ? AND step_name = ? AND status IN ('pending', 'in_progress')
            ORDER BY id
@@ -369,14 +374,15 @@ def get_job_progress(
 ) -> dict[str, int]:
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
     base = "SELECT status, COUNT(*) as cnt, SUM(bytes_transferred) as total_bytes FROM consolidation_file_state WHERE job_id = ?"
     params: list[Any] = [job_id]
     if step is not None:
         base += " AND step_name = ?"
         params.append(step)
     base += " GROUP BY status"
-    cur = conn.execute(base, params)
+    cur.execute(base, params)
     rows = cur.fetchall()
     counts: dict[str, int] = {
         "total": 0,
@@ -401,8 +407,9 @@ def get_job_progress(
 def get_resumable_jobs(catalog: Catalog) -> list[ConsolidationJob]:
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
-    cur = conn.execute(
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    cur.execute(
         """SELECT * FROM consolidation_jobs
            WHERE status IN ('created', 'running', 'paused')
            ORDER BY updated_at DESC""",
@@ -417,17 +424,16 @@ def mark_phase_done(catalog: Catalog, job_id: str, phase: str) -> None:
     """
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
     # Atomic read-modify-write with BEGIN IMMEDIATE
     conn.execute("BEGIN IMMEDIATE")
     try:
-        row = conn.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        cur = conn.cursor()
+        cur.row_factory = sqlite3.Row
+        row = cur.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
         config = {}
         if row and row["config_json"]:
-            try:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
                 config = json.loads(row["config_json"])
-            except (json.JSONDecodeError, TypeError):
-                pass
         completed = config.get("completed_phases", [])
         if phase not in completed:
             completed.append(phase)
@@ -439,6 +445,7 @@ def mark_phase_done(catalog: Catalog, job_id: str, phase: str) -> None:
         )
         conn.execute("COMMIT")
     except Exception:
+        logger.exception("mark_phase_done failed for job %s phase '%s'", job_id, phase)
         conn.execute("ROLLBACK")
         raise
     logger.info("Phase '%s' marked done for job %s", phase, job_id)
@@ -448,8 +455,9 @@ def is_phase_done(catalog: Catalog, job_id: str, phase: str) -> bool:
     """Check if a phase has already been completed."""
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    row = cur.execute("SELECT config_json FROM consolidation_jobs WHERE job_id = ?", (job_id,)).fetchone()
     if not row or not row["config_json"]:
         return False
     try:
@@ -468,8 +476,9 @@ def get_failed_files(
     """Get files that failed transfer (for retry pass)."""
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
-    cur = conn.execute(
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    cur.execute(
         """SELECT * FROM consolidation_file_state
            WHERE job_id = ? AND step_name = ? AND status = 'failed'
            ORDER BY attempt_count ASC, id
@@ -489,7 +498,8 @@ def get_files_by_source(
     """Get files from a specific source remote."""
     _ensure(catalog)
     conn = catalog.conn
-    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
     query = """SELECT * FROM consolidation_file_state
                WHERE job_id = ? AND step_name = ? AND source_location LIKE ?"""
     params: list[Any] = [job_id, step, f"{source_prefix}:%"]
@@ -497,7 +507,7 @@ def get_files_by_source(
         query += " AND status = ?"
         params.append(status)
     query += " ORDER BY id"
-    cur = conn.execute(query, params)
+    cur.execute(query, params)
     return [_row_to_file_state(r) for r in cur.fetchall()]
 
 

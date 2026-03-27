@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import sys
@@ -13,7 +14,7 @@ from .autolabel_place import auto_place_labels
 from .catalog import Catalog, default_catalog_path
 from .config import format_config, load_config
 from .delete_ops import apply_delete_plan, create_delete_plan
-from .exiftool_extract import extract_all_metadata
+from .exiftool_extract import extract_all_metadata, write_tags
 from .logging_config import setup_logging
 from .metadata_merge import create_merge_plan, execute_merge, write_merge_plan_tsv
 from .metadata_richness import compute_group_diff, compute_richness
@@ -419,20 +420,20 @@ def cmd_config_show(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     try:
-        import uvicorn
+        import uvicorn  # Lazy import: optional dependency, may not be installed
     except ImportError:
         print("Web UI requires: pip install godmode-media-library[web]")
         print("  or: pip install fastapi uvicorn[standard]")
         return 2
 
-    from .web.app import create_app
+    from .web.app import create_app  # Lazy import: only needed when serving web UI
 
     catalog_path = Path(args.catalog) if args.catalog else None
     app = create_app(catalog_path=catalog_path)
 
     if not args.no_browser:
-        import threading
-        import webbrowser
+        import threading  # Lazy import: only needed when opening browser
+        import webbrowser  # Lazy import: only needed when opening browser
 
         threading.Timer(1.0, lambda: webbrowser.open(f"http://{args.host}:{args.port}")).start()
 
@@ -443,7 +444,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
-    from .watcher import watch_roots
+    from .watcher import watch_roots  # Lazy import: heavy module, only needed for watch command
 
     roots = _parse_roots(args.roots)
     catalog = _get_catalog(args)
@@ -454,7 +455,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_auto(args: argparse.Namespace) -> int:
-    from .pipeline import PipelineConfig, run_pipeline
+    from .pipeline import PipelineConfig, run_pipeline  # Lazy import: heavy module, only needed for auto command
 
     roots = _parse_roots(args.roots)
     catalog_path = Path(args.catalog) if args.catalog else None
@@ -486,7 +487,7 @@ def cmd_auto(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    from .deps import check_all, format_report
+    from .deps import check_all, format_report  # Lazy import: only needed for doctor command
 
     exiftool_bin = getattr(args, "exiftool_bin", "exiftool")
     statuses = check_all(exiftool_bin=exiftool_bin)
@@ -496,7 +497,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_cloud(args: argparse.Namespace) -> int:
-    from .cloud import check_rclone, format_cloud_guide, list_remotes, mount_command
+    from .cloud import check_rclone, format_cloud_guide, list_remotes, mount_command  # Lazy import: only needed for cloud command
 
     if not check_rclone():
         print("rclone is not installed.\n")
@@ -762,8 +763,6 @@ def cmd_metadata_merge(args: argparse.Namespace) -> int:
 
 
 def cmd_metadata_write(args: argparse.Namespace) -> int:
-    from .exiftool_extract import write_tags
-
     paths = [Path(p).expanduser().resolve() for p in args.files]
     tags = {}
     for tag_spec in args.tags:
@@ -873,8 +872,6 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    import csv
-
     catalog = _get_catalog(args)
     out_path = Path(args.out).expanduser().resolve()
     fmt = args.format
@@ -936,7 +933,7 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 def cmd_batch_rename(args: argparse.Namespace) -> int:
-    from .batch_rename import apply_renames, plan_renames
+    from .batch_rename import apply_renames, plan_renames  # Lazy import: only needed for batch-rename command
 
     root = Path(args.root).expanduser().resolve()
     if not root.is_dir():
@@ -977,7 +974,7 @@ def cmd_batch_rename(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from .i18n import t
+    from .i18n import t  # Lazy import to avoid circular dependency with config
 
     parser = argparse.ArgumentParser(
         prog="gml",
@@ -1076,7 +1073,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     psim = sub.add_parser("similar", help=t("help.similar"))
     psim.add_argument("--catalog", default=None, help="Catalog DB path")
-    psim.add_argument("--threshold", type=int, default=10, help="Max Hamming distance (0=identical, lower=stricter)")
+    psim.add_argument(
+        "--threshold", type=int, default=10, choices=range(0, 65),
+        metavar="0-64", help="Max Hamming distance 0-64 (0=identical, lower=stricter)",
+    )
     psim.add_argument("--out", default=None, help="Optional output TSV path")
     psim.set_defaults(func=cmd_similar)
 
@@ -1265,12 +1265,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     try:
-        from .i18n import set_lang
+        from .i18n import set_lang  # Lazy import to avoid circular dependency with config
 
         parser = build_parser()
         args = parser.parse_args()
         if args.lang:
             set_lang(args.lang)
+        if args.logfile_max_mb is not None and args.logfile_max_mb <= 0:
+            parser.error("--logfile-max-mb must be a positive integer")
+
+        if hasattr(args, "out_dir") and args.out_dir is None and getattr(args, "func", None) not in (cmd_metadata_merge,):
+            parser.error("--out-dir is required for this command")
+
         log_file = Path(args.log_file) if args.log_file else None
         setup_logging(
             verbosity=args.verbose,
@@ -1279,7 +1285,8 @@ def main() -> int:
             log_backup_count=args.logfile_backups,
         )
         logger.debug("command=%s args=%s", args.command, vars(args))
-        return int(args.func(args))
+        rc = int(args.func(args))
+        sys.exit(rc)
     except KeyboardInterrupt:
         sys.exit(130)
     except SystemExit:

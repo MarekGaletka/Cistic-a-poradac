@@ -8,9 +8,14 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 
+import logging
+
 from .audit import collect_file_records
+from .disk_space import check_disk_space
 from .models import FileRecord, TreePlanRow
 from .utils import ensure_dir, read_tsv_dict, write_tsv
+
+_logger = logging.getLogger(__name__)
 
 _IMAGE_EXTS = {"jpg", "jpeg", "png", "heic", "gif", "tif", "tiff", "bmp", "webp"}
 _VIDEO_EXTS = {"mov", "mp4", "m4v", "avi", "mkv", "mts", "3gp"}
@@ -141,9 +146,21 @@ def _bucket_for_type_unit(members: list[FileRecord]) -> str:
     return f"{_file_category(ext)}/{_sanitize_segment(ext or 'noext')}"
 
 
-def _allocate_destination(dest: Path, reserved: set[Path]) -> Path:
-    if dest not in reserved and not dest.exists():
+def _allocate_destination(
+    dest: Path,
+    reserved: set[Path],
+    reserved_norm: set[str] | None = None,
+) -> Path:
+    # Use normcase for case-insensitive comparison on macOS/Windows.
+    # If a persistent reserved_norm set is passed, use it to avoid O(N)
+    # rebuild on every call.
+    if reserved_norm is None:
+        reserved_norm = {os.path.normcase(str(p)) for p in reserved}
+    dest_norm = os.path.normcase(str(dest))
+
+    if dest_norm not in reserved_norm and not dest.exists():
         reserved.add(dest)
+        reserved_norm.add(dest_norm)
         return dest
 
     stem = dest.stem
@@ -151,8 +168,10 @@ def _allocate_destination(dest: Path, reserved: set[Path]) -> Path:
     parent = dest.parent
     for n in range(1, 100_000):
         cand = parent / f"{stem} ({n}){suffix}"
-        if cand not in reserved and not cand.exists():
+        cand_norm = os.path.normcase(str(cand))
+        if cand_norm not in reserved_norm and not cand.exists():
             reserved.add(cand)
+            reserved_norm.add(cand_norm)
             return cand
     raise RuntimeError(f"Cannot allocate destination after 100000 attempts: {dest}")
 
@@ -182,6 +201,7 @@ def create_tree_plan(
         units[uid].append(rec)
 
     reserved: set[Path] = set()
+    reserved_norm: set[str] = set()
     rows: list[TreePlanRow] = []
     mode_root = _sanitize_segment(f"by_{mode}")
 
@@ -195,7 +215,7 @@ def create_tree_plan(
         for rec in sorted(members, key=lambda x: str(x.path)):
             target_dir = target_root / mode_root / bucket
             desired = target_dir / rec.path.name
-            desired = _allocate_destination(desired, reserved)
+            desired = _allocate_destination(desired, reserved, reserved_norm)
 
             if rec.path.resolve() == desired.resolve():
                 continue
@@ -253,6 +273,9 @@ def apply_tree_plan(
     applied = 0
     skipped = 0
     log_rows: list[tuple[object, ...]] = []
+    # Shared sets to track renames across all rows, preventing collisions
+    _collision_reserved: set[Path] = set()
+    _collision_reserved_norm: set[str] = set()
 
     for row in rows:
         src = Path(row["source_path"])
@@ -263,9 +286,26 @@ def apply_tree_plan(
             log_rows.append((str(src), str(dst), operation, "skip", "source_missing"))
             continue
 
+        # Prevent moving a directory into itself or a subdirectory of itself
+        if src.is_dir() and operation == "move":
+            try:
+                if dst.resolve().is_relative_to(src.resolve()):
+                    skipped += 1
+                    log_rows.append((str(src), str(dst), operation, "skip", "cannot_move_into_self"))
+                    continue
+            except (OSError, ValueError):
+                pass
+
         final_dst = dst
+        _overwrite_backup: Path | None = None
+
         if final_dst.exists():
-            if src.resolve() == final_dst.resolve():
+            # Check if src and dst are the same file (same inode) — but allow case-only renames
+            try:
+                same_inode = os.stat(src).st_ino == os.stat(final_dst).st_ino and os.stat(src).st_dev == os.stat(final_dst).st_dev
+            except OSError:
+                same_inode = False
+            if same_inode and str(src) == str(final_dst):
                 skipped += 1
                 log_rows.append((str(src), str(final_dst), operation, "skip", "already_in_place"))
                 continue
@@ -275,19 +315,49 @@ def apply_tree_plan(
                 log_rows.append((str(src), str(final_dst), operation, "skip", "collision"))
                 continue
             if collision_policy == "rename":
-                final_dst = _allocate_destination(final_dst, set())
+                final_dst = _allocate_destination(final_dst, _collision_reserved, _collision_reserved_norm)
             elif collision_policy == "overwrite" and not dry_run:
                 if final_dst.is_dir():
                     skipped += 1
                     log_rows.append((str(src), str(final_dst), operation, "skip", "collision_is_directory"))
                     continue
-                final_dst.unlink()
+                # Safe swap: move target to temp, then move source, then delete temp.
+                # If the source move fails, restore target from temp.
+                _overwrite_backup = final_dst.parent / (final_dst.name + ".__gml_overwrite_bak__")
+                try:
+                    shutil.move(str(final_dst), str(_overwrite_backup))
+                except OSError:
+                    skipped += 1
+                    log_rows.append((str(src), str(final_dst), operation, "skip", "overwrite_backup_failed"))
+                    continue
 
         if not dry_run:
             ensure_dir(final_dst.parent)
             try:
                 if operation == "move":
-                    shutil.move(str(src), str(final_dst))
+                    # Handle case-only rename on case-insensitive FS (e.g. Photo.jpg -> photo.JPG)
+                    if (
+                        os.path.normcase(str(src)) == os.path.normcase(str(final_dst))
+                        and str(src) != str(final_dst)
+                    ):
+                        # Same inode, different case — two-step rename via temp name
+                        tmp = final_dst.parent / (final_dst.name + ".__gml_tmp__")
+                        shutil.move(str(src), str(tmp))
+                        shutil.move(str(tmp), str(final_dst))
+                    else:
+                        # Check disk space before cross-filesystem move
+                        try:
+                            src_dev = os.stat(src).st_dev
+                            dst_dev = os.stat(final_dst.parent).st_dev
+                            if src_dev != dst_dev:
+                                file_size = os.path.getsize(src) if src.is_file() else 0
+                                if file_size and not check_disk_space(final_dst.parent, file_size):
+                                    skipped += 1
+                                    log_rows.append((str(src), str(final_dst), operation, "skip", "insufficient_disk_space"))
+                                    continue
+                        except OSError:
+                            pass  # If stat fails, proceed and let the move report the error
+                        shutil.move(str(src), str(final_dst))
                 elif operation == "copy":
                     shutil.copy2(str(src), str(final_dst))
                 elif operation == "hardlink":
@@ -299,12 +369,28 @@ def apply_tree_plan(
             except OSError as exc:
                 import errno as errno_mod
 
+                # If overwrite was in progress, restore the backup
+                if _overwrite_backup is not None:
+                    try:
+                        if _overwrite_backup.exists() and not final_dst.exists():
+                            shutil.move(str(_overwrite_backup), str(final_dst))
+                    except OSError:
+                        pass
+
                 skipped += 1
                 detail = f"os_error:{exc.errno}"
                 if exc.errno == errno_mod.EXDEV:
                     detail = "cross_device_link:hardlinks_cannot_span_filesystems"
                 log_rows.append((str(src), str(final_dst), operation, "skip", detail))
                 continue
+
+        # Clean up overwrite backup on success
+        if _overwrite_backup is not None:
+            try:
+                if _overwrite_backup.exists():
+                    _overwrite_backup.unlink()
+            except OSError:
+                pass
 
         applied += 1
         log_rows.append((str(src), str(final_dst), operation, "applied", "ok"))

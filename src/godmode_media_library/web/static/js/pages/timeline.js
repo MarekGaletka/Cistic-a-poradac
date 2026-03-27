@@ -7,8 +7,8 @@ import { showFileDetail } from "../modal.js";
 import { openLightbox } from "../lightbox.js";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm"]);
-const MONTH_NAMES_CS = ["Led", "Úno", "Bře", "Dub", "Kvě", "Čvn", "Čvc", "Srp", "Zář", "Říj", "Lis", "Pro"];
-const MONTH_NAMES_FULL_CS = ["Leden", "Únor", "Březen", "Duben", "Květen", "Červen", "Červenec", "Srpen", "Září", "Říjen", "Listopad", "Prosinec"];
+const MONTH_NAMES_CS = t("months.short").split(",");
+const MONTH_NAMES_FULL_CS = t("months.full").split(",");
 
 // ── State ──
 let _container = null;
@@ -404,7 +404,7 @@ async function _openGapAnalysis() {
         heatmapHtml += `<div class="heatmap-cell heatmap-empty" title="${MONTH_NAMES_CS[m - 1]} ${year}">–</div>`;
       } else {
         const cls = _cellClass(count);
-        heatmapHtml += `<div class="heatmap-cell ${cls}" data-count="${count}" title="${MONTH_NAMES_CS[m - 1]} ${year}: ${count} souborů">${count}</div>`;
+        heatmapHtml += `<div class="heatmap-cell ${cls}" data-count="${count}" title="${MONTH_NAMES_CS[m - 1]} ${year}: ${count} ${t("timeline.files_unit")}">${count}</div>`;
       }
     }
   }
@@ -419,8 +419,8 @@ async function _openGapAnalysis() {
       const fromName = _monthName(g.from);
       const toName = _monthName(g.to);
       const desc = g.months === 1
-        ? `${fromName} (1 měsíc bez dat)`
-        : `${fromName} – ${toName} (${g.months} měsíců bez dat)`;
+        ? t("timeline.gap_single", { from: fromName })
+        : t("timeline.gap_range", { from: fromName, to: toName, months: g.months });
       gapHtml += `<li class="gap-item">${escapeHtml(desc)}</li>`;
     }
   }
@@ -468,6 +468,8 @@ async function _openGapAnalysis() {
 
 export async function render(container) {
   _container = container;
+
+  container.innerHTML = `<div class="page-header"><h2>${t("timeline.title")}</h2></div><div class="loading"><div class="spinner"></div>${t("general.loading")}</div>`;
 
   try {
     const data = await api("/files?limit=10000");

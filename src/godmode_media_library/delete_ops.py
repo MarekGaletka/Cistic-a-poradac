@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from .asset_sets import build_asset_membership
+from .disk_space import check_disk_space
 from .utils import ensure_dir, iter_files, path_startswith, read_tsv_dict, write_tsv
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,10 +65,7 @@ def _quarantine_path(quarantine_root: Path, original_path: Path) -> Path:
     if ".." in rest_parts:
         raise ValueError(f"Path traversal detected: refusing to quarantine path with '..' components: {original_path}")
 
-    if drive:
-        result = quarantine_root / "_drive_" / drive / rest
-    else:
-        result = quarantine_root / rest
+    result = quarantine_root / "_drive_" / drive / rest if drive else quarantine_root / rest
 
     # Final safety check: resolved destination must be under quarantine_root
     resolved = result.resolve()
@@ -78,11 +79,19 @@ def _quarantine_path(quarantine_root: Path, original_path: Path) -> Path:
 def _allocate_dest(dest: Path) -> Path:
     if not dest.exists():
         return dest
+    stem = dest.stem
+    ext = dest.suffix
+    parent = dest.parent
     suffix = 1
-    candidate = Path(f"{dest}.dup{suffix}")
+    max_attempts = 10000
+    candidate = parent / f"{stem}.dup{suffix}{ext}"
     while candidate.exists():
         suffix += 1
-        candidate = Path(f"{dest}.dup{suffix}")
+        if suffix > max_attempts:
+            raise RuntimeError(
+                f"Failed to allocate quarantine destination after {max_attempts} attempts: {dest}"
+            )
+        candidate = parent / f"{stem}.dup{suffix}{ext}"
     return candidate
 
 
@@ -351,6 +360,7 @@ def apply_delete_plan(
     skipped = 0
     manual_review = 0
     log_rows: list[tuple[object, ...]] = []
+    _primary_moved_inodes: set[str] = set()  # Track inodes with successful primary moves
 
     for row in rows_sorted:
         action = row.get("action", "")
@@ -370,13 +380,33 @@ def apply_delete_plan(
         if action == "move_primary":
             dest = _allocate_dest(_quarantine_path(quarantine_root, path))
             if not dry_run:
+                # Check disk space before moving
+                try:
+                    file_size = path.stat().st_size
+                except OSError:
+                    file_size = 0
+                if file_size and not check_disk_space(dest.parent, file_size):
+                    skipped += 1
+                    log_rows.append((inode_id, str(path), action, "skipped", "", "insufficient_disk_space"))
+                    continue
                 ensure_dir(dest.parent)
-                shutil.move(str(path), str(dest))
+                try:
+                    shutil.move(str(path), str(dest))
+                except Exception:
+                    skipped += 1
+                    log_rows.append((inode_id, str(path), action, "skipped", "", "move_failed"))
+                    continue
+            _primary_moved_inodes.add(inode_id)
             moved_primary += 1
             log_rows.append((inode_id, str(path), action, "applied", str(dest), "ok"))
             continue
 
         if action == "unlink_alias":
+            # Only unlink aliases for inodes whose primary was successfully moved
+            if inode_id not in _primary_moved_inodes:
+                skipped += 1
+                log_rows.append((inode_id, str(path), action, "skipped", "", "primary_move_not_confirmed"))
+                continue
             # Hardlink safety: verify the inode still has the expected nlink
             # before unlinking, to prevent accidental data loss
             try:

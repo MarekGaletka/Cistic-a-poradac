@@ -1,6 +1,6 @@
 /* GOD MODE Media Library — Modal system */
 
-import { api } from "./api.js";
+import { api, apiPost } from "./api.js";
 import { $, escapeHtml, fileName, formatBytes, IMAGE_EXTS } from "./utils.js";
 import { t } from "./i18n.js";
 import { openShareModal } from "./share.js";
@@ -15,8 +15,25 @@ export function openModal(contentHtml) {
   overlay.innerHTML = `<div class="modal"><button class="modal-close" aria-label="${t("general.close")}">&times;</button>${contentHtml}</div>`;
   overlay.querySelector(".modal-close").addEventListener("click", closeAllModals);
   overlay.addEventListener("click", e => { if (e.target === overlay) closeAllModals(); });
+  _trapFocus(overlay);
   document.body.appendChild(overlay);
   return overlay;
+}
+
+// Simple focus trap: cycle Tab between first and last focusable elements inside el
+function _trapFocus(el) {
+  el.addEventListener("keydown", e => {
+    if (e.key !== "Tab") return;
+    const focusable = el.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+    } else {
+      if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
 }
 
 export function closeModal() {
@@ -129,7 +146,7 @@ export async function showFileDetail(filePath) {
       }).catch(() => {});
       favBtn.addEventListener("click", async () => {
         try {
-          await api("/files/favorite", { method: "POST", body: { path: favBtn.dataset.path } });
+          await apiPost("/files/favorite", { path: favBtn.dataset.path });
           const isNow = favBtn.classList.toggle("active");
           favBtn.textContent = isNow ? "\u2605" : "\u2734";
         } catch {}
@@ -232,6 +249,8 @@ function initSlider() {
   if (!slider || !clip || !divider) return;
 
   let dragging = false;
+  const ac = new AbortController();
+  const sig = ac.signal;
   const setPos = (x) => {
     const rect = slider.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
@@ -243,10 +262,16 @@ function initSlider() {
     setPos(rect.left + rect.width / 2);
   });
 
-  slider.addEventListener("mousedown", (e) => { dragging = true; setPos(e.clientX); });
-  document.addEventListener("mousemove", (e) => { if (dragging) setPos(e.clientX); });
-  document.addEventListener("mouseup", () => { dragging = false; });
-  slider.addEventListener("touchstart", (e) => { dragging = true; setPos(e.touches[0].clientX); }, { passive: true });
-  document.addEventListener("touchmove", (e) => { if (dragging) setPos(e.touches[0].clientX); }, { passive: true });
-  document.addEventListener("touchend", () => { dragging = false; });
+  slider.addEventListener("mousedown", (e) => { dragging = true; setPos(e.clientX); }, { signal: sig });
+  document.addEventListener("mousemove", (e) => { if (dragging) setPos(e.clientX); }, { signal: sig });
+  document.addEventListener("mouseup", () => { dragging = false; }, { signal: sig });
+  slider.addEventListener("touchstart", (e) => { dragging = true; setPos(e.touches[0].clientX); }, { passive: true, signal: sig });
+  document.addEventListener("touchmove", (e) => { if (dragging) setPos(e.touches[0].clientX); }, { passive: true, signal: sig });
+  document.addEventListener("touchend", () => { dragging = false; }, { signal: sig });
+
+  // Clean up all listeners when the slider is removed from DOM
+  const observer = new MutationObserver(() => {
+    if (!document.contains(slider)) { ac.abort(); observer.disconnect(); }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 }

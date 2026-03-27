@@ -107,23 +107,16 @@ function _renderScenarioCard(sc) {
     ? `<span class="scenario-trigger-badge">\u23F0 ${t("scenario.scheduled")}</span>`
     : "";
 
-  const stepIcons = (sc.steps || [])
-    .filter(s => s.enabled)
-    .map(s => _stepTypes[s.type]?.icon || "\u2753")
-    .join(" \u2192 ");
+  const enabledSteps = (sc.steps || []).filter(s => s.enabled);
+  const stepIcons = enabledSteps.length > 6
+    ? enabledSteps.slice(0, 5).map(s => _stepTypes[s.type]?.icon || "\u2753").join(" \u2192 ") + ` \u2192 +${enabledSteps.length - 5}`
+    : enabledSteps.map(s => _stepTypes[s.type]?.icon || "\u2753").join(" \u2192 ");
 
   return `
     <div class="scenario-card" data-id="${sc.id}" style="border-top:3px solid ${sc.color}">
       <div class="scenario-card-header">
         <span class="scenario-card-icon" style="color:${sc.color}">${sc.icon}</span>
-        <div class="scenario-card-menu">
-          <button class="scenario-menu-btn" data-id="${sc.id}" title="Menu">\u22EF</button>
-          <div class="scenario-menu hidden" data-id="${sc.id}">
-            <button class="scenario-menu-item" data-action="edit" data-id="${sc.id}">\u270F\uFE0F ${t("scenario.edit")}</button>
-            <button class="scenario-menu-item" data-action="duplicate" data-id="${sc.id}">\u{1F4CB} ${t("scenario.duplicate")}</button>
-            <button class="scenario-menu-item danger" data-action="delete" data-id="${sc.id}">\u{1F5D1}\uFE0F ${t("scenario.delete")}</button>
-          </div>
-        </div>
+        <button class="scenario-menu-btn" data-id="${sc.id}" title="Menu">\u22EF</button>
       </div>
       <h4 class="scenario-card-title">${_esc(sc.name)}</h4>
       <p class="scenario-card-desc">${_esc(sc.description)}</p>
@@ -156,45 +149,17 @@ function _bindMainEvents() {
     btn.addEventListener("click", () => _runScenario(btn.dataset.id, btn));
   });
 
-  // Menu toggle
+  // Singleton popover menu — appended to document.body, above everything
   c.querySelectorAll(".scenario-menu-btn").forEach(btn => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const menu = c.querySelector(`.scenario-menu[data-id="${btn.dataset.id}"]`);
-      // Close all others
-      c.querySelectorAll(".scenario-menu").forEach(m => { if (m !== menu) m.classList.add("hidden"); });
-      menu?.classList.toggle("hidden");
-    });
-  });
-
-  // Menu actions
-  c.querySelectorAll(".scenario-menu-item").forEach(btn => {
-    btn.addEventListener("click", async () => {
       const id = btn.dataset.id;
-      const action = btn.dataset.action;
-      if (action === "edit") _openEditor(id);
-      if (action === "duplicate") {
-        try {
-          await apiPost(`/scenarios/${id}/duplicate`, {});
-          showToast(t("scenario.duplicated"), "success");
-          await render(_container);
-        } catch (e) { showToast(t("general.error", { message: e.message }), "error"); }
-      }
-      if (action === "delete") {
-        if (!confirm(t("scenario.delete_confirm"))) return;
-        try {
-          await apiDelete(`/scenarios/${id}`);
-          showToast(t("scenario.deleted"), "success");
-          await render(_container);
-        } catch (e) { showToast(t("general.error", { message: e.message }), "error"); }
-      }
+      _showPopoverMenu(id, btn);
     });
   });
 
-  // Close menus on outside click
-  document.addEventListener("click", () => {
-    c.querySelectorAll(".scenario-menu").forEach(m => m.classList.add("hidden"));
-  });
+  // Close popover on any outside click
+  document.addEventListener("click", _closePopoverMenu);
 }
 
 // ── Run scenario ─────────────────────────────────────
@@ -488,6 +453,64 @@ async function _checkTriggers() {
       }
     }
   } catch { /* ignore */ }
+}
+
+// ── Popover menu (singleton, appended to body) ──────
+
+let _popover = null;
+
+function _showPopoverMenu(scenarioId, anchorBtn) {
+  _closePopoverMenu();
+
+  const rect = anchorBtn.getBoundingClientRect();
+
+  _popover = document.createElement("div");
+  _popover.className = "scenario-menu";
+  _popover.innerHTML = `
+    <button class="scenario-menu-item" data-action="edit" data-id="${scenarioId}">\u270F\uFE0F ${t("scenario.edit")}</button>
+    <button class="scenario-menu-item" data-action="duplicate" data-id="${scenarioId}">\u{1F4CB} ${t("scenario.duplicate")}</button>
+    <button class="scenario-menu-item danger" data-action="delete" data-id="${scenarioId}">\u{1F5D1}\uFE0F ${t("scenario.delete")}</button>
+  `;
+  _popover.style.top = `${rect.bottom + 4}px`;
+  _popover.style.right = `${window.innerWidth - rect.right}px`;
+
+  // Bind actions
+  _popover.querySelectorAll(".scenario-menu-item").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.id;
+      const action = btn.dataset.action;
+      _closePopoverMenu();
+      if (action === "edit") _openEditor(id);
+      if (action === "duplicate") {
+        try {
+          await apiPost(`/scenarios/${id}/duplicate`, {});
+          showToast(t("scenario.duplicated"), "success");
+          await render(_container);
+        } catch (err) { showToast(t("general.error", { message: err.message }), "error"); }
+      }
+      if (action === "delete") {
+        if (!confirm(t("scenario.delete_confirm"))) return;
+        try {
+          await apiDelete(`/scenarios/${id}`);
+          showToast(t("scenario.deleted"), "success");
+          await render(_container);
+        } catch (err) { showToast(t("general.error", { message: err.message }), "error"); }
+      }
+    });
+  });
+
+  // Prevent click inside popover from closing it
+  _popover.addEventListener("click", (e) => e.stopPropagation());
+
+  document.body.appendChild(_popover);
+}
+
+function _closePopoverMenu() {
+  if (_popover) {
+    _popover.remove();
+    _popover = null;
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────

@@ -62,6 +62,11 @@ def incremental_scan(
     # Start scan record
     scan_id = catalog.start_scan(stats.root)
 
+    # ── Pre-load existing mtime/size for all roots (batch, avoids N+1) ──
+    _existing_mtime_size: dict[str, tuple[float, int]] = {}
+    for root in roots:
+        _existing_mtime_size.update(catalog.get_all_mtime_size_for_root(str(root)))
+
     # ── Phase 1: Stat & classify (sequential, fast) ──────────────────
     seen_paths: set[str] = set()
     file_infos: list[dict] = []
@@ -92,7 +97,7 @@ def incremental_scan(
         asset_key = path_to_key.get(path)
         is_component = path_is_component.get(path, False)
 
-        existing = catalog.get_file_mtime_size(path_str)
+        existing = _existing_mtime_size.get(path_str)
         needs_hash = force_rehash
         is_new_or_changed = False
 
@@ -196,7 +201,11 @@ def incremental_scan(
             with ThreadPoolExecutor(max_workers=effective_workers) as pool:
                 futures = [pool.submit(_extract_media, fi_idx, p, ext) for fi_idx, p, ext in paths_for_media]
                 for future in as_completed(futures):
-                    fi_idx, mm, em = future.result()
+                    try:
+                        fi_idx, mm, em = future.result()
+                    except Exception:
+                        logger.warning("Media extraction failed for a file, skipping", exc_info=True)
+                        continue
                     file_infos[fi_idx]["media_meta"] = mm
                     file_infos[fi_idx]["exif_meta"] = em
         else:
@@ -219,7 +228,10 @@ def incremental_scan(
                 futures = {pool.submit(_compute_phash, p, ext): fi_idx for fi_idx, p, ext in paths_for_phash}
                 for future in as_completed(futures):
                     fi_idx = futures[future]
-                    file_infos[fi_idx]["phash"] = future.result()
+                    try:
+                        file_infos[fi_idx]["phash"] = future.result()
+                    except Exception:
+                        logger.warning("Perceptual hash failed for %s, skipping", file_infos[fi_idx]["path"], exc_info=True)
         else:
             for fi_idx, p, ext in paths_for_phash:
                 file_infos[fi_idx]["phash"] = _compute_phash(p, ext)

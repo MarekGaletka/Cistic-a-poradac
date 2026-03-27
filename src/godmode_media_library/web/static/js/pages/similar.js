@@ -119,6 +119,7 @@ function _renderContent(container, data) {
   // Bind resolve pair buttons (quarantine the second file)
   container.querySelectorAll(".btn-resolve-pair").forEach(btn => {
     btn.addEventListener("click", async () => {
+      if (!confirm(t("confirm.quarantine", { count: 1 }))) return;
       btn.disabled = true;
       btn.textContent = "...";
       try {

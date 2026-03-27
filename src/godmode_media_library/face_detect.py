@@ -171,8 +171,14 @@ def cluster_faces(
     min_samples: int = 2,
     decrypt_fn: Callable | None = None,
     person_prefix: str = "Person",
+    max_clusters: int = 1000,
 ) -> dict[int, list[int]]:
     """Cluster all face encodings with DBSCAN and create/update persons.
+
+    Preserves existing named-person assignments: if any face in a cluster
+    already belongs to a user-named person (not auto-generated Person_NNN),
+    the entire cluster is assigned to that person.  Only truly new clusters
+    get fresh Person_NNN names.
 
     Returns mapping of cluster_id -> list of face_ids.
     """
@@ -187,12 +193,7 @@ def cluster_faces(
     vectors = []
     for face_id, blob in all_enc:
         try:
-            if decrypt_fn:
-                vec = decrypt_fn(blob)
-            else:
-                import struct
-
-                vec = list(struct.unpack("<128d", blob))
+            vec = decrypt_fn(blob) if decrypt_fn else list(struct.unpack("<128d", blob))
             face_ids.append(face_id)
             vectors.append(vec)
         except Exception as exc:
@@ -205,20 +206,84 @@ def cluster_faces(
     labels = DBSCAN(eps=eps, min_samples=min_samples, metric="euclidean").fit_predict(data)
 
     clusters: dict[int, list[int]] = {}
+    cluster_limit_hit = False
     for face_id, cluster_id in zip(face_ids, labels, strict=False):
         cluster_id = int(cluster_id)
         catalog.set_face_cluster(face_id, cluster_id)
         if cluster_id >= 0:
+            is_new_cluster = cluster_id not in clusters
+            if is_new_cluster and len(clusters) >= max_clusters:
+                logger.warning(
+                    "Cluster limit reached (%d). Stopping clustering early; "
+                    "remaining faces will be unassigned.",
+                    max_clusters,
+                )
+                cluster_limit_hit = True
+                break
             clusters.setdefault(cluster_id, []).append(face_id)
 
-    # Create persons for each cluster
-    existing_persons = {p["name"]: p["id"] for p in catalog.get_all_persons()}
+    if cluster_limit_hit:
+        logger.warning(
+            "Returning %d clusters (limit: %d). Some faces were not clustered.",
+            len(clusters),
+            max_clusters,
+        )
 
-    for i, (_cluster_id, fids) in enumerate(sorted(clusters.items()), start=1):
-        name = f"{person_prefix}_{i:03d}"
-        person_id = existing_persons[name] if name in existing_persons else catalog.upsert_person(name, sample_face_id=fids[0])
+    # ── Build lookup: face_id -> existing person_id ──
+    face_person_map: dict[int, int | None] = {}
+    for fid in face_ids:
+        row = catalog.conn.execute(
+            "SELECT person_id FROM faces WHERE id = ?", (fid,)
+        ).fetchone()
+        face_person_map[fid] = row[0] if row else None
+
+    # ── Build set of "user-named" person IDs (not auto-generated Person_NNN) ──
+    import re
+    auto_name_re = re.compile(rf"^{re.escape(person_prefix)}_\d{{3,}}$")
+    all_persons = {p["id"]: p for p in catalog.get_all_persons()}
+    named_person_ids = {
+        pid for pid, p in all_persons.items()
+        if p["name"] and not auto_name_re.match(p["name"])
+    }
+
+    # ── Assign clusters, preserving named persons ──
+    auto_counter = 0
+    used_names = {p["name"] for p in all_persons.values()}
+
+    for _cluster_id, fids in sorted(clusters.items()):
+        # Check if any face in this cluster already belongs to a named person
+        existing_named_pid = None
+        for fid in fids:
+            pid = face_person_map.get(fid)
+            if pid and pid in named_person_ids:
+                existing_named_pid = pid
+                break
+
+        if existing_named_pid is not None:
+            # Cluster matches a known named person — assign all faces to them
+            person_id = existing_named_pid
+        else:
+            # New cluster — generate next available Person_NNN name
+            auto_counter += 1
+            name = f"{person_prefix}_{auto_counter:03d}"
+            while name in used_names:
+                auto_counter += 1
+                name = f"{person_prefix}_{auto_counter:03d}"
+            used_names.add(name)
+            person_id = catalog.upsert_person(name, sample_face_id=fids[0])
+
         for fid in fids:
             catalog.assign_face_to_person(fid, person_id)
+
+    # ── Clean up orphaned auto-named persons with 0 faces ──
+    catalog._refresh_person_counts()
+    for pid, p in all_persons.items():
+        if auto_name_re.match(p["name"]):
+            cnt = catalog.conn.execute(
+                "SELECT face_count FROM persons WHERE id = ?", (pid,)
+            ).fetchone()
+            if cnt and cnt[0] == 0:
+                catalog.conn.execute("DELETE FROM persons WHERE id = ?", (pid,))
 
     catalog.commit()
     return clusters

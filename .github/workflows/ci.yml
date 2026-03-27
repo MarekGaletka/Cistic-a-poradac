@@ -8,10 +8,11 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.10", "3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -41,12 +42,17 @@ jobs:
         run: ruff format --check src/ tests/
 
       - name: Run tests with coverage
-        run: pytest tests/ -q --cov=godmode_media_library --cov-report=term-missing --cov-report=html --cov-fail-under=40
+        run: pytest tests/ -q --cov=godmode_media_library --cov-report=term-missing --cov-report=html --cov-fail-under=70
 
       - name: Upload coverage report
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: htmlcov/
           retention-days: 14
+
+      - name: Run bandit SAST scan
+        run: |
+          pip install bandit
+          bandit -r src/ -ll --skip B101

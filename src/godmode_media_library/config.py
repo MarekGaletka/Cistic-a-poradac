@@ -35,6 +35,9 @@ class GMLConfig:
     thumbnail_cache: bool = True  # Persist generated thumbnails on disk
     thumbnail_cache_dir: str = ""  # Custom path (empty = ~/.config/gml/cache/thumbnails)
 
+    # Web / rate limiting
+    rate_limit_per_minute: int = 120  # API rate limit (requests/min); 0 = disabled
+
     # Deduplication rules
     dedup_strategy: str = "richness"  # richness | newest | largest | manual
     dedup_similarity_threshold: int = 10  # Hamming distance for perceptual hash similarity
@@ -88,18 +91,66 @@ def load_config(
         merged.update({k: v for k, v in cli_overrides.items() if v is not None})
 
     config = GMLConfig()
+    type_errors: list[str] = []
     for f in fields(config):
         if f.name in merged:
             value = merged[f.name]
-            if f.type == "bool" and isinstance(value, str):
-                value = value.lower() in ("true", "1", "yes")
-            elif f.type == "int" and not isinstance(value, int):
-                value = int(value)
-            elif f.type == "float" and not isinstance(value, float):
+            # Strict type validation: reject wrong types instead of silently coercing.
+            # TOML natively produces correct types; mismatches indicate a config error.
+            if f.type == "bool":
+                if not isinstance(value, bool):
+                    type_errors.append(
+                        f"{f.name}: expected bool, got {type(value).__name__} ({value!r})"
+                    )
+                    continue
+            elif f.type == "int":
+                # Allow int but reject bool (bool is a subclass of int in Python)
+                if isinstance(value, bool) or not isinstance(value, int):
+                    type_errors.append(
+                        f"{f.name}: expected int, got {type(value).__name__} ({value!r})"
+                    )
+                    continue
+            elif f.type == "float":
+                # Accept int or float (TOML may produce int for "1" vs "1.0")
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    type_errors.append(
+                        f"{f.name}: expected float, got {type(value).__name__} ({value!r})"
+                    )
+                    continue
                 value = float(value)
+            elif f.type == "str":
+                if not isinstance(value, str):
+                    type_errors.append(
+                        f"{f.name}: expected str, got {type(value).__name__} ({value!r})"
+                    )
+                    continue
+            elif f.type == "list[str]" and (not isinstance(value, list) or (
+                value and not all(isinstance(v, str) for v in value)
+            )):
+                type_errors.append(
+                    f"{f.name}: expected list of strings, got {type(value).__name__} ({value!r})"
+                )
+                continue
             object.__setattr__(config, f.name, value)
 
+    if type_errors:
+        raise ConfigValidationError(
+            "Config type mismatch (check your TOML values):\n"
+            + "\n".join(f"  - {e}" for e in type_errors)
+        )
+
     validate_config(config)
+
+    # Validate dedup_quarantine_path is not a system directory
+    if config.dedup_quarantine_path:
+        resolved_qpath = Path(config.dedup_quarantine_path).resolve()
+        _FORBIDDEN_ROOTS = {"/", "/bin", "/sbin", "/usr", "/etc", "/var", "/System", "/Library", "/tmp"}
+        if str(resolved_qpath) in _FORBIDDEN_ROOTS:
+            raise ConfigValidationError(
+                f"dedup_quarantine_path must not be a system directory, got: {resolved_qpath}"
+            )
+        object.__setattr__(config, "dedup_quarantine_path", str(resolved_qpath))
+
     return config
 
 

@@ -16,15 +16,46 @@ import shutil
 import struct
 import subprocess
 import tempfile
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_QUARANTINE = Path.home() / ".config" / "gml" / "quarantine"
+_DEFAULT_QUARANTINE = (Path.home() / ".config" / "gml" / "quarantine").resolve()
+
+# Shell metacharacters that must never appear in paths passed to subprocess
+_SHELL_METACHARACTERS = set(";|&$`\"'\\!#(){}[]<>*?~\n\r")
+
+
+def _validate_quarantine_path(path: str | Path, quarantine_root: Path) -> Path:
+    """Resolve *path* and verify it lives inside *quarantine_root*.
+
+    Raises ``ValueError`` if the resolved path escapes the quarantine directory
+    (e.g. via ``../../etc/passwd``).
+    """
+    resolved = Path(path).resolve()
+    if not resolved.is_relative_to(quarantine_root.resolve()):
+        raise ValueError(
+            f"Path traversal blocked: {path!r} resolves to {resolved} "
+            f"which is outside quarantine root {quarantine_root}"
+        )
+    return resolved
+
+
+def _sanitize_subprocess_path(path: str, label: str = "path") -> str:
+    """Validate that *path* contains no shell metacharacters.
+
+    Raises ``ValueError`` if dangerous characters are found.
+    """
+    bad = _SHELL_METACHARACTERS.intersection(path)
+    if bad:
+        raise ValueError(
+            f"Invalid characters in {label}: {bad!r} — "
+            f"refusing to pass to subprocess"
+        )
+    return path
 
 # Media extensions we look for during deep scan / recovery
 _IMAGE_EXTS = {
@@ -97,6 +128,7 @@ class PhotoRecResult:
     total_size: int = 0
     output_dir: str = ""
     files: list[dict] = field(default_factory=list)
+    partial: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +138,7 @@ class PhotoRecResult:
 
 def list_quarantine(quarantine_root: Path | None = None) -> list[QuarantineEntry]:
     """List all files in the quarantine directory."""
-    root = quarantine_root or _DEFAULT_QUARANTINE
+    root = (quarantine_root.resolve() if quarantine_root else None) or _DEFAULT_QUARANTINE
     if not root.exists():
         return []
 
@@ -121,6 +153,12 @@ def list_quarantine(quarantine_root: Path | None = None) -> list[QuarantineEntry
 
     for fpath in sorted(root.rglob("*")):
         if fpath.is_file() and fpath.name != "manifest.json":
+            # Ensure the file is actually inside the quarantine root
+            try:
+                _validate_quarantine_path(fpath, root)
+            except ValueError:
+                logger.warning("Skipping path outside quarantine root: %s", fpath)
+                continue
             ext = fpath.suffix.lower()
             stat = fpath.stat()
             original = manifest.get(str(fpath), {}).get("original_path", "unknown")
@@ -145,7 +183,7 @@ def restore_from_quarantine(
     restore_to: str | None = None,
 ) -> dict:
     """Restore files from quarantine to their original location or a custom directory."""
-    root = quarantine_root or _DEFAULT_QUARANTINE
+    root = (quarantine_root.resolve() if quarantine_root else None) or _DEFAULT_QUARANTINE
     manifest_path = root / "manifest.json"
     manifest: dict[str, Any] = {}
     if manifest_path.exists():
@@ -158,7 +196,11 @@ def restore_from_quarantine(
     errors: list[str] = []
 
     for p in paths:
-        src = Path(p)
+        try:
+            src = _validate_quarantine_path(p, root)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
         if not src.exists():
             errors.append(f"Not found: {p}")
             continue
@@ -202,20 +244,28 @@ def restore_from_quarantine(
 
 def delete_from_quarantine(paths: list[str], quarantine_root: Path | None = None) -> dict:
     """Permanently delete files from quarantine."""
-    root = quarantine_root or _DEFAULT_QUARANTINE
+    root = (quarantine_root.resolve() if quarantine_root else None) or _DEFAULT_QUARANTINE
     manifest_path = root / "manifest.json"
     manifest: dict[str, Any] = {}
+    manifest_loaded = False
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
+            manifest_loaded = True
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Cannot read quarantine manifest %s: %s", manifest_path, exc)
+    else:
+        manifest_loaded = True  # No manifest file yet is a valid initial state
 
     deleted = 0
     errors: list[str] = []
 
     for p in paths:
-        src = Path(p)
+        try:
+            src = _validate_quarantine_path(p, root)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
         if not src.exists():
             errors.append(f"Not found: {p}")
             continue
@@ -227,10 +277,15 @@ def delete_from_quarantine(paths: list[str], quarantine_root: Path | None = None
         except Exception as e:
             errors.append(f"Failed to delete {p}: {e}")
 
-    try:
-        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
-    except OSError as exc:
-        logger.warning("Cannot write quarantine manifest %s: %s", manifest_path, exc)
+    # Only write manifest back if it was successfully loaded to avoid
+    # overwriting a valid manifest with an empty dict on read failure
+    if manifest_loaded:
+        try:
+            manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+        except OSError as exc:
+            logger.warning("Cannot write quarantine manifest %s: %s", manifest_path, exc)
+    else:
+        logger.warning("Skipping manifest write — manifest was not successfully loaded from %s", manifest_path)
 
     return {"deleted": deleted, "errors": errors}
 
@@ -829,7 +884,7 @@ def recover_files(
 ) -> dict:
     """Copy or move found files to a recovery destination."""
     dest = Path(destination)
-    dest.mkdir(parents=True, exist_ok=True)
+    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     recovered = 0
     errors: list[str] = []
@@ -1022,16 +1077,15 @@ def list_disks() -> list[dict]:
                             "partitions": [],
                         }
                     )
-                elif current_disk and ":" in line and "Apple" in line or "Microsoft" in line or "EFI" in line:
+                elif current_disk and ":" in line and ("Apple" in line or "Microsoft" in line or "EFI" in line):
                     parts = line.split()
-                    if len(parts) >= 3:
-                        if disks:
-                            disks[-1]["partitions"].append(
-                                {
-                                    "name": parts[1] if len(parts) > 1 else "",
-                                    "size": parts[-2] + " " + parts[-1] if len(parts) > 2 else "",
-                                }
-                            )
+                    if len(parts) >= 3 and disks:
+                        disks[-1]["partitions"].append(
+                            {
+                                "name": parts[1] if len(parts) > 1 else "",
+                                "size": parts[-2] + " " + parts[-1] if len(parts) > 2 else "",
+                            }
+                        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
@@ -1072,15 +1126,25 @@ def run_photorec(
     if not check["available"]:
         raise RuntimeError("PhotoRec není nainstalován. Spusťte: brew install testdisk")
 
+    # Validate source path — block shell metacharacters
+    _sanitize_subprocess_path(source, label="source")
+
     if not output_dir:
         output_dir = str(Path.home() / "Desktop" / "GML_Recovery")
+    else:
+        _sanitize_subprocess_path(output_dir, label="output_dir")
+
+    # Validate source exists as a file or block device
+    source_path = Path(source)
+    if not (source_path.exists() or source_path.is_block_device()):
+        raise ValueError(f"Source does not exist: {source!r}")
 
     out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     result = PhotoRecResult(output_dir=output_dir)
 
-    # Build photorec command
+    # Build photorec command — always use a list, never shell=True
     cmd = [
         "photorec",
         "/log",
@@ -1088,12 +1152,14 @@ def run_photorec(
         str(out),
     ]
 
-    # File type filter
+    # File type filter — validate each type is alphanumeric to prevent injection
     if file_types:
-        type_str = ",".join(file_types)
-        cmd.extend(["/fileopt", f"everything,disable", *[f"{ft},enable" for ft in file_types]])
+        for ft in file_types:
+            if not ft.isalnum():
+                raise ValueError(f"Invalid file type filter: {ft!r}")
+        cmd.extend(["/fileopt", "everything,disable", *[f"{ft},enable" for ft in file_types]])
 
-    cmd.append(source)
+    cmd.append(str(source_path))
 
     if progress_fn:
         progress_fn(
@@ -1115,6 +1181,14 @@ def run_photorec(
             timeout=3600,  # 1 hour max
             cwd=str(out),
         )
+
+        if proc.returncode != 0:
+            logger.error(
+                "PhotoRec exited with code %d: %s",
+                proc.returncode,
+                (proc.stderr or proc.stdout or "")[:500],
+            )
+            result.partial = True
 
         # Count recovered files
         for dirpath, _, filenames in os.walk(out):
@@ -1323,16 +1397,21 @@ def _query_signal_attachments_cli(key: str) -> list[dict]:
         WHERE json_extract(json, '$.hasAttachments') = 1
         LIMIT 10000;
     """
+    # Pass commands via stdin instead of CLI arguments to avoid leaking
+    # the SQLCipher key in the process table (visible via ps).
     try:
+        sqlcipher_input = (
+            f"PRAGMA key = \"x'{key}'\";\n"
+            "PRAGMA cipher_compatibility = 4;\n"
+            ".mode json\n"
+            f"{query}\n"
+        )
         proc = subprocess.run(
             [
                 _find_sqlcipher_bin(),
                 str(_SIGNAL_DB_PATH),
-                f"PRAGMA key = \"x'{key}'\";",
-                "PRAGMA cipher_compatibility = 4;",
-                ".mode json",
-                query,
             ],
+            input=sqlcipher_input,
             capture_output=True,
             text=True,
             timeout=30,
@@ -1361,9 +1440,9 @@ def decrypt_signal_attachments(
         Dict with: decrypted, skipped, errors, total_size, files
     """
     import base64
-    import hashlib
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
     result = {
         "decrypted": 0,
@@ -1374,7 +1453,7 @@ def decrypt_signal_attachments(
     }
 
     dest = Path(destination)
-    dest.mkdir(parents=True, exist_ok=True)
+    dest.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     if progress_fn:
         progress_fn({"phase": "signal_decrypt", "status": "reading_key", "progress_pct": 0})
@@ -1523,10 +1602,20 @@ def decrypt_signal_attachments(
                 try:
                     key_material = base64.b64decode(local_key)
                     aes_key = key_material[:32]
+                    hmac_key = key_material[32:64] if len(key_material) >= 64 else None
                     # First 16 bytes of encrypted data = IV
                     iv = encrypted_data[:16]
                     # Last 32 bytes = HMAC
+                    stored_hmac = encrypted_data[-32:]
                     ciphertext = encrypted_data[16:-32]
+
+                    # Verify HMAC before decryption
+                    if hmac_key:
+                        import hmac as _hmac_mod
+                        import hashlib as _hashlib
+                        expected_hmac = _hmac_mod.new(hmac_key, iv + ciphertext, _hashlib.sha256).digest()
+                        if not _hmac_mod.compare_digest(stored_hmac, expected_hmac):
+                            raise ValueError("HMAC verification failed — data may be corrupted or tampered")
 
                     cipher = Cipher(
                         algorithms.AES(aes_key),
@@ -1673,9 +1762,7 @@ def _check_mp4(path: Path) -> dict | None:
 
             # Check for ftyp box (bytes 4-7 should be 'ftyp')
             has_ftyp = header[4:8] == b"ftyp"
-            if not has_ftyp:
-                # Some MOV files start with 'wide' or 'mdat'
-                if header[4:8] not in (b"wide", b"mdat", b"moov", b"free", b"skip"):
+            if not has_ftyp and header[4:8] not in (b"wide", b"mdat", b"moov", b"free", b"skip"):
                     return {"issue": "invalid_header", "description": "Chybí MP4 ftyp box", "repairable": False}
 
             # Scan for moov atom (needed for playback)
@@ -1753,25 +1840,34 @@ def _repair_jpeg(path: Path) -> dict:
     try:
         from PIL import Image, ImageFile
 
+        old_load_truncated = ImageFile.LOAD_TRUNCATED_IMAGES
         ImageFile.LOAD_TRUNCATED_IMAGES = True
 
         backup = path.with_suffix(path.suffix + ".bak")
         shutil.copy2(str(path), str(backup))
 
-        img = Image.open(str(path))
-        img.load()  # Force load
-        img.save(str(path), "JPEG", quality=95)
+        try:
+            img = Image.open(str(path))
+            img.load()  # Force load
+            img.save(str(path), "JPEG", quality=95)
 
-        # Verify the repair
-        issue = _check_jpeg(path)
-        if issue:
-            # Restore backup
-            shutil.move(str(backup), str(path))
-            return {"success": False, "error": "Oprava se nezdařila", "backup": str(backup)}
+            # Verify the repair
+            issue = _check_jpeg(path)
+            if issue:
+                # Restore backup
+                shutil.move(str(backup), str(path))
+                return {"success": False, "error": "Oprava se nezdařila", "backup": str(backup)}
 
-        # Remove backup
-        backup.unlink(missing_ok=True)
-        return {"success": True, "path": str(path)}
+            return {"success": True, "path": str(path)}
+        except Exception as e:
+            # Restore from backup on any failure
+            if backup.exists():
+                shutil.move(str(backup), str(path))
+            return {"success": False, "error": f"Chyba při opravě: {e}"}
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = old_load_truncated
+            # Clean up backup if it still exists (success case)
+            backup.unlink(missing_ok=True)
 
     except Exception as e:
         return {"success": False, "error": f"Chyba při opravě: {e}"}

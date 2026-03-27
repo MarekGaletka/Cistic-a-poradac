@@ -49,6 +49,12 @@ gml audit \
   --prefer-root "/path/to/Documents"
 ```
 
+`--prefer-root` tells the planner which directories should be preferred when choosing
+the primary (kept) copy during deduplication. Roots listed first have higher priority.
+Files under a preferred root are more likely to be kept, while duplicates elsewhere are
+quarantined. The flag can be repeated and is available on `audit`, `plan`,
+`prune-recommend`, and `delete-plan` commands.
+
 Example for external drive:
 
 ```bash
@@ -261,6 +267,49 @@ Then run:
 gml promote --manifest "/path/to/manifest.tsv" --backup-root "/path/to/backup"
 ```
 
+## Cloud storage access
+
+GML integrates with cloud providers (MEGA, pCloud, Google Drive, Google Photos, iCloud, OneDrive, Dropbox, S3/GCS) via rclone.
+
+Check status and list configured remotes:
+
+```bash
+gml cloud
+```
+
+Setup workflow:
+
+1. Install rclone: `brew install rclone` (macOS) or see https://rclone.org/install/
+2. Configure a remote: `rclone config`
+3. Mount the remote as a local directory:
+
+```bash
+rclone mount mega: ~/mnt/mega --vfs-cache-mode full &
+```
+
+4. Scan mounted cloud storage like any local directory:
+
+```bash
+gml scan --roots ~/mnt/mega/Photos
+gml audit --roots ~/mnt/mega/Photos --out-dir /path/to/runs
+```
+
+Two access modes are supported:
+
+- **Mount mode**: `rclone mount` creates a virtual filesystem. GML scans it like a local directory.
+- **Sync mode**: `rclone copy`/`rclone sync` downloads files to a local cache directory first.
+
+## Deep scan & recovery tools
+
+The web UI (`gml serve`) provides additional recovery capabilities:
+
+- **Deep scan**: Searches hidden/lost locations (Trash, caches, temp directories, app-specific media stores) for recoverable media files.
+- **Integrity check**: Detects corrupted media (truncated JPEG, broken MP4 containers) across scanned roots.
+- **PhotoRec integration**: Raw disk recovery for deleted files via testdisk/photorec. Runs in read-only mode. Install with `brew install testdisk`.
+- **File recovery**: Copy or move discovered files to a recovery destination with automatic collision handling.
+
+These tools are available through the web UI at `http://localhost:8080` (start with `gml serve`) and are also used internally by the scenario-based automation pipeline.
+
 ## Multi-platform note (Windows/macOS/iOS/Android ecosystem)
 
 Recommended architecture:
@@ -312,6 +361,14 @@ These commands are idempotent. If interrupted (Ctrl+C, power loss, disk unmount)
 - **delete-apply**: Same pattern — the log tracks completed quarantine moves.
 
 To undo: `gml restore --log /path/to/executed_moves.tsv`
+
+### Tree-apply
+
+`tree-apply` writes an execution log (`tree_apply_log.tsv`) tracking every completed operation.
+
+- **Interrupted mid-apply**: Re-run the same command. Already-completed operations (present in the log) are skipped.
+- **Dry run first**: Add `--dry-run` to simulate without modifying the filesystem.
+- **Custom log path**: Use `--log /path/to/log.tsv` to override the default log location (next to the plan file).
 
 ### Cloud consolidation pipeline (10-phase)
 

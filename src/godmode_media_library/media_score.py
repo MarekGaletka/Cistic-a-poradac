@@ -8,7 +8,6 @@ impressive → better candidate for gallery highlights and slideshow.
 from __future__ import annotations
 
 import logging
-import math
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -227,9 +226,10 @@ def _score_camera(make: str | None, model: str | None) -> float:
 
     identifier = f"{make or ''} {model or ''}".lower().strip()
 
-    # Check exact and prefix matches
+    # Check exact and prefix matches with word boundary
+    import re
     for key, score in _CAMERA_TIERS.items():
-        if key in identifier:
+        if re.search(r'(?<!\S)' + re.escape(key) + r'(?:\s|$)', identifier):
             return score
 
     # Known brand but unknown model
@@ -301,7 +301,7 @@ def _score_recency(date_original: str | None, mtime: float | None) -> float:
         try:
             from datetime import datetime
 
-            dt = datetime.fromisoformat(date_original.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(date_original.replace(":", "-", 2).replace("Z", "+00:00"))
             ts = dt.timestamp()
         except (ValueError, TypeError):
             pass
@@ -393,39 +393,38 @@ def score_catalog(
     min_score : filter out files below this score
     limit : max results to return
     """
-    db = sqlite3.connect(str(db_path))
-    db.row_factory = sqlite3.Row
+    with sqlite3.connect(str(db_path)) as db:
+        db.row_factory = sqlite3.Row
 
-    # Build query with all needed columns
-    query = """
-        SELECT
-            f.path, f.ext, f.size, f.mtime,
-            f.width, f.height, f.bitrate,
-            f.date_original, f.camera_make, f.camera_model,
-            f.gps_latitude, f.gps_longitude,
-            f.metadata_richness,
-            f.sha256, f.phash,
-            d.group_id AS duplicate_group_id,
-            d.is_primary,
-            fr.rating,
-            fn.note IS NOT NULL AS has_note,
-            (SELECT COUNT(*) FROM file_tags ft WHERE ft.file_id = f.id) AS tag_count
-        FROM files f
-        LEFT JOIN duplicates d ON d.file_id = f.id
-        LEFT JOIN file_ratings fr ON fr.file_id = f.id
-        LEFT JOIN file_notes fn ON fn.file_id = f.id
-    """
+        # Build query with all needed columns
+        query = """
+            SELECT
+                f.path, f.ext, f.size, f.mtime,
+                f.width, f.height, f.bitrate,
+                f.date_original, f.camera_make, f.camera_model,
+                f.gps_latitude, f.gps_longitude,
+                f.metadata_richness,
+                f.sha256, f.phash,
+                d.group_id AS duplicate_group_id,
+                d.is_primary,
+                fr.rating,
+                fn.note IS NOT NULL AS has_note,
+                (SELECT COUNT(*) FROM file_tags ft WHERE ft.file_id = f.id) AS tag_count
+            FROM files f
+            LEFT JOIN duplicates d ON d.file_id = f.id
+            LEFT JOIN file_ratings fr ON fr.file_id = f.id
+            LEFT JOIN file_notes fn ON fn.file_id = f.id
+        """
 
-    if media_only:
-        all_exts = _IMAGE_EXTS | _VIDEO_EXTS
-        placeholders = ",".join("?" for _ in all_exts)
-        query += f" WHERE LOWER(f.ext) IN ({placeholders})"
-        params: list = list(all_exts)
-    else:
-        params = []
+        if media_only:
+            all_exts = _IMAGE_EXTS | _VIDEO_EXTS
+            placeholders = ",".join("?" for _ in all_exts)
+            query += f" WHERE LOWER(f.ext) IN ({placeholders})"
+            params: list = list(all_exts)
+        else:
+            params = []
 
-    rows = db.execute(query, params).fetchall()
-    db.close()
+        rows = db.execute(query, params).fetchall()
 
     # Score all files
     scores: list[MediaScore] = []

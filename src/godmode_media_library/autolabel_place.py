@@ -178,7 +178,7 @@ def extract_gps_with_exiftool(paths: list[Path], exiftool_bin: str = "exiftool")
             "-Composite:GPSPosition",
         ]
         cmd.extend(str(p) for p in chunk)
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
         if proc.returncode not in (0, 1):
             raise RuntimeError(f"ExifTool failed: {proc.stderr.strip()}")
         if not proc.stdout.strip():

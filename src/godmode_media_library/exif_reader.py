@@ -7,6 +7,7 @@ Falls back gracefully when Pillow is not installed.
 from __future__ import annotations
 
 import logging
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -136,8 +137,13 @@ def read_exif(path: Path) -> ExifMeta | None:
             if gps_ifd:
                 _parse_gps(gps_ifd, meta)
 
-    except (OSError, ValueError, KeyError, AttributeError):
-        logger.debug("Cannot read EXIF from %s", path)
+    except (OSError, ValueError, KeyError, AttributeError, TypeError,
+            IndexError, OverflowError, struct.error) as exc:
+        logger.debug("Cannot read EXIF from %s: %s", path, exc)
+        return None
+    except Exception as exc:
+        # Catch-all for truly unexpected corruption (fuzzed/truncated files)
+        logger.warning("Unexpected error reading EXIF from %s: %s", path, exc)
         return None
 
     return meta

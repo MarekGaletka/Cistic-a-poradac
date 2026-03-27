@@ -6,6 +6,7 @@ Analyzes images for blur, brightness, and classifies them into categories
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
@@ -139,10 +140,7 @@ def _is_meme_ratio(width: int, height: int) -> bool:
     if height == 0:
         return False
     ratio = width / height
-    for target in _MEME_RATIOS:
-        if abs(ratio - target) < _MEME_RATIO_TOLERANCE:
-            return True
-    return False
+    return any(abs(ratio - target) < _MEME_RATIO_TOLERANCE for target in _MEME_RATIOS)
 
 
 def analyze_image_quality(
@@ -174,10 +172,8 @@ def analyze_image_quality(
 
     # Get file size if not provided
     if size == 0:
-        try:
+        with contextlib.suppress(OSError):
             size = os.path.getsize(path)
-        except OSError:
-            pass
 
     # Check extension for non-image types
     ext = os.path.splitext(path)[1].lower().lstrip(".")

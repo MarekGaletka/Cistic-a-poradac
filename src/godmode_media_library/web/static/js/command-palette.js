@@ -1,34 +1,41 @@
 /* GOD MODE Media Library — Command Palette (Cmd+K) */
 
 import { api } from "./api.js";
+import { t } from "./i18n.js";
+
+function _esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
 let _overlay = null;
 let _selectedIndex = 0;
 let _results = [];
 
 const PAGES = [
-  { type: "nav", label: "Přehled", icon: "🏠", action: () => location.hash = "#dashboard" },
-  { type: "nav", label: "Soubory", icon: "📷", action: () => location.hash = "#files" },
-  { type: "nav", label: "Duplicity", icon: "📋", action: () => location.hash = "#duplicates" },
-  { type: "nav", label: "Podobné", icon: "🎨", action: () => location.hash = "#similar" },
-  { type: "nav", label: "Časová osa", icon: "📅", action: () => location.hash = "#timeline" },
-  { type: "nav", label: "Mapa", icon: "🌎", action: () => location.hash = "#map" },
-  { type: "nav", label: "Galerie", icon: "🌄", action: () => location.hash = "#gallery" },
-  { type: "nav", label: "Osoby", icon: "👤", action: () => location.hash = "#people" },
-  { type: "nav", label: "Cloud", icon: "☁", action: () => location.hash = "#cloud" },
-  { type: "nav", label: "Záloha", icon: "📡", action: () => location.hash = "#backup" },
-  { type: "nav", label: "Recovery", icon: "🛡", action: () => location.hash = "#recovery" },
-  { type: "nav", label: "Scénáře", icon: "🎬", action: () => location.hash = "#scenarios" },
-  { type: "nav", label: "Reorganizace", icon: "📦", action: () => location.hash = "#reorganize" },
+  { type: "nav", label: () => t("cmd.page_dashboard"), icon: "🏠", action: () => location.hash = "#dashboard" },
+  { type: "nav", label: () => t("cmd.page_files"), icon: "📷", action: () => location.hash = "#files" },
+  { type: "nav", label: () => t("cmd.page_duplicates"), icon: "📋", action: () => location.hash = "#duplicates" },
+  { type: "nav", label: () => t("cmd.page_similar"), icon: "🎨", action: () => location.hash = "#similar" },
+  { type: "nav", label: () => t("cmd.page_timeline"), icon: "📅", action: () => location.hash = "#timeline" },
+  { type: "nav", label: () => t("cmd.page_map"), icon: "🌎", action: () => location.hash = "#map" },
+  { type: "nav", label: () => t("cmd.page_gallery"), icon: "🌄", action: () => location.hash = "#gallery" },
+  { type: "nav", label: () => t("cmd.page_people"), icon: "👤", action: () => location.hash = "#people" },
+  { type: "nav", label: () => t("cmd.page_cloud"), icon: "☁", action: () => location.hash = "#cloud" },
+  { type: "nav", label: () => t("cmd.page_backup"), icon: "📡", action: () => location.hash = "#backup" },
+  { type: "nav", label: () => t("cmd.page_recovery"), icon: "🛡", action: () => location.hash = "#recovery" },
+  { type: "nav", label: () => t("cmd.page_scenarios"), icon: "🎬", action: () => location.hash = "#scenarios" },
+  { type: "nav", label: () => t("cmd.page_reorganize"), icon: "📦", action: () => location.hash = "#reorganize" },
 ];
 
 const ACTIONS = [
-  { type: "action", label: "Naskenovat složku", icon: "📂", action: () => { location.hash = "#dashboard"; /* trigger scan dialog */ } },
-  { type: "action", label: "Vytvořit plán zálohy", icon: "📋", action: async () => { location.hash = "#backup"; } },
-  { type: "action", label: "Kontrola zdraví záloh", icon: "🩺", action: async () => { const { apiPost } = await import("./api.js"); apiPost("/backup/monitor/check"); } },
-  { type: "action", label: "Bit rot sken", icon: "🔬", action: async () => { const { apiPost } = await import("./api.js"); apiPost("/bitrot/scan?limit=500"); } },
-  { type: "action", label: "Generovat report", icon: "📊", action: async () => { const { apiPost } = await import("./api.js"); apiPost("/report/generate"); } },
+  { type: "action", label: () => t("cmd.action_scan"), icon: "📂", action: () => { location.hash = "#dashboard"; /* trigger scan dialog */ } },
+  { type: "action", label: () => t("cmd.action_backup_plan"), icon: "📋", action: async () => { location.hash = "#backup"; } },
+  { type: "action", label: () => t("cmd.action_health_check"), icon: "🩺", action: async () => { const { apiPost } = await import("./api.js"); apiPost("/backup/monitor/check"); } },
+  { type: "action", label: () => t("cmd.action_bitrot"), icon: "🔬", action: async () => { const { apiPost } = await import("./api.js"); apiPost("/bitrot/scan?limit=500"); } },
+  { type: "action", label: () => t("cmd.action_report"), icon: "📊", action: async () => { const { apiPost } = await import("./api.js"); apiPost("/report/generate"); } },
 ];
+
+function _getLabel(item) {
+  return typeof item.label === "function" ? item.label() : item.label;
+}
 
 export function init() {
   document.addEventListener("keydown", (e) => {
@@ -57,14 +64,14 @@ function open() {
     <div class="cmd-palette">
       <div class="cmd-palette-input-wrap">
         <span class="cmd-palette-icon">🔍</span>
-        <input type="text" class="cmd-palette-input" placeholder="Hledat stránky, akce, soubory..." autofocus />
+        <input type="text" class="cmd-palette-input" placeholder="${t("cmd.search_placeholder")}" autofocus />
         <kbd class="cmd-palette-kbd">ESC</kbd>
       </div>
       <div class="cmd-palette-results"></div>
       <div class="cmd-palette-footer">
-        <span><kbd>↑↓</kbd> navigace</span>
-        <span><kbd>↵</kbd> vybrat</span>
-        <span><kbd>esc</kbd> zavřít</span>
+        <span><kbd>↑↓</kbd> ${t("cmd.navigate_hint")}</span>
+        <span><kbd>↵</kbd> ${t("cmd.select_hint")}</span>
+        <span><kbd>esc</kbd> ${t("cmd.close_hint")}</span>
       </div>
     </div>`;
 
@@ -111,7 +118,7 @@ async function search(query) {
 
   // Filter pages and actions
   const filtered = [...PAGES, ...ACTIONS].filter(item =>
-    item.label.toLowerCase().includes(query)
+    _getLabel(item).toLowerCase().includes(query)
   );
 
   // Search files if query is long enough
@@ -147,7 +154,7 @@ function renderResults() {
   if (!el) return;
 
   if (_results.length === 0) {
-    el.innerHTML = '<div class="cmd-palette-empty">Žádné výsledky</div>';
+    el.innerHTML = `<div class="cmd-palette-empty">${t("cmd.no_results")}</div>`;
     return;
   }
 
@@ -157,16 +164,16 @@ function renderResults() {
 
   _results.forEach((item, i) => {
     if (item.type !== lastType) {
-      const label = item.type === "nav" ? "Navigace" : item.type === "action" ? "Akce" : "Soubory";
+      const label = item.type === "nav" ? t("cmd.nav") : item.type === "action" ? t("cmd.actions") : t("cmd.files_group");
       html += `<div class="cmd-palette-group">${label}</div>`;
       lastType = item.type;
     }
     const selected = i === _selectedIndex ? "cmd-palette-selected" : "";
-    const sub = item.sublabel ? `<span class="cmd-palette-sublabel">${item.sublabel}</span>` : "";
+    const sub = item.sublabel ? `<span class="cmd-palette-sublabel">${_esc(item.sublabel)}</span>` : "";
     html += `<div class="cmd-palette-item ${selected}" data-index="${i}">
       <span class="cmd-palette-item-icon">${item.icon}</span>
       <div class="cmd-palette-item-text">
-        <span>${item.label}</span>
+        <span>${_esc(_getLabel(item))}</span>
         ${sub}
       </div>
     </div>`;

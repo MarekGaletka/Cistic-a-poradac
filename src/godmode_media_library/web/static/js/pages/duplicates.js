@@ -148,7 +148,7 @@ async function loadGroupDetail(container, groupId) {
       // Thumbnail
       if (isImage) {
         const thumbSrc = `/api/thumbnail${encodeURI(path)}?size=200`;
-        html += `<img class="dup-inline-thumb" src="${thumbSrc}" onerror="this.outerHTML='<div class=\\'dup-inline-thumb-placeholder\\'>&#128444;</div>'" alt="${escapeHtml(fileName(path))}">`;
+        html += `<img class="dup-inline-thumb" src="${thumbSrc}" loading="lazy" onerror="this.outerHTML='<div class=\\'dup-inline-thumb-placeholder\\'>&#128444;</div>'" alt="${escapeHtml(fileName(path))}">`;
       } else {
         const icon = (f.ext || "").match(/^(mp4|mov|avi|mkv|wmv|flv|webm)$/i) ? "&#127910;" : "&#128196;";
         html += `<div class="dup-inline-thumb-placeholder">${icon}</div>`;

@@ -14,13 +14,35 @@ import contextlib
 import json
 import logging
 import platform
+import re as _re
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Pattern for safe rclone remote names: alphanumeric, hyphens, underscores
+_SAFE_REMOTE_NAME_RE = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def _validate_remote_name(name: str) -> str:
+    """Validate that a remote name is safe for use in rclone commands.
+
+    Allows alphanumeric characters, hyphens, and underscores only.
+    Must start with an alphanumeric character.
+
+    Raises ValueError if the name is invalid.
+    """
+    if not name or len(name) > 64:
+        raise ValueError(f"Invalid remote name: must be 1-64 characters, got {len(name) if name else 0}")
+    if not _SAFE_REMOTE_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid remote name '{name}': only alphanumeric characters, "
+            "hyphens, and underscores are allowed (must start with alphanumeric)"
+        )
+    return name
 
 
 class RcloneTransferError(RuntimeError):
@@ -178,7 +200,24 @@ class SyncResult:
 
 
 # ── Active OAuth processes ──
-_oauth_processes: dict[str, subprocess.Popen] = {}
+_oauth_processes: dict[str, tuple[float, subprocess.Popen]] = {}  # name -> (start_time, Popen)
+_OAUTH_TIMEOUT = 600  # 10 minutes
+
+
+def _cleanup_stale_oauth() -> None:
+    """Kill and remove OAuth processes older than _OAUTH_TIMEOUT seconds."""
+    import time as _time
+
+    now = _time.monotonic()
+    stale = [
+        name for name, (start, proc) in _oauth_processes.items()
+        if (now - start) > _OAUTH_TIMEOUT
+    ]
+    for name in stale:
+        _, proc = _oauth_processes.pop(name)
+        with contextlib.suppress(Exception):
+            proc.kill()
+        logger.info("Cleaned up stale OAuth process for '%s' (pid=%d)", name, proc.pid)
 
 
 def create_remote(
@@ -194,6 +233,11 @@ def create_remote(
     """
     if not check_rclone():
         return {"success": False, "message": "rclone is not installed"}
+
+    try:
+        _validate_remote_name(name)
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
 
     info = PROVIDERS.get(provider_key)
     if not info:
@@ -235,12 +279,16 @@ def _start_oauth_flow(provider_key: str, name: str, rclone_type: str) -> dict:
     Runs `rclone authorize <type>` which opens a browser for the user to log in.
     The process runs in the background; check status with `get_oauth_status()`.
     """
-    global _oauth_processes
+    import time as _time
+
+    # Clean up any stale OAuth processes first
+    _cleanup_stale_oauth()
 
     # Kill any existing OAuth process for this name
     if name in _oauth_processes:
         with contextlib.suppress(Exception):
-            _oauth_processes[name].kill()
+            _oauth_processes[name][1].kill()
+        del _oauth_processes[name]
 
     try:
         proc = subprocess.Popen(
@@ -249,7 +297,7 @@ def _start_oauth_flow(provider_key: str, name: str, rclone_type: str) -> dict:
             stderr=subprocess.PIPE,
             text=True,
         )
-        _oauth_processes[name] = proc
+        _oauth_processes[name] = (_time.monotonic(), proc)
         logger.info("Started OAuth flow for '%s' (type=%s, pid=%d)", name, rclone_type, proc.pid)
         return {
             "success": True,
@@ -264,10 +312,11 @@ def _start_oauth_flow(provider_key: str, name: str, rclone_type: str) -> dict:
 
 def get_oauth_status(name: str) -> dict:
     """Check if an OAuth flow has completed. Returns token if done."""
-    proc = _oauth_processes.get(name)
-    if not proc:
+    entry = _oauth_processes.get(name)
+    if not entry:
         return {"status": "not_found"}
 
+    _, proc = entry
     poll = proc.poll()
     if poll is None:
         return {"status": "pending"}
@@ -337,6 +386,10 @@ def delete_remote(name: str) -> dict:
     if not check_rclone():
         return {"success": False, "message": "rclone is not installed"}
     try:
+        _validate_remote_name(name)
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
+    try:
         result = subprocess.run(
             [_rclone_bin(), "config", "delete", name],
             capture_output=True,
@@ -355,6 +408,7 @@ def test_remote(name: str) -> dict:
     """Test if a remote is accessible by listing its root."""
     if not check_rclone():
         return {"success": False, "message": "rclone is not installed"}
+    _validate_remote_name(name)
     try:
         result = subprocess.run(
             [_rclone_bin(), "lsd", f"{name}:", "--max-depth", "1"],
@@ -429,6 +483,7 @@ def rclone_ls(remote: str, path: str = "", recursive: bool = False) -> list[dict
     """List files/dirs at a remote path using rclone lsjson."""
     if not check_rclone():
         raise RuntimeError("rclone is not installed")
+    _validate_remote_name(remote)
 
     target = f"{remote}:{path}" if path else f"{remote}:"
     cmd = [_rclone_bin(), "lsjson", target]
@@ -502,6 +557,7 @@ def rclone_copy(
     """
     if not check_rclone():
         raise RuntimeError("rclone is not installed")
+    _validate_remote_name(remote)
 
     import time
 
@@ -702,6 +758,7 @@ def rclone_mount(remote: str, mount_point: str | None = None) -> tuple[str, bool
     """
     if not check_rclone():
         raise RuntimeError("rclone is not installed")
+    _validate_remote_name(remote)
 
     if mount_point is None:
         mount_point = str(Path.home() / "mnt" / remote)
@@ -1143,6 +1200,7 @@ def rclone_ls_paginated(
     """
     if not check_rclone():
         return
+    _validate_remote_name(remote)
 
     import time
 
@@ -1232,6 +1290,16 @@ def rclone_copyto(
             raise RcloneTransferError(fail)
         return fail
 
+    # Validate remote names to prevent injection
+    for rname in (src_remote, dst_remote):
+        try:
+            _validate_remote_name(rname)
+        except ValueError as exc:
+            fail = {"success": False, "bytes": 0, "elapsed": 0.0, "error": str(exc)}
+            if raise_on_failure:
+                raise RcloneTransferError(fail) from exc
+            return fail
+
     import re
     import time
 
@@ -1288,14 +1356,14 @@ def rclone_copyto(
         logger.warning("rclone copyto timed out after %.1fs: %s:%s -> %s:%s", elapsed, src_remote, src_path, dst_remote, dst_path)
         fail = {"success": False, "bytes": 0, "elapsed": elapsed, "error": f"Timed out after {effective_timeout}s (file_size={file_size})"}
         if raise_on_failure:
-            raise RcloneTransferError(fail)
+            raise RcloneTransferError(fail) from None
         return fail
     except OSError as exc:
         elapsed = time.monotonic() - start
         logger.error("rclone copyto OS error: %s", exc)
         fail = {"success": False, "bytes": 0, "elapsed": elapsed, "error": str(exc)}
         if raise_on_failure:
-            raise RcloneTransferError(fail)
+            raise RcloneTransferError(fail) from exc
         return fail
 
 
@@ -1470,7 +1538,7 @@ def rclone_dedupe(
     mode: str = "newest",
     dry_run: bool = False,
     timeout: int = 3600,
-    progress_fn: Any = None,
+    progress_fn: Callable | None = None,
 ) -> dict:
     """Run rclone dedupe on a remote path to remove duplicate files.
 
@@ -1583,19 +1651,22 @@ def retry_with_backoff(
     fn,
     *args,
     max_retries: int = 3,
-    base_delay: float = 2.0,
+    base_delay: float = 1.0,
     max_delay: float = 60.0,
     retryable_exceptions: tuple = (RuntimeError, subprocess.TimeoutExpired, OSError),
     **kwargs,
 ):
     """Execute fn with exponential backoff retry.
 
+    Uses exponential backoff with jitter: delay = min(2^attempt + jitter, max_delay).
+    Default delays: ~1s, ~2s, ~4s, ~8s, ... capped at 60s.
+
     Args:
         fn: callable to execute
         *args: positional arguments for fn
         max_retries: maximum number of retry attempts
-        base_delay: initial delay in seconds (doubled each retry)
-        max_delay: maximum delay cap in seconds
+        base_delay: multiplier for backoff (default 1.0 gives 1s, 2s, 4s, 8s...)
+        max_delay: maximum delay cap in seconds (default 60s)
         retryable_exceptions: tuple of exception types that trigger a retry
         **kwargs: keyword arguments for fn
 

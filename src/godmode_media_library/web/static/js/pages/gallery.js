@@ -120,7 +120,6 @@ async function _loadCollections() {
       .map(s => s.path);
     _renderCollections();
   } catch (e) {
-    console.error("Failed to load collections:", e);
     $("#gallery-collections").innerHTML = `
       <div class="gallery-empty">${t("gallery.load_error")}</div>
     `;
