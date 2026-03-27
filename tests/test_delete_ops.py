@@ -168,23 +168,30 @@ def test_apply_delete_plan_unlink_alias(tmp_path: Path):
     ikey = _inode_key(f1)
     iid = _inode_id(ikey) if ikey else "test_inode"
 
+    file_size = str(f1.stat().st_size)
     plan_path = tmp_path / "plan.tsv"
+    header = [
+        "inode_id",
+        "path",
+        "action",
+        "primary_path",
+        "asset_key",
+        "selected_seed",
+        "unit_size",
+        "nlink_expected",
+        "nlink_scanned",
+        "external_links",
+        "note",
+    ]
+    # unlink_alias now requires the primary to have been moved first,
+    # so include a move_primary row for f1 before unlink_alias for f2.
     write_tsv(
         plan_path,
+        header,
         [
-            "inode_id",
-            "path",
-            "action",
-            "primary_path",
-            "asset_key",
-            "selected_seed",
-            "unit_size",
-            "nlink_expected",
-            "nlink_scanned",
-            "external_links",
-            "note",
+            (iid, str(f1), "move_primary", str(f1), "", "0", file_size, "2", "2", "0", "quarantine_primary_copy"),
+            (iid, str(f2), "unlink_alias", str(f1), "", "0", file_size, "0", "2", "0", "remove_extra_hardlink_alias"),
         ],
-        [(iid, str(f2), "unlink_alias", str(f1), "", "0", str(f1.stat().st_size), "2", "2", "0", "remove_extra_hardlink_alias")],
     )
 
     quarantine = tmp_path / "quarantine"
@@ -197,9 +204,10 @@ def test_apply_delete_plan_unlink_alias(tmp_path: Path):
         dry_run=False,
         yes=True,
     )
+    assert result.moved_primary == 1
     assert result.unlinked_aliases == 1
     assert not f2.exists()
-    assert f1.exists()
+    assert not f1.exists()  # f1 was moved to quarantine
 
 
 def test_apply_delete_plan_manual_review(tmp_path: Path):

@@ -24,9 +24,9 @@ class FakeCatalog:
 
 
 @pytest.fixture(autouse=True)
-def _patch_weakset(monkeypatch):
-    """Replace WeakSet with a regular set so plain sqlite3.Connection works."""
-    monkeypatch.setattr(cp, "_setup_done_conns", set())
+def _reset_tables_flag():
+    """No-op — ensure_tables now uses setattr on conn, no global state to patch."""
+    yield
 
 
 @pytest.fixture()
@@ -56,8 +56,11 @@ def test_ensure_tables_creates_schema(catalog):
 
 def test_ensure_tables_idempotent(catalog):
     cp.ensure_tables(catalog.conn)
-    # Remove from WeakSet to allow re-entry for the idempotency test
-    cp._setup_done_conns.discard(catalog.conn)
+    # Clear the flag to allow re-entry for the idempotency test
+    try:
+        delattr(catalog.conn, cp._TABLES_OK_ATTR)
+    except AttributeError:
+        pass
     cp.ensure_tables(catalog.conn)  # should not raise
 
 

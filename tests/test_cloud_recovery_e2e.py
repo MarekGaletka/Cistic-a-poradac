@@ -31,9 +31,24 @@ def client(tmp_path):
     """Minimal test client — no pre-populated catalog needed for most cloud/recovery tests."""
     from godmode_media_library.web.app import create_app
 
-    app = create_app(catalog_path=tmp_path / "test.db")
+    db_path = tmp_path / "test.db"
+    app = create_app(catalog_path=db_path)
     # Expose quarantine root so recovery endpoints can find it
     app.state.quarantine_root = str(tmp_path / "quarantine")
+
+    # Register tmp_path as a configured root so recovery endpoints
+    # pass the _check_path_within_roots security check.
+    import json as _json
+    from godmode_media_library.catalog import Catalog
+    cat = Catalog(db_path)
+    cat.open()
+    cat.conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('configured_roots', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (_json.dumps([str(tmp_path)]),),
+    )
+    cat.conn.commit()
+    cat.close()
+
     return TestClient(app)
 
 
@@ -623,12 +638,13 @@ class TestIntegrityCheck:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
-    def test_repair_nonexistent_file(self, client):
+    def test_repair_nonexistent_file(self, client, tmp_path):
+        nonexistent = str(tmp_path / "no" / "such" / "file.jpg")
         with patch(
             "godmode_media_library.recovery.repair_file",
             return_value={"success": False, "error": "Soubor neexistuje"},
         ):
-            resp = client.post("/api/recovery/repair", json={"path": "/no/such/file.jpg"})
+            resp = client.post("/api/recovery/repair", json={"path": nonexistent})
         assert resp.status_code == 200
         assert resp.json()["success"] is False
 

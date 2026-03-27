@@ -102,22 +102,22 @@ class FileTransferState:
 # ---------------------------------------------------------------------------
 
 
-import weakref
-
-_setup_done_conns: weakref.WeakSet = weakref.WeakSet()  # tracks conn objects; auto-removed when GC'd
+_TABLES_OK_ATTR = "_gml_checkpoint_tables_ok"
 
 
 def ensure_tables(conn: sqlite3.Connection) -> None:
-    # Use a WeakSet of connection objects to avoid repeated setup.
-    # WeakSet automatically drops entries when the connection is GC'd,
-    # preventing leaks after id() recycling.
-    if conn in _setup_done_conns:
+    # Flag stored on the connection object itself — immune to id() recycling
+    # and automatically disappears when the connection is GC'd.
+    if getattr(conn, _TABLES_OK_ATTR, False):
         return
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")  # WAL for concurrent reads + crash safety
     conn.executescript(_CHECKPOINT_SQL)
-    _setup_done_conns.add(conn)
+    try:
+        setattr(conn, _TABLES_OK_ATTR, True)
+    except AttributeError:
+        pass  # Some connection wrappers don't allow setattr — re-setup is harmless
 
 
 def _ensure(catalog: Catalog) -> None:

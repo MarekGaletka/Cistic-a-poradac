@@ -1271,9 +1271,10 @@ def quarantine_files(request: Request, body: QuarantineRequest) -> dict:
     logger.warning("AUDIT: %s quarantine request for %d files", client_ip, len(body.paths))
     if body.quarantine_root:
         quarantine_root = Path(body.quarantine_root).resolve()
-        # Security: quarantine root must not be a system directory
-        qr_str = str(quarantine_root)
-        if any(qr_str == prefix or qr_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
+        # Security: quarantine root must be within managed roots and not a system directory
+        try:
+            _check_path_within_roots(request, quarantine_root)
+        except HTTPException:
             raise HTTPException(
                 status_code=403,
                 detail="Quarantine root must not be a system directory",
@@ -1431,12 +1432,7 @@ def move_files(request: Request, body: MoveRequest) -> dict:
     _sanitize_path(body.destination, param_name="destination")
     dest_dir = Path(body.destination).resolve()
 
-    # Security: validate destination is not a system directory
-    dest_str = str(dest_dir)
-    if any(dest_str == prefix or dest_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
-        raise HTTPException(status_code=403, detail="Access denied: destination is a system directory")
-
-    # Validate destination is within managed roots
+    # Security: validate destination is within managed roots and not a system directory
     _check_path_within_roots(request, dest_dir)
 
     if not dest_dir.is_dir():
@@ -1658,8 +1654,9 @@ def restore_files(request: Request, body: RestoreRequest) -> dict:
     logger.warning("AUDIT: %s restore request for %d files from quarantine", client_ip, len(body.paths))
     if body.quarantine_root:
         quarantine_root = Path(body.quarantine_root).resolve()
-        qr_str = str(quarantine_root)
-        if any(qr_str == prefix or qr_str.startswith(prefix + "/") for prefix in _BLOCKED_PREFIXES):
+        try:
+            _check_path_within_roots(request, quarantine_root)
+        except HTTPException:
             raise HTTPException(
                 status_code=403,
                 detail="Quarantine root must not be a system directory",
@@ -2639,7 +2636,12 @@ def restore_quarantine(request: Request, body: QuarantineRestoreRequest):
         _sanitize_path(p, param_name="path")
     if body.restore_to:
         _sanitize_path(body.restore_to, param_name="restore_to")
-        _check_path_within_roots(request, Path(body.restore_to).resolve())
+        # Only block truly dangerous system dirs for restore (user chooses destination)
+        _RESTORE_BLOCKED = ("/etc", "/sbin", "/usr/bin", "/usr/sbin", "/bin", "/dev", "/proc", "/sys")
+        resolved_dest = str(Path(body.restore_to).resolve())
+        for bp in _RESTORE_BLOCKED:
+            if resolved_dest == bp or resolved_dest.startswith(bp + "/"):
+                raise HTTPException(status_code=403, detail=f"Nelze obnovit do systémového adresáře: {bp}")
     qroot = getattr(request.app.state, "quarantine_root", None)
     return restore_from_quarantine(
         body.paths,

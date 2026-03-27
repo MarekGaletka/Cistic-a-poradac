@@ -202,9 +202,9 @@ def test_execute_merge_exiftool_success():
     assert result.error is None
     # Verify ExifTool command was built correctly
     cmd = mock_run.call_args[0][0]
-    assert "-GPSLatitude=50.0875" in cmd
-    assert "-Keywords+=europe" in cmd
-    assert "-Keywords+=prague" in cmd
+    assert "-EXIF:GPSLatitude=50.0875" in cmd
+    assert "-IPTC:Keywords+=europe" in cmd
+    assert "-IPTC:Keywords+=prague" in cmd
 
 
 def test_execute_merge_no_exiftool():
