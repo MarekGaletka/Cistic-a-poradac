@@ -15,6 +15,7 @@ export async function api(path) {
     const detail = await _parseErrorBody(res);
     throw new Error(`API error ${res.status}: ${detail}`);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -29,6 +30,7 @@ export async function apiPost(path, body = null) {
     const detail = await _parseErrorBody(res);
     throw new Error(`API error ${res.status}: ${detail}`);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -43,6 +45,7 @@ export async function apiPut(path, body = null) {
     const detail = await _parseErrorBody(res);
     throw new Error(`API error ${res.status}: ${detail}`);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 

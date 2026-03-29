@@ -73,6 +73,7 @@ def incremental_scan(
     paths_to_hash: list[tuple[int, Path, int]] = []  # (index, path, size)
     paths_for_media: list[tuple[int, Path, str]] = []  # (index, path, ext)
     paths_for_phash: list[tuple[int, Path]] = []  # (index, path)
+    unchanged_indices: list[tuple[int, str]] = []  # (file_infos index, path_str) for batch load
 
     for idx, path in enumerate(all_paths):
         try:
@@ -137,11 +138,23 @@ def incremental_scan(
         if needs_hash and size >= min_size_bytes:
             paths_to_hash.append((len(file_infos) - 1, path, size))
         elif not needs_hash and existing is not None:
-            existing_row = catalog.get_file_by_path(path_str)
+            unchanged_indices.append((len(file_infos) - 1, path_str))
+
+        if is_new_or_changed and extract_media:
+            paths_for_media.append((len(file_infos) - 1, path, ext))
+        if is_new_or_changed and compute_phash and (is_image_ext(ext) or is_video_ext(ext)):
+            paths_for_phash.append((len(file_infos) - 1, path, ext))
+
+    # ── Batch-load existing rows for unchanged files (avoids N+1) ────
+    if unchanged_indices:
+        unchanged_path_strs = [ps for _, ps in unchanged_indices]
+        existing_rows = catalog.get_files_by_paths(unchanged_path_strs)
+        for fi_idx, ps in unchanged_indices:
+            existing_row = existing_rows.get(ps)
             if existing_row:
-                info["sha256"] = existing_row.sha256
+                file_infos[fi_idx]["sha256"] = existing_row.sha256
                 if existing_row.duration_seconds or existing_row.width:
-                    info["media_meta"] = MediaMeta(
+                    file_infos[fi_idx]["media_meta"] = MediaMeta(
                         duration_seconds=existing_row.duration_seconds,
                         width=existing_row.width,
                         height=existing_row.height,
@@ -149,9 +162,9 @@ def incremental_scan(
                         audio_codec=existing_row.audio_codec,
                         bitrate=existing_row.bitrate,
                     )
-                info["phash"] = existing_row.phash
+                file_infos[fi_idx]["phash"] = existing_row.phash
                 if existing_row.date_original or existing_row.camera_make:
-                    info["exif_meta"] = ExifMeta(
+                    file_infos[fi_idx]["exif_meta"] = ExifMeta(
                         date_original=existing_row.date_original,
                         camera_make=existing_row.camera_make,
                         camera_model=existing_row.camera_model,
@@ -160,11 +173,6 @@ def incremental_scan(
                         gps_latitude=existing_row.gps_latitude,
                         gps_longitude=existing_row.gps_longitude,
                     )
-
-        if is_new_or_changed and extract_media:
-            paths_for_media.append((len(file_infos) - 1, path, ext))
-        if is_new_or_changed and compute_phash and (is_image_ext(ext) or is_video_ext(ext)):
-            paths_for_phash.append((len(file_infos) - 1, path, ext))
 
     # ── Phase 2: Parallel SHA-256 hashing ─────────────────────────────
     if progress_callback:
@@ -292,14 +300,18 @@ def incremental_scan(
         if progress_callback and (upsert_idx + 1) % 100 == 0:
             progress_callback({"phase": "saving", "total": len(file_infos), "processed": upsert_idx + 1})
 
-    if stats.files_scanned % 1000 == 0 and stats.files_scanned > 0:
-        catalog.commit()
+        if (upsert_idx + 1) % 1000 == 0:
+            catalog.commit()
 
-    # Detect removals
-    catalog_paths = catalog.all_paths()
-    # Only consider paths under the scanned roots
-    root_prefixes = [str(r) for r in roots]
-    catalog_paths_in_scope = {p for p in catalog_paths if any(p.startswith(rp) for rp in root_prefixes)}
+    # Detect removals — query only paths under scanned roots (avoids loading entire catalog)
+    catalog_paths_in_scope: set[str] = set()
+    for root in roots:
+        prefix = str(root).rstrip("/") + "/"
+        cur = catalog.conn.execute(
+            "SELECT path FROM files WHERE path LIKE ? || '%'", (prefix,)
+        )
+        for row in cur:
+            catalog_paths_in_scope.add(row[0])
     removed_paths = catalog_paths_in_scope - seen_paths
 
     if removed_paths:
@@ -430,7 +442,7 @@ def _extract_gps_float(meta: dict, keys: list[str]) -> float | None:
         val = meta.get(key)
         if val is None:
             continue
-        if isinstance(val, (int, float)):
+        if isinstance(val, int | float):
             return float(val)
         if isinstance(val, str):
             # Handle "49.1234 N" or "49 deg 7' 25.08\" N" formats

@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import random
@@ -578,7 +579,7 @@ def _phase_2_cloud_catalog_scan(ctx: PhaseContext) -> None:
 
                 mod_time = f.get("ModTime", "")
                 cloud_hash_input = f"{rname}:{fpath}:{fsize}"
-                surrogate_hash = hashlib.sha256(cloud_hash_input.encode()).hexdigest()
+                surrogate_hash = "surrogate:" + hashlib.sha256(cloud_hash_input.encode()).hexdigest()
 
                 real_hash = None
                 hashes = f.get("Hashes", {})
@@ -657,7 +658,7 @@ def _phase_3_local_scan(ctx: PhaseContext) -> None:
                 roots=[Path(r) for r in ctx.config.local_roots],
                 workers=ctx.config.scan_workers,
             )
-            local_scanned = getattr(stats, "total_files", 0) if stats else 0
+            local_scanned = getattr(stats, "files_scanned", 0) if stats else 0
         except PermissionError as exc:
             logger.warning("Local scan permission error (skipping): %s", exc)
         except (OSError, RuntimeError) as exc:
@@ -1012,13 +1013,14 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                     )
                 continue
 
-            # Build collision-safe destination path
+            # Build collision-safe destination path (single query for date + size)
             filename = PurePosixPath(src_path).name
             file_row = conn.execute(
-                "SELECT date_original FROM files WHERE sha256 = ? LIMIT 1",
+                "SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
                 (fs.file_hash,),
             ).fetchone()
             mod_time = file_row["date_original"] if file_row else None
+            file_size = file_row["size"] if file_row else None
 
             dest_path = _build_dest_path(
                 ctx.config.dest_path,
@@ -1030,13 +1032,6 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             if dest_path in dest_paths_used:
                 dest_path = _make_collision_safe(dest_path, fs.file_hash, dest_paths_used)
             dest_paths_used.add(dest_path)
-
-            # Get file size and source hash for verification
-            file_size_row = conn.execute(
-                "SELECT size FROM files WHERE sha256 = ? LIMIT 1",
-                (fs.file_hash,),
-            ).fetchone()
-            file_size = file_size_row["size"] if file_size_row else None
 
             # Get source hash for post-transfer comparison (if dest supports it)
             source_hash = None
@@ -1516,7 +1511,12 @@ def _safe_tar_extractall(tf: tarfile.TarFile, extract_dir: str) -> None:
             link_target = os.path.realpath(os.path.join(extract_dir, member.linkname))
             if not link_target.startswith(os.path.realpath(extract_dir) + os.sep) and link_target != os.path.realpath(extract_dir):
                 raise ValueError(f"Tar symlink traversal: {member.name} -> {member.linkname} escapes extraction directory")
-    tf.extractall(extract_dir)
+    import sys
+
+    if sys.version_info >= (3, 12):
+        tf.extractall(extract_dir, filter="data")
+    else:
+        tf.extractall(extract_dir)
 
 
 def _phase_8_extract_archives(ctx: PhaseContext) -> None:
@@ -1599,7 +1599,8 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                         # Zip Slip protection: reject entries with path traversal
                         for info in zf.infolist():
                             member_path = os.path.realpath(os.path.join(extract_dir, info.filename))
-                            if not member_path.startswith(os.path.realpath(extract_dir) + os.sep) and member_path != os.path.realpath(extract_dir):
+                            real_extract = os.path.realpath(extract_dir)
+                            if not member_path.startswith(real_extract + os.sep) and member_path != real_extract:
                                 raise ValueError(f"Zip Slip: {info.filename} escapes extraction directory")
                         zf.extractall(extract_dir)
                 elif lower_path.endswith(".tar.gz") or lower_path.endswith(".tgz"):
@@ -1664,10 +1665,55 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
 
                 files_from_archives += len(extracted_files)
 
-                # Delete the archive from destination only after successful upload
+                # Verify upload by checking file count on destination
+                verify_cmd = [
+                    _resolve_rclone(), "size", "--json",
+                    f"{ctx.config.dest_remote}:{upload_base}",
+                ]
+                verify_result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=300)
+                if verify_result.returncode != 0:
+                    logger.warning(
+                        "Cannot verify upload of %s — keeping archive for safety: %s",
+                        archive_path, (verify_result.stderr or "")[:200],
+                    )
+                    archives_failed += 1
+                    continue
+
+                # Parse rclone size output and verify file count
+                try:
+                    size_info = json.loads(verify_result.stdout)
+                    remote_count = size_info.get("count", 0)
+                except (json.JSONDecodeError, KeyError):
+                    remote_count = 0
+
+                # Calculate expected local size for comparison
+                local_total_size = sum(
+                    os.path.getsize(os.path.join(extract_dir, f))
+                    for f in extracted_files
+                    if os.path.exists(os.path.join(extract_dir, f))
+                )
+                remote_total_size = size_info.get("bytes", 0) if isinstance(size_info, dict) else 0
+
+                if remote_count < len(extracted_files):
+                    logger.warning(
+                        "Upload verification failed for %s: expected %d files, found %d — keeping archive",
+                        archive_path, len(extracted_files), remote_count,
+                    )
+                    archives_failed += 1
+                    continue
+
+                if local_total_size > 0 and remote_total_size < local_total_size * 0.95:
+                    logger.warning(
+                        "Upload verification failed for %s: size mismatch (local=%d, remote=%d) — keeping archive",
+                        archive_path, local_total_size, remote_total_size,
+                    )
+                    archives_failed += 1
+                    continue
+
+                # Delete the archive from destination only after verified upload
                 delete_result = _rclone_delete(ctx.config.dest_remote, f"{ctx.config.dest_path}/{archive_path}")
                 if delete_result["success"]:
-                    logger.info("Extracted and deleted archive %s (%d files)", archive_path, len(extracted_files))
+                    logger.info("Extracted, verified and deleted archive %s (%d files)", archive_path, len(extracted_files))
                 else:
                     logger.warning("Extracted archive %s but failed to delete: %s", archive_path, delete_result.get("error"))
 

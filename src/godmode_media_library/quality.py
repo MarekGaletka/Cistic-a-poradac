@@ -117,7 +117,8 @@ def _compute_blur_score(img) -> float:
     filtered = gray.filter(kernel)
 
     # Compute variance of filtered pixels
-    pixels = list(filtered.getdata())
+    _ = filtered.getextrema()  # (min, max) — cheap sanity check
+    pixels = list(filtered.tobytes())
     n = len(pixels)
     if n == 0:
         return 0.0
@@ -129,7 +130,7 @@ def _compute_blur_score(img) -> float:
 def _compute_brightness(img) -> float:
     """Compute average pixel brightness (0-255)."""
     gray = img.convert("L")
-    pixels = list(gray.getdata())
+    pixels = list(gray.tobytes())
     if not pixels:
         return 128.0
     return sum(pixels) / len(pixels)

@@ -149,8 +149,14 @@ class TestStaleReset:
         # Create a file in in_progress state
         mark_file(catalog, job.job_id, "hash1", "remote:path1", "stream", "in_progress")
 
-        # With a very short stale threshold, it should be reset
-        count = reset_stale_in_progress(catalog, job.job_id, "stream", stale_after_seconds=0)
+        # Simulate a dead worker by setting worker_pid to a non-existent PID
+        catalog.conn.execute(
+            "UPDATE consolidation_file_state SET worker_pid = 999999999 WHERE file_hash = 'hash1'"
+        )
+        catalog.conn.commit()
+
+        # With dead PID, it should be reset regardless of stale threshold
+        count = reset_stale_in_progress(catalog, job.job_id, "stream", stale_after_seconds=9999)
         assert count == 1
 
     def test_no_reset_for_fresh_files(self, catalog):

@@ -103,7 +103,8 @@ def detect_faces_in_file(
             bottom = int(round(bottom * inv))
             left = int(round(left * inv))
 
-        encoding_blob = encrypt_fn(enc) if encrypt_fn else None
+        raw_bytes = enc.tobytes() if hasattr(enc, 'tobytes') else bytes(struct.pack("<128d", *enc))
+        encoding_blob = encrypt_fn(enc) if encrypt_fn else raw_bytes
         catalog.insert_face(
             file_id=file_id,
             face_index=idx,
@@ -229,13 +230,17 @@ def cluster_faces(
             max_clusters,
         )
 
-    # ── Build lookup: face_id -> existing person_id ──
-    face_person_map: dict[int, int | None] = {}
-    for fid in face_ids:
-        row = catalog.conn.execute(
-            "SELECT person_id FROM faces WHERE id = ?", (fid,)
-        ).fetchone()
-        face_person_map[fid] = row[0] if row else None
+    # ── Build lookup: face_id -> existing person_id (batch query) ──
+    face_person_map: dict[int, int | None] = {fid: None for fid in face_ids}
+    chunk_size = 500
+    for i in range(0, len(face_ids), chunk_size):
+        chunk = face_ids[i : i + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = catalog.conn.execute(
+            f"SELECT id, person_id FROM faces WHERE id IN ({placeholders})", chunk  # noqa: S608
+        ).fetchall()
+        for row in rows:
+            face_person_map[row[0]] = row[1]
 
     # ── Build set of "user-named" person IDs (not auto-generated Person_NNN) ──
     import re
@@ -306,6 +311,24 @@ def match_face_to_known(
     if not persons:
         return None
 
+    # Collect sample face IDs and batch-load their encodings
+    sample_ids = [p.get("sample_face_id") for p in persons if p.get("sample_face_id") is not None]
+    if not sample_ids:
+        return None
+
+    # Batch query all sample face encodings in one go
+    encodings_map: dict[int, bytes] = {}
+    chunk_size = 500
+    for i in range(0, len(sample_ids), chunk_size):
+        chunk = sample_ids[i : i + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = catalog.conn.execute(
+            f"SELECT id, encoding FROM faces WHERE id IN ({placeholders}) AND encoding IS NOT NULL",  # noqa: S608
+            chunk,
+        ).fetchall()
+        for row in rows:
+            encodings_map[row[0]] = row[1]
+
     best_person_id = None
     best_distance = float("inf")
 
@@ -313,27 +336,12 @@ def match_face_to_known(
 
     for person in persons:
         sample_face_id = person.get("sample_face_id")
-        if sample_face_id is None:
+        if sample_face_id is None or sample_face_id not in encodings_map:
             continue
 
-        # Get the sample face's encoding
-        face = catalog.get_face_by_id(sample_face_id)
-        if face is None:
-            continue
-
-        # Load encoding from DB
-        cur = catalog.conn.execute("SELECT encoding FROM faces WHERE id = ?", (sample_face_id,))
-        row = cur.fetchone()
-        if row is None or row[0] is None:
-            continue
-
+        blob = encodings_map[sample_face_id]
         try:
-            if decrypt_fn:
-                ref_vec = np.array(decrypt_fn(row[0]))
-            else:
-                import struct
-
-                ref_vec = np.array(struct.unpack("<128d", row[0]))
+            ref_vec = np.array(decrypt_fn(blob)) if decrypt_fn else np.array(struct.unpack("<128d", blob))
         except (struct.error, ValueError, TypeError) as exc:
             logger.debug("Failed to decode face encoding for person: %s", exc)
             continue

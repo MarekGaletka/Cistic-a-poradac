@@ -345,15 +345,16 @@ def _send_notification(title: str, message: str, severity: str = "info") -> None
 
     try:
         sound = "Basso" if severity == "critical" else "Purr" if severity == "warning" else "default"
-        # Escape quotes and backslashes to prevent AppleScript injection
+        # Pass AppleScript via stdin to avoid shell injection through arguments.
+        # Escape backslashes and double quotes for AppleScript string literals.
         safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
         safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
-        script = f'''
-        display notification "{safe_message}" with title "{safe_title}" sound name "{sound}"
-        '''
+        script = f'display notification "{safe_message}" with title "{safe_title}" sound name "{sound}"'
         subprocess.run(
-            ["osascript", "-e", script],
+            ["osascript"],
+            input=script,
             capture_output=True,
+            text=True,
             timeout=5,
         )
         logger.info("macOS notification sent: %s", title)

@@ -85,13 +85,17 @@ def scan_bitrot(
         sql += " LIMIT ?"
         params = (int(limit),)
 
-    rows = catalog.conn.execute(sql, params).fetchall()
+    # Get total count for progress reporting without loading all rows
+    count_sql = "SELECT COUNT(*) FROM files WHERE sha256 IS NOT NULL AND size > 0"
+    count = catalog.conn.execute(count_sql).fetchone()[0]
+    total = min(count, int(limit)) if limit else count
+
+    cursor = catalog.conn.execute(sql, params)
 
     result = BitrotResult()
     start = time.monotonic()
-    total = len(rows)
 
-    for i, (file_id, path, stored_hash, size) in enumerate(rows):
+    for i, (file_id, path, stored_hash, size) in enumerate(cursor):
         if progress_fn and i % 50 == 0:
             progress_fn(
                 {

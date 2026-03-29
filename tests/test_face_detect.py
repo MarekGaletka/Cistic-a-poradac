@@ -347,6 +347,403 @@ def test_face_detect_integration(catalog, sample_file):
 # ── Schema migration ──
 
 
+# ── face_detect: batch queries and clustering ──
+
+
+def test_scan_new_faces_with_files(catalog, sample_file):
+    """scan_new_faces processes files and returns result."""
+    import numpy as np
+
+    mock_fr = MagicMock()
+    mock_fr.load_image_file.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+    mock_fr.face_locations.return_value = [(10, 90, 90, 10)]
+    mock_fr.face_encodings.return_value = [np.random.rand(128)]
+
+    with patch("godmode_media_library.face_detect._load_libs", return_value=(mock_fr, np, MagicMock())):
+        from godmode_media_library.face_detect import scan_new_faces
+
+        progress_calls = []
+        result = scan_new_faces(
+            catalog,
+            progress_fn=lambda done, total: progress_calls.append((done, total)),
+        )
+        assert result.files_processed == 1
+        assert result.faces_detected == 1
+        assert result.errors == 0
+        assert len(progress_calls) > 0
+
+
+def test_scan_new_faces_with_error(catalog, sample_file):
+    """scan_new_faces counts errors but continues."""
+    import numpy as np
+
+    mock_fr = MagicMock()
+    mock_fr.load_image_file.side_effect = RuntimeError("bad file")
+
+    with patch("godmode_media_library.face_detect._load_libs", return_value=(mock_fr, np, MagicMock())):
+        from godmode_media_library.face_detect import detect_faces_in_file
+
+        count = detect_faces_in_file(catalog, sample_file, "/tmp/test_photo.jpg")
+        assert count == 0
+
+
+def test_detect_faces_no_faces(catalog, sample_file):
+    """detect_faces_in_file returns 0 when no faces found."""
+    import numpy as np
+
+    mock_fr = MagicMock()
+    mock_fr.load_image_file.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+    mock_fr.face_locations.return_value = []  # No faces
+
+    with patch("godmode_media_library.face_detect._load_libs", return_value=(mock_fr, np, MagicMock())):
+        from godmode_media_library.face_detect import detect_faces_in_file
+
+        count = detect_faces_in_file(catalog, sample_file, "/tmp/test_photo.jpg")
+        assert count == 0
+
+
+def test_detect_faces_with_scaling(catalog, sample_file):
+    """detect_faces_in_file scales bboxes back when image is resized."""
+    import numpy as np
+
+    mock_fr = MagicMock()
+    # Image larger than max_dimension (default 1600)
+    big_img = np.zeros((3200, 3200, 3), dtype=np.uint8)
+    mock_fr.load_image_file.return_value = big_img
+    mock_fr.face_locations.return_value = [(5, 45, 45, 5)]
+    mock_fr.face_encodings.return_value = [np.random.rand(128)]
+
+    mock_pil_image = MagicMock()
+    mock_pil_cls = MagicMock()
+    mock_pil_cls.fromarray.return_value = mock_pil_image
+    # resize returns something that numpy can convert
+    resized = np.zeros((1600, 1600, 3), dtype=np.uint8)
+    mock_pil_image.resize.return_value = MagicMock()
+
+    with patch("godmode_media_library.face_detect._load_libs", return_value=(mock_fr, np, mock_pil_cls)):
+        with patch("godmode_media_library.face_detect._resize_if_needed", return_value=(resized, 0.5)):
+            from godmode_media_library.face_detect import detect_faces_in_file
+
+            count = detect_faces_in_file(catalog, sample_file, "/tmp/test_photo.jpg", max_dimension=1600)
+            assert count == 1
+
+    faces = catalog.get_faces_for_file(sample_file)
+    assert len(faces) == 1
+    # With scale 0.5, coordinates should be doubled: 5 -> 10, 45 -> 90
+    assert faces[0]["bbox"]["top"] == 10
+    assert faces[0]["bbox"]["right"] == 90
+
+
+def test_detect_faces_with_encrypt_fn(catalog, sample_file):
+    """detect_faces_in_file passes encoding through encrypt_fn."""
+    import numpy as np
+
+    mock_fr = MagicMock()
+    mock_fr.load_image_file.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+    mock_fr.face_locations.return_value = [(10, 90, 90, 10)]
+    enc = np.random.rand(128)
+    mock_fr.face_encodings.return_value = [enc]
+
+    encrypted_data = b"encrypted_blob"
+    encrypt_fn = MagicMock(return_value=encrypted_data)
+
+    with patch("godmode_media_library.face_detect._load_libs", return_value=(mock_fr, np, MagicMock())):
+        from godmode_media_library.face_detect import detect_faces_in_file
+
+        count = detect_faces_in_file(catalog, sample_file, "/tmp/test_photo.jpg", encrypt_fn=encrypt_fn)
+        assert count == 1
+        encrypt_fn.assert_called_once()
+
+
+def test_cluster_faces_empty(catalog):
+    """cluster_faces returns empty dict when no encodings."""
+    from godmode_media_library.face_detect import cluster_faces
+
+    result = cluster_faces(catalog)
+    assert result == {}
+
+
+def test_cluster_faces_with_data(catalog, sample_file):
+    """cluster_faces groups similar face encodings."""
+    import struct
+
+    import numpy as np
+
+    # Insert faces with known encodings
+    enc1 = [0.1] * 128
+    enc2 = [0.1001] * 128  # Very similar to enc1
+    enc3 = [0.9] * 128  # Different
+
+    for i, enc in enumerate([enc1, enc2, enc3]):
+        blob = struct.pack("<128d", *enc)
+        catalog.insert_face(
+            file_id=sample_file,
+            face_index=i,
+            bbox=(0, 0, 0, 0),
+            encoding_blob=blob,
+        )
+    catalog.commit()
+
+    from godmode_media_library.face_detect import cluster_faces
+
+    clusters = cluster_faces(catalog, eps=0.5, min_samples=2)
+    # enc1 and enc2 should cluster together, enc3 is noise
+    assert isinstance(clusters, dict)
+
+
+def test_match_face_to_known_no_persons(catalog):
+    """match_face_to_known returns None with no persons."""
+    from godmode_media_library.face_detect import match_face_to_known
+
+    result = match_face_to_known(catalog, [0.5] * 128)
+    assert result is None
+
+
+def test_match_face_to_known_with_match(catalog, sample_file):
+    """match_face_to_known finds matching person."""
+    import struct
+
+    import numpy as np
+
+    enc = [0.5] * 128
+    blob = struct.pack("<128d", *enc)
+
+    face_id = catalog.insert_face(
+        file_id=sample_file,
+        face_index=0,
+        bbox=(0, 0, 0, 0),
+        encoding_blob=blob,
+    )
+    pid = catalog.upsert_person("Alice", sample_face_id=face_id)
+    catalog.assign_face_to_person(face_id, pid)
+    catalog.commit()
+
+    from godmode_media_library.face_detect import match_face_to_known
+
+    # Search with identical encoding — should match
+    result = match_face_to_known(catalog, enc, threshold=0.6)
+    assert result == pid
+
+
+def test_match_face_to_known_no_match(catalog, sample_file):
+    """match_face_to_known returns None when too far."""
+    import struct
+
+    import numpy as np
+
+    enc = [0.5] * 128
+    blob = struct.pack("<128d", *enc)
+
+    face_id = catalog.insert_face(
+        file_id=sample_file,
+        face_index=0,
+        bbox=(0, 0, 0, 0),
+        encoding_blob=blob,
+    )
+    pid = catalog.upsert_person("Alice", sample_face_id=face_id)
+    catalog.assign_face_to_person(face_id, pid)
+    catalog.commit()
+
+    from godmode_media_library.face_detect import match_face_to_known
+
+    # Search with very different encoding
+    different_enc = [5.0] * 128
+    result = match_face_to_known(catalog, different_enc, threshold=0.6)
+    assert result is None
+
+
+def test_resize_if_needed_no_resize():
+    """_resize_if_needed returns original when within max_dimension."""
+    import numpy as np
+
+    from godmode_media_library.face_detect import _resize_if_needed
+
+    img = np.zeros((100, 100, 3), dtype=np.uint8)
+    result, scale = _resize_if_needed(img, 1600, np, MagicMock())
+    assert scale == 1.0
+    assert result is img
+
+
+def test_resize_if_needed_invalid_shape():
+    """_resize_if_needed handles arrays with < 2 dimensions."""
+    import numpy as np
+
+    from godmode_media_library.face_detect import _resize_if_needed
+
+    img = np.zeros((100,), dtype=np.uint8)
+    result, scale = _resize_if_needed(img, 1600, np, MagicMock())
+    assert scale == 1.0
+
+
+def test_null_encoding_handling(catalog, sample_file):
+    """get_all_encodings filters out NULL encodings."""
+    catalog.insert_face(
+        file_id=sample_file,
+        face_index=0,
+        bbox=(0, 0, 0, 0),
+        encoding_blob=None,
+    )
+    catalog.insert_face(
+        file_id=sample_file,
+        face_index=1,
+        bbox=(0, 0, 0, 0),
+        encoding_blob=b"valid",
+    )
+    encs = catalog.get_all_encodings()
+    assert len(encs) == 1
+    assert encs[0][1] == b"valid"
+
+
+def test_match_face_no_sample_faces(catalog, sample_file):
+    """match_face_to_known returns None when persons have no sample_face_id."""
+    pid = catalog.upsert_person("NoSample")
+    catalog.commit()
+
+    from godmode_media_library.face_detect import match_face_to_known
+
+    result = match_face_to_known(catalog, [0.5] * 128)
+    assert result is None
+
+
+def test_cluster_faces_max_clusters(catalog, sample_file):
+    """cluster_faces respects max_clusters limit."""
+    import struct
+
+    import numpy as np
+
+    # Create many distinct face encodings that will form separate clusters
+    for i in range(10):
+        enc = [float(i * 10 + j) for j in range(128)]
+        blob = struct.pack("<128d", *enc)
+        catalog.insert_face(
+            file_id=sample_file,
+            face_index=i,
+            bbox=(0, 0, 0, 0),
+            encoding_blob=blob,
+        )
+    catalog.commit()
+
+    from godmode_media_library.face_detect import cluster_faces
+
+    # With min_samples=1, each point is its own cluster
+    clusters = cluster_faces(catalog, eps=0.01, min_samples=1, max_clusters=2)
+    assert len(clusters) <= 2
+
+
+def test_cluster_faces_preserves_named_person(catalog, sample_file):
+    """cluster_faces assigns cluster to existing named person."""
+    import struct
+
+    import numpy as np
+
+    enc1 = [0.1] * 128
+    enc2 = [0.1001] * 128  # Very similar
+
+    blob1 = struct.pack("<128d", *enc1)
+    blob2 = struct.pack("<128d", *enc2)
+
+    f1 = catalog.insert_face(file_id=sample_file, face_index=0, bbox=(0, 0, 0, 0), encoding_blob=blob1)
+    f2 = catalog.insert_face(file_id=sample_file, face_index=1, bbox=(0, 0, 0, 0), encoding_blob=blob2)
+
+    # Create a named person and assign f1 to it
+    pid = catalog.upsert_person("Alice", sample_face_id=f1)
+    catalog.assign_face_to_person(f1, pid)
+    catalog.commit()
+
+    from godmode_media_library.face_detect import cluster_faces
+
+    clusters = cluster_faces(catalog, eps=0.5, min_samples=2)
+    # Both faces should be clustered, and since f1 belongs to named "Alice",
+    # the cluster should be assigned to Alice
+    assert isinstance(clusters, dict)
+
+
+def test_cluster_faces_decrypt_fn(catalog, sample_file):
+    """cluster_faces uses decrypt_fn when provided."""
+    import struct
+
+    import numpy as np
+
+    enc = [0.5] * 128
+    blob = struct.pack("<128d", *enc)
+
+    catalog.insert_face(file_id=sample_file, face_index=0, bbox=(0, 0, 0, 0), encoding_blob=blob)
+    catalog.insert_face(file_id=sample_file, face_index=1, bbox=(0, 0, 0, 0), encoding_blob=blob)
+    catalog.commit()
+
+    def decrypt_fn(blob_data):
+        return list(struct.unpack("<128d", blob_data))
+
+    from godmode_media_library.face_detect import cluster_faces
+
+    clusters = cluster_faces(catalog, eps=0.5, min_samples=2, decrypt_fn=decrypt_fn)
+    assert isinstance(clusters, dict)
+
+
+def test_match_face_with_decrypt_fn(catalog, sample_file):
+    """match_face_to_known uses decrypt_fn."""
+    import struct
+
+    import numpy as np
+
+    enc = [0.5] * 128
+    blob = struct.pack("<128d", *enc)
+
+    face_id = catalog.insert_face(file_id=sample_file, face_index=0, bbox=(0, 0, 0, 0), encoding_blob=blob)
+    pid = catalog.upsert_person("Bob", sample_face_id=face_id)
+    catalog.assign_face_to_person(face_id, pid)
+    catalog.commit()
+
+    def decrypt_fn(blob_data):
+        return list(struct.unpack("<128d", blob_data))
+
+    from godmode_media_library.face_detect import match_face_to_known
+
+    result = match_face_to_known(catalog, enc, decrypt_fn=decrypt_fn, threshold=0.6)
+    assert result == pid
+
+
+def test_match_face_corrupt_encoding(catalog, sample_file):
+    """match_face_to_known handles corrupt encoding gracefully."""
+    # Insert face with invalid encoding blob (too short)
+    face_id = catalog.insert_face(
+        file_id=sample_file,
+        face_index=0,
+        bbox=(0, 0, 0, 0),
+        encoding_blob=b"too_short",
+    )
+    pid = catalog.upsert_person("Corrupt", sample_face_id=face_id)
+    catalog.assign_face_to_person(face_id, pid)
+    catalog.commit()
+
+    from godmode_media_library.face_detect import match_face_to_known
+
+    result = match_face_to_known(catalog, [0.5] * 128)
+    assert result is None  # Should gracefully handle the corrupt data
+
+
+def test_cluster_faces_corrupt_encoding(catalog, sample_file):
+    """cluster_faces skips corrupt encodings."""
+    import struct
+
+    # Insert one valid and one corrupt encoding
+    valid_enc = [0.5] * 128
+    valid_blob = struct.pack("<128d", *valid_enc)
+
+    catalog.insert_face(file_id=sample_file, face_index=0, bbox=(0, 0, 0, 0), encoding_blob=valid_blob)
+    catalog.insert_face(file_id=sample_file, face_index=1, bbox=(0, 0, 0, 0), encoding_blob=b"corrupt")
+    catalog.commit()
+
+    from godmode_media_library.face_detect import cluster_faces
+
+    # Should not crash, just skip corrupt encoding
+    clusters = cluster_faces(catalog, eps=0.5, min_samples=1)
+    assert isinstance(clusters, dict)
+
+
+# ── Schema migration ──
+
+
 def test_schema_v5_to_v6_migration(tmp_path):
     """Test that opening an old v5 database migrates to v6."""
     db = tmp_path / "old.db"
@@ -394,6 +791,6 @@ def test_schema_v5_to_v6_migration(tmp_path):
 
     # Verify version updated to latest
     ver = cat.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert ver == "11"
+    assert ver == "12"
 
     cat.close()

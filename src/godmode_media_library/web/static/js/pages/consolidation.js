@@ -232,7 +232,7 @@ function renderPhaseA(el, data, activeJob) {
             <span>${t("consolidation.media_only")}</span>
           </label>
           <span class="wiz-hint">${t("consolidation.all_files_note")}</span>
-          <label class="wiz-toggle" style="margin-top:8px">
+          <label class="wiz-toggle wiz-mt-sm">
             <input type="checkbox" id="wiz-dry-run">
             <span>${t("consolidation.dry_run")}</span>
           </label>
@@ -516,7 +516,7 @@ async function renderPhaseC(el, data, activeJob) {
         }).join("")}
       </div>
 
-      <div class="wiz-progress-item" style="margin-top:24px">
+      <div class="wiz-progress-item wiz-mt-lg">
         <div class="wiz-progress-item-header">
           <span>${t("consolidation.org_progress")}</span>
           <span>${orgPct.toFixed(0)}%</span>
@@ -653,7 +653,7 @@ function renderPhaseF(el, data, activeJob) {
             <span>${syncPct.toFixed(0)}%</span>
           </div>
           <div class="wiz-progress-track"><div class="wiz-progress-fill" style="width:${syncPct.toFixed(1)}%"></div></div>
-          <div class="wiz-metrics-grid" style="margin-top:12px">
+          <div class="wiz-metrics-grid wiz-mt-sm">
             <div class="wiz-metric">
               <span class="wiz-metric-value">${(sync.new_files || 0).toLocaleString("cs-CZ")}</span>
               <span class="wiz-metric-label">${t("consolidation.sync_new_files")}</span>

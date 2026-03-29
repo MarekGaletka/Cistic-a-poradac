@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import logging
 import os
 import sqlite3
@@ -14,7 +13,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -237,6 +236,10 @@ CREATE TABLE IF NOT EXISTS consolidation_file_state (
 );
 CREATE INDEX IF NOT EXISTS idx_cfs_job_step ON consolidation_file_state(job_id, step_name);
 CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dup_group_file ON duplicates(group_id, file_id);
+CREATE INDEX IF NOT EXISTS idx_labels_people ON labels(people);
+CREATE INDEX IF NOT EXISTS idx_labels_place ON labels(place);
 """
 
 
@@ -307,7 +310,12 @@ class Catalog:
             lock_path = self._db_path.with_suffix(".lock")
             self._lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
             try:
+                import fcntl
+
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except ImportError:
+                # fcntl not available on Windows — skip file locking
+                pass
             except OSError:
                 os.close(self._lock_fd)
                 self._lock_fd = None
@@ -633,11 +641,34 @@ class Catalog:
                 logger.exception("Migration v11 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v11")
                 raise
+        if from_version < 12:
+            logger.info("Migrating catalog schema v%d -> v12: adding unique dup index + label indexes", from_version)
+            self._conn.execute("SAVEPOINT migrate_v12")
+            try:
+                # Remove duplicate rows (keep MIN(rowid) per group_id+file_id)
+                self._conn.execute("""
+                    DELETE FROM duplicates WHERE rowid NOT IN (
+                        SELECT MIN(rowid) FROM duplicates GROUP BY group_id, file_id
+                    )
+                """)
+                self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_dup_group_file ON duplicates(group_id, file_id)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_labels_people ON labels(people)")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_labels_place ON labels(place)")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v12")
+            except sqlite3.Error:
+                logger.exception("Migration v12 failed")
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v12")
+                raise
 
     def _release_lock(self) -> None:
         """Release the advisory file lock if held."""
         if self._lock_fd is not None:
-            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            try:
+                import fcntl
+
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            except ImportError:
+                pass  # fcntl not available on Windows
             os.close(self._lock_fd)
             self._lock_fd = None
 
@@ -781,9 +812,10 @@ class Catalog:
         Uses a prefix query (LIKE 'root%') so it works for any subtree.
         """
         prefix = root.rstrip("/") + "/"
+        escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         cur = self.conn.execute(
-            "SELECT path, mtime, size FROM files WHERE path LIKE ? || '%'",
-            (prefix,),
+            "SELECT path, mtime, size FROM files WHERE path LIKE ? || '%' ESCAPE '\\'",
+            (escaped_prefix,),
         )
         return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
 
@@ -1120,8 +1152,8 @@ class Catalog:
         password_hash = None
         if password:
             salt = _os.urandom(16)
-            dk = _hl.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
-            password_hash = salt.hex() + ":" + dk.hex()
+            dk = _hl.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 600_000)
+            password_hash = salt.hex() + ":600000:" + dk.hex()
 
         expires_at = None
         if expires_hours is not None and expires_hours > 0:
@@ -1698,15 +1730,17 @@ class Catalog:
             conditions.append("size <= ?")
             params.append(max_size)
         if path_contains is not None:
-            conditions.append("path LIKE ?")
-            params.append(f"%{path_contains}%")
+            escaped_contains = path_contains.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("path LIKE ? ESCAPE '\\'")
+            params.append(f"%{escaped_contains}%")
         if has_sha256 is True:
             conditions.append("sha256 IS NOT NULL")
         elif has_sha256 is False:
             conditions.append("sha256 IS NULL")
         if camera is not None:
-            conditions.append("(camera_make LIKE ? OR camera_model LIKE ?)")
-            params.extend([f"%{camera}%", f"%{camera}%"])
+            escaped_camera = camera.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("(camera_make LIKE ? ESCAPE '\\' OR camera_model LIKE ? ESCAPE '\\')")
+            params.extend([f"%{escaped_camera}%", f"%{escaped_camera}%"])
         if min_duration is not None:
             conditions.append("duration_seconds >= ?")
             params.append(min_duration)
@@ -1943,8 +1977,8 @@ def default_catalog_path() -> Path:
 
 
 def _date_to_timestamp(date_str: str) -> float:
-    """Convert YYYY-MM-DD to Unix timestamp."""
+    """Convert YYYY-MM-DD to Unix timestamp (UTC)."""
     import datetime as dt
 
-    d = dt.datetime.strptime(date_str, "%Y-%m-%d")
+    d = dt.datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc)
     return d.timestamp()

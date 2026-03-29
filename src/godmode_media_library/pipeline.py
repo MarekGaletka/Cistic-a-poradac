@@ -128,7 +128,7 @@ def run_pipeline(
                     result.merge_plans_created += 1
 
             # ── Checkpoint ────────────────────────────────────────────
-            if config.interactive and confirm_fn and merge_plans:
+            if not config.auto_merge and config.interactive and confirm_fn and merge_plans:
                 summary = (
                     f"Found {result.duplicate_groups} duplicate groups, "
                     f"{result.merge_plans_created} need metadata merge "
@@ -140,7 +140,7 @@ def run_pipeline(
                     return result
 
             # ── Step 4: Execute merges ────────────────────────────────
-            if "merge" not in config.skip_steps:
+            if "merge" not in config.skip_steps and (config.auto_merge or merge_plans):
                 logger.info("Pipeline step 4/4: Executing metadata merges...")
                 for plan in merge_plans:
                     merge_result = execute_merge(plan, bin_path=config.exiftool_bin, dry_run=config.dry_run)

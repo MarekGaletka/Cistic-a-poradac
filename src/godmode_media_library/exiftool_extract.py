@@ -96,7 +96,10 @@ def extract_all_metadata(
             "--JpgFromRaw",
             "--OtherImage",
         ]
-        cmd.extend(str(p) for p in chunk)
+        # Prefix paths starting with '-' so ExifTool doesn't treat them as flags.
+        for p in chunk:
+            s = str(p)
+            cmd.append(f"./{s}" if s.startswith("-") else s)
 
         try:
             proc = subprocess.run(

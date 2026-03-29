@@ -551,3 +551,825 @@ def test_catalog_vacuum(tmp_path):
     db_path = tmp_path / "test.db"
     with Catalog(db_path) as cat:
         cat.vacuum()
+
+
+# ===========================================================================
+# _sanitize_path unit tests
+# ===========================================================================
+
+
+class TestSanitizePath:
+    def test_null_byte_rejected(self, client):
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": "/tmp/foo\x00bar.jpg", "new_name": "ok.jpg"}]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["skipped"] == 1
+        assert "null bytes" in data["errors"][0].lower() or data["skipped"] == 1
+
+    def test_excessively_long_path_rejected(self, client):
+        long_path = "/media/" + "a" * 5000 + ".jpg"
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": long_path, "new_name": "ok.jpg"}]},
+        )
+        data = resp.json()
+        assert data["skipped"] == 1
+
+    def test_dot_dot_only_path_rejected(self, client):
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": "..", "new_name": "ok.jpg"}]},
+        )
+        data = resp.json()
+        assert data["skipped"] == 1
+
+
+# ===========================================================================
+# Rename — path traversal and validation
+# ===========================================================================
+
+
+class TestRenameValidation:
+    def test_rename_traversal_in_new_name(self, client):
+        """new_name with path separators or '..' should be rejected."""
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": "/some/file.jpg", "new_name": "../evil.jpg"}]},
+        )
+        data = resp.json()
+        assert data["renamed"] == 0
+        assert data["skipped"] == 1
+        assert "traversal" in data["errors"][0].lower() or "separator" in data["errors"][0].lower()
+
+    def test_rename_slash_in_new_name(self, client):
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": "/some/file.jpg", "new_name": "sub/evil.jpg"}]},
+        )
+        data = resp.json()
+        assert data["renamed"] == 0
+        assert data["skipped"] >= 1
+
+    def test_rename_backslash_in_new_name(self, client):
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": "/some/file.jpg", "new_name": "sub\\evil.jpg"}]},
+        )
+        data = resp.json()
+        assert data["renamed"] == 0
+        assert data["skipped"] >= 1
+
+    def test_rename_empty_new_name(self, client):
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": "/some/file.jpg", "new_name": ""}]},
+        )
+        data = resp.json()
+        assert data["renamed"] == 0
+        assert data["skipped"] >= 1
+
+    def test_rename_file_not_found(self, client):
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": "/nonexistent/file.jpg", "new_name": "ok.jpg"}]},
+        )
+        data = resp.json()
+        assert data["renamed"] == 0
+        assert data["skipped"] == 1
+
+    def test_rename_success(self, client, catalog_with_files):
+        """Rename a real file."""
+        files_resp = client.get("/api/files")
+        first = files_resp.json()["files"][0]
+        path = first["path"]
+        resp = client.post(
+            "/api/files/rename",
+            json={"renames": [{"path": path, "new_name": "renamed_photo.jpg"}]},
+        )
+        data = resp.json()
+        assert data["renamed"] == 1
+        assert data["skipped"] == 0
+
+
+# ===========================================================================
+# Move — validation
+# ===========================================================================
+
+
+class TestMoveValidation:
+    def test_move_to_system_dir_blocked(self, client):
+        resp = client.post(
+            "/api/files/move",
+            json={"paths": ["/some/file.jpg"], "destination": "/etc/evil"},
+        )
+        assert resp.status_code == 403
+
+    def test_move_file_not_found(self, client, catalog_with_files):
+        """Move with a valid destination but nonexistent source file."""
+        cat = Catalog(catalog_with_files)
+        cat.open()
+        paths = cat.all_paths()
+        cat.close()
+        first_path = next(iter(paths))
+        root = first_path.rsplit("/", 1)[0]
+        resp = client.post(
+            "/api/files/move",
+            json={"paths": ["/nonexistent/file.jpg"], "destination": root},
+        )
+        data = resp.json()
+        assert data["moved"] == 0
+        assert data["skipped"] >= 1
+
+
+# ===========================================================================
+# Quarantine — validation
+# ===========================================================================
+
+
+class TestQuarantineValidation:
+    def test_quarantine_invalid_path(self, client):
+        resp = client.post(
+            "/api/files/quarantine",
+            json={"paths": ["/nonexistent/file\x00.jpg"]},
+        )
+        data = resp.json()
+        assert data["moved"] == 0
+        assert data["skipped"] >= 1
+
+    def test_quarantine_file_not_found(self, client):
+        resp = client.post(
+            "/api/files/quarantine",
+            json={"paths": ["/nonexistent/file.jpg"]},
+        )
+        data = resp.json()
+        assert data["moved"] == 0
+        assert data["skipped"] >= 1
+
+    def test_quarantine_system_root_blocked(self, client):
+        resp = client.post(
+            "/api/files/quarantine",
+            json={"paths": ["/some/file.jpg"], "quarantine_root": "/etc"},
+        )
+        assert resp.status_code == 403
+
+
+# ===========================================================================
+# Favorites
+# ===========================================================================
+
+
+class TestFavorites:
+    def test_list_favorites_empty(self, client):
+        resp = client.get("/api/files/favorites")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 0
+        assert data["favorites"] == []
+
+    def test_toggle_favorite(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        # Toggle on
+        resp = client.post("/api/files/favorite", json={"path": path})
+        assert resp.status_code == 200
+        assert resp.json()["is_favorite"] is True
+        # Verify in list
+        resp = client.get("/api/files/favorites")
+        assert path in resp.json()["favorites"]
+        # Toggle off
+        resp = client.post("/api/files/favorite", json={"path": path})
+        assert resp.json()["is_favorite"] is False
+
+
+# ===========================================================================
+# Notes
+# ===========================================================================
+
+
+class TestNotes:
+    def test_get_note_empty(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        # Strip leading slash for URL path
+        url_path = path.lstrip("/")
+        resp = client.get(f"/api/files/{url_path}/note")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["note"] is None
+
+    def test_set_and_get_note(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        url_path = path.lstrip("/")
+        # Set note
+        resp = client.put(f"/api/files/{url_path}/note", json={"note": "Test note"})
+        assert resp.status_code == 200
+        assert resp.json()["saved"] is True
+        # Get note
+        resp = client.get(f"/api/files/{url_path}/note")
+        assert resp.json()["note"] == "Test note"
+
+    def test_delete_note(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        url_path = path.lstrip("/")
+        # Set then delete
+        client.put(f"/api/files/{url_path}/note", json={"note": "To delete"})
+        resp = client.request("DELETE", f"/api/files/{url_path}/note")
+        assert resp.status_code == 200
+
+
+# ===========================================================================
+# Ratings
+# ===========================================================================
+
+
+class TestRatings:
+    def test_set_rating(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        url_path = path.lstrip("/")
+        resp = client.put(f"/api/files/{url_path}/rating", json={"rating": 4})
+        assert resp.status_code == 200
+        assert resp.json()["rating"] == 4
+
+    def test_set_rating_invalid_too_high(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        url_path = path.lstrip("/")
+        resp = client.put(f"/api/files/{url_path}/rating", json={"rating": 6})
+        assert resp.status_code == 400
+
+    def test_set_rating_invalid_too_low(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        url_path = path.lstrip("/")
+        resp = client.put(f"/api/files/{url_path}/rating", json={"rating": 0})
+        assert resp.status_code == 400
+
+    def test_delete_rating(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        url_path = path.lstrip("/")
+        client.put(f"/api/files/{url_path}/rating", json={"rating": 3})
+        resp = client.request("DELETE", f"/api/files/{url_path}/rating")
+        assert resp.status_code == 200
+
+
+# ===========================================================================
+# Tags
+# ===========================================================================
+
+
+class TestTags:
+    def test_list_tags_empty(self, client):
+        resp = client.get("/api/tags")
+        assert resp.status_code == 200
+        assert "tags" in resp.json()
+
+    def test_create_and_list_tag(self, client):
+        resp = client.post("/api/tags", json={"name": "TestTag", "color": "#ff0000"})
+        assert resp.status_code == 200
+        tag = resp.json()
+        assert tag["name"] == "TestTag"
+        # List should include it
+        resp = client.get("/api/tags")
+        names = [t["name"] for t in resp.json()["tags"]]
+        assert "TestTag" in names
+
+    def test_create_duplicate_tag(self, client):
+        client.post("/api/tags", json={"name": "UniqueTag"})
+        resp = client.post("/api/tags", json={"name": "UniqueTag"})
+        assert resp.status_code == 409
+
+    def test_delete_tag(self, client):
+        resp = client.post("/api/tags", json={"name": "ToDelete"})
+        tag_id = resp.json()["id"]
+        resp = client.request("DELETE", f"/api/tags/{tag_id}")
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is True
+
+    def test_tag_files(self, client):
+        # Create a tag
+        tag_resp = client.post("/api/tags", json={"name": "FileTag"})
+        tag_id = tag_resp.json()["id"]
+        # Get a file path
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        # Tag the file
+        resp = client.post("/api/files/tag", json={"paths": [path], "tag_id": tag_id})
+        assert resp.status_code == 200
+        assert resp.json()["tagged"] >= 1
+
+    def test_untag_files(self, client):
+        tag_resp = client.post("/api/tags", json={"name": "UntagMe"})
+        tag_id = tag_resp.json()["id"]
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        client.post("/api/files/tag", json={"paths": [path], "tag_id": tag_id})
+        resp = client.request(
+            "DELETE", "/api/files/tag", json={"paths": [path], "tag_id": tag_id}
+        )
+        assert resp.status_code == 200
+
+
+# ===========================================================================
+# Browse filesystem
+# ===========================================================================
+
+
+class TestBrowse:
+    def test_browse_home(self, client):
+        resp = client.get("/api/browse")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "current" in data
+        assert "entries" in data
+        assert "bookmarks" in data
+
+    def test_browse_blocked_path(self, client):
+        resp = client.get("/api/browse?path=/etc")
+        assert resp.status_code == 403
+
+    def test_browse_nonexistent_path(self, client):
+        resp = client.get("/api/browse?path=/nonexistent_path_xyz")
+        assert resp.status_code == 404
+
+
+# ===========================================================================
+# Roots management
+# ===========================================================================
+
+
+class TestRootsManagement:
+    def test_save_and_get_roots(self, client, tmp_path):
+        root_dir = str(tmp_path)
+        resp = client.post("/api/roots", json={"roots": [root_dir]})
+        assert resp.status_code == 200
+        assert resp.json()["saved"] is True
+        # Verify
+        resp = client.get("/api/roots")
+        assert root_dir in resp.json()["roots"]
+
+    def test_remove_root(self, client, tmp_path):
+        root_dir = str(tmp_path)
+        client.post("/api/roots", json={"roots": [root_dir]})
+        resp = client.request("DELETE", "/api/roots", json={"path": root_dir})
+        assert resp.status_code == 200
+        assert resp.json()["removed"] is True
+
+    def test_save_roots_filters_nonexistent(self, client):
+        resp = client.post(
+            "/api/roots", json={"roots": ["/nonexistent_path_xyz_123"]}
+        )
+        assert resp.status_code == 200
+        # Nonexistent path should be filtered out
+        assert len(resp.json()["roots"]) == 0
+
+
+# ===========================================================================
+# Sources
+# ===========================================================================
+
+
+class TestSources:
+    def test_get_sources(self, client):
+        resp = client.get("/api/sources")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "sources" in data
+        assert "thumbnail_cache" in data
+
+
+# ===========================================================================
+# Memories
+# ===========================================================================
+
+
+class TestMemories:
+    def test_get_memories(self, client):
+        resp = client.get("/api/memories")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "date" in data
+        assert "memories" in data
+        assert isinstance(data["memories"], list)
+
+
+# ===========================================================================
+# System info
+# ===========================================================================
+
+
+class TestSystemInfo:
+    def test_get_system_info(self, client):
+        resp = client.get("/api/system-info")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "python_version" in data
+        assert "platform" in data
+        assert "catalog_path" in data
+        assert "total_files" in data
+
+
+# ===========================================================================
+# Duplicate group detail
+# ===========================================================================
+
+
+class TestDuplicateGroup:
+    def test_get_duplicate_group_not_found(self, client):
+        resp = client.get("/api/duplicates/nonexistent-group-id")
+        assert resp.status_code == 404
+
+    def test_get_duplicate_diff_not_found(self, client):
+        resp = client.get("/api/duplicates/nonexistent-group-id/diff")
+        assert resp.status_code == 404
+
+
+# ===========================================================================
+# File detail enrichment
+# ===========================================================================
+
+
+class TestFileDetail:
+    def test_file_detail_has_metadata(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        resp = client.get(f"/api/files{path}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "file" in data
+        assert "metadata" in data
+        assert "tags" in data
+        assert "rating" in data
+
+
+# ===========================================================================
+# Consolidation status
+# ===========================================================================
+
+
+class TestConsolidationStatusExtended:
+    def test_consolidation_status_has_keys(self, client):
+        resp = client.get("/api/consolidation/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+
+
+# ===========================================================================
+# Files filters (sorting, extended params)
+# ===========================================================================
+
+
+class TestFilesFilters:
+    def test_files_sort_by_size(self, client):
+        resp = client.get("/api/files?sort=size&order=desc")
+        assert resp.status_code == 200
+        files = resp.json()["files"]
+        if len(files) >= 2:
+            assert files[0]["size"] >= files[1]["size"]
+
+    def test_files_path_contains(self, client):
+        resp = client.get("/api/files?path_contains=photo")
+        assert resp.status_code == 200
+        for f in resp.json()["files"]:
+            assert "photo" in f["path"].lower()
+
+    def test_files_date_range(self, client):
+        resp = client.get("/api/files?date_from=2000-01-01&date_to=2099-12-31")
+        assert resp.status_code == 200
+
+    def test_files_favorites_only(self, client):
+        resp = client.get("/api/files?favorites_only=true")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0  # no favorites set
+
+    def test_files_has_notes(self, client):
+        resp = client.get("/api/files?has_notes=true")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+    def test_files_min_rating(self, client):
+        resp = client.get("/api/files?min_rating=3")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+
+# ===========================================================================
+# Restore files
+# ===========================================================================
+
+
+class TestRestoreFiles:
+    def test_restore_not_in_quarantine(self, client):
+        resp = client.post(
+            "/api/files/restore",
+            json={"paths": ["/nonexistent/file.jpg"]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["restored"] == 0
+        assert len(data["errors"]) >= 1
+
+    def test_restore_invalid_path(self, client):
+        resp = client.post(
+            "/api/files/restore",
+            json={"paths": ["/some/path\x00evil.jpg"]},
+        )
+        data = resp.json()
+        assert data["restored"] == 0
+
+
+# ===========================================================================
+# Scenario endpoints (mocked)
+# ===========================================================================
+
+
+class TestScenarioEndpoints:
+    def test_list_scenarios(self, client):
+        resp = client.get("/api/scenarios")
+        assert resp.status_code == 200
+        assert "scenarios" in resp.json()
+
+    def test_get_scenario_templates(self, client):
+        resp = client.get("/api/scenarios/templates")
+        assert resp.status_code == 200
+        assert "templates" in resp.json()
+
+    def test_get_step_types(self, client):
+        resp = client.get("/api/scenarios/step-types")
+        assert resp.status_code == 200
+        assert "step_types" in resp.json()
+
+    def test_get_scenario_not_found(self, client):
+        resp = client.get("/api/scenarios/nonexistent-id")
+        assert resp.status_code == 404
+
+    def test_create_scenario(self, client):
+        resp = client.post(
+            "/api/scenarios",
+            json={"name": "Test Scenario", "description": "A test"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "id" in data
+        assert data["name"] == "Test Scenario"
+
+    def test_delete_scenario_not_found(self, client):
+        resp = client.request("DELETE", "/api/scenarios/nonexistent-id")
+        assert resp.status_code == 404
+
+    def test_update_scenario_not_found(self, client):
+        resp = client.put(
+            "/api/scenarios/nonexistent-id",
+            json={"name": "Updated"},
+        )
+        assert resp.status_code == 404
+
+    def test_duplicate_scenario_not_found(self, client):
+        resp = client.post("/api/scenarios/nonexistent-id/duplicate")
+        assert resp.status_code == 404
+
+    def test_run_scenario_not_found(self, client):
+        resp = client.post("/api/scenarios/nonexistent-id/run")
+        assert resp.status_code == 404
+
+
+# ===========================================================================
+# Recovery endpoints
+# ===========================================================================
+
+
+class TestRecoveryEndpoints:
+    def test_recovery_apps(self, client):
+        resp = client.get("/api/recovery/apps")
+        assert resp.status_code == 200
+        assert "apps" in resp.json()
+
+    def test_recovery_quarantine_list(self, client):
+        resp = client.get("/api/recovery/quarantine")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "entries" in data
+        assert "total" in data
+
+    def test_recovery_deep_scan(self, client):
+        resp = client.post("/api/recovery/deep-scan")
+        assert resp.status_code == 200
+        assert "task_id" in resp.json()
+
+    def test_recovery_integrity_check(self, client):
+        resp = client.post("/api/recovery/integrity-check")
+        assert resp.status_code == 200
+        assert "task_id" in resp.json()
+
+    def test_recovery_photorec_status(self, client):
+        resp = client.get("/api/recovery/photorec/status")
+        assert resp.status_code == 200
+        assert "available" in resp.json()
+
+    def test_recovery_disks(self, client):
+        resp = client.get("/api/recovery/disks")
+        assert resp.status_code == 200
+        assert "disks" in resp.json()
+
+    def test_recovery_quarantine_restore_invalid(self, client):
+        resp = client.post(
+            "/api/recovery/quarantine/restore",
+            json={"paths": ["/nonexistent/file.jpg"]},
+        )
+        assert resp.status_code == 200
+
+    def test_recovery_quarantine_delete_invalid(self, client):
+        resp = client.post(
+            "/api/recovery/quarantine/delete",
+            json={"paths": ["/nonexistent/file.jpg"]},
+        )
+        assert resp.status_code == 200
+
+    def test_recovery_quarantine_restore_blocked_dest(self, client):
+        resp = client.post(
+            "/api/recovery/quarantine/restore",
+            json={"paths": ["/some/file.jpg"], "restore_to": "/dev"},
+        )
+        assert resp.status_code == 403
+
+    def test_recovery_app_mine(self, client):
+        resp = client.post("/api/recovery/app-mine", json={})
+        assert resp.status_code == 200
+        assert "task_id" in resp.json()
+
+
+# ===========================================================================
+# Shares
+# ===========================================================================
+
+
+class TestShares:
+    def test_list_shares_empty(self, client):
+        resp = client.get("/api/shares")
+        assert resp.status_code == 200
+        assert "shares" in resp.json()
+
+    def test_create_share_file_not_found(self, client):
+        resp = client.post(
+            "/api/shares",
+            json={"path": "/nonexistent/file.jpg"},
+        )
+        assert resp.status_code == 404
+
+    def test_shares_for_file(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        resp = client.get(f"/api/shares/file?path={path}")
+        assert resp.status_code == 200
+        assert "shares" in resp.json()
+
+
+# ===========================================================================
+# Backfill metadata
+# ===========================================================================
+
+
+class TestBackfillMetadata:
+    def test_backfill_metadata(self, client):
+        resp = client.post("/api/backfill-metadata")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "fs_dates_filled" in data
+
+
+# ===========================================================================
+# Stream endpoint
+# ===========================================================================
+
+
+class TestStreamEndpoint:
+    def test_stream_not_in_catalog(self, client):
+        resp = client.get("/api/stream/nonexistent/path.jpg")
+        assert resp.status_code == 404
+
+    def test_stream_file_in_catalog(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        url_path = path.lstrip("/")
+        resp = client.get(f"/api/stream/{url_path}")
+        assert resp.status_code == 200
+
+
+# ===========================================================================
+# Dedup rules config
+# ===========================================================================
+
+
+class TestDedupRulesConfig:
+    def test_get_dedup_rules(self, client):
+        resp = client.get("/api/config/dedup-rules")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "strategy" in data
+
+    def test_put_dedup_rules(self, client, tmp_path):
+        with patch(
+            "godmode_media_library.config._global_config_path",
+            return_value=tmp_path / "config.toml",
+        ):
+            resp = client.put(
+                "/api/config/dedup-rules",
+                json={
+                    "strategy": "richness",
+                    "similarity_threshold": 15,
+                    "auto_resolve": False,
+                    "merge_metadata": True,
+                    "quarantine_path": "",
+                    "exclude_extensions": [],
+                    "exclude_paths": [],
+                    "min_file_size_kb": 0,
+                },
+            )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "ok"
+
+
+# ===========================================================================
+# Reorganize sources
+# ===========================================================================
+
+
+class TestReorganize:
+    def test_reorganize_sources(self, client):
+        resp = client.get("/api/reorganize/sources")
+        assert resp.status_code == 200
+        assert "sources" in resp.json()
+
+    def test_reorganize_execute_no_plan(self, client):
+        resp = client.post(
+            "/api/reorganize/execute",
+            json={"plan_id": "nonexistent-plan-id"},
+        )
+        assert resp.status_code == 404
+
+
+# ===========================================================================
+# Backup endpoints
+# ===========================================================================
+
+
+class TestBackupEndpoints:
+    def test_backup_stats(self, client):
+        resp = client.get("/api/backup/stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_files" in data
+        assert "coverage_pct" in data
+
+    def test_backup_targets(self, client):
+        resp = client.get("/api/backup/targets")
+        assert resp.status_code == 200
+        assert "targets" in resp.json()
+
+    def test_backup_plan(self, client):
+        resp = client.post("/api/backup/plan")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_files" in data
+
+    def test_backup_manifest(self, client):
+        resp = client.get("/api/backup/manifest")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "entries" in data
+        assert "total" in data
+
+    def test_backup_execute(self, client):
+        resp = client.post("/api/backup/execute", json={"dry_run": True})
+        assert resp.status_code == 200
+        assert "task_id" in resp.json()
+
+    def test_backup_verify(self, client):
+        resp = client.post("/api/backup/verify")
+        assert resp.status_code == 200
+        assert "task_id" in resp.json()
+
+
+# ===========================================================================
+# Tag suggestions
+# ===========================================================================
+
+
+class TestTagSuggestions:
+    def test_suggest_tags_file_not_found(self, client):
+        resp = client.get("/api/tags/suggest?path=/nonexistent/file.jpg")
+        assert resp.status_code == 404
+
+    def test_suggest_tags_for_file(self, client):
+        files_resp = client.get("/api/files")
+        path = files_resp.json()["files"][0]["path"]
+        resp = client.get(f"/api/tags/suggest?path={path}")
+        assert resp.status_code == 200
+        assert "suggestions" in resp.json()

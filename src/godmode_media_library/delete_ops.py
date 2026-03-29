@@ -46,7 +46,7 @@ def _inode_key(path: Path) -> tuple[int, int] | None:
 
 def _inode_id(key: tuple[int, int]) -> str:
     raw = f"{key[0]}:{key[1]}".encode()
-    return hashlib.sha1(raw).hexdigest()[:16]
+    return hashlib.sha256(raw).hexdigest()[:24]
 
 
 def _quarantine_path(quarantine_root: Path, original_path: Path) -> Path:
@@ -360,7 +360,7 @@ def apply_delete_plan(
     skipped = 0
     manual_review = 0
     log_rows: list[tuple[object, ...]] = []
-    _primary_moved_inodes: set[str] = set()  # Track inodes with successful primary moves
+    _primary_moved_inodes: dict[str, int] = {}  # Track inodes with successful primary moves (inode_id -> count)
 
     for row in rows_sorted:
         action = row.get("action", "")
@@ -396,7 +396,7 @@ def apply_delete_plan(
                     skipped += 1
                     log_rows.append((inode_id, str(path), action, "skipped", "", "move_failed"))
                     continue
-            _primary_moved_inodes.add(inode_id)
+            _primary_moved_inodes[inode_id] = _primary_moved_inodes.get(inode_id, 0) + 1
             moved_primary += 1
             log_rows.append((inode_id, str(path), action, "applied", str(dest), "ok"))
             continue
@@ -408,12 +408,15 @@ def apply_delete_plan(
                 log_rows.append((inode_id, str(path), action, "skipped", "", "primary_move_not_confirmed"))
                 continue
             # Hardlink safety: verify the inode still has the expected nlink
-            # before unlinking, to prevent accidental data loss
+            # before unlinking, to prevent accidental data loss.
+            # After move_primary, nlink may decrease by 1 per cross-FS move
+            # (same-FS rename preserves nlink). Account for moved primaries.
             try:
                 st = path.stat()
                 current_nlink = int(st.st_nlink)
                 expected = int(row.get("nlink_expected", "0"))
-                if expected > 0 and current_nlink != expected:
+                moved_count = _primary_moved_inodes.get(inode_id, 0)
+                if expected > 0 and not (expected - moved_count <= current_nlink <= expected):
                     skipped += 1
                     log_rows.append(
                         (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -207,7 +208,7 @@ def _collect_data(cat: Any) -> dict:
         from .cloud import list_remotes
 
         remotes = list_remotes()
-        cloud_data = remotes.get("remotes", [])
+        cloud_data = remotes if isinstance(remotes, list) else []
     except (ImportError, OSError) as exc:
         logger.debug("Cloud remotes unavailable: %s", exc)
     data["cloud"] = cloud_data
@@ -399,7 +400,9 @@ def _render_html(data: dict) -> str:
     # Overview section
     sources_html = ""
     for src in overview["sources"]:
-        sources_html += f"<tr><td>{src['path']}</td><td>{src['file_count']:,}</td><td>{src.get('last_scan', '-')}</td></tr>"
+        path_esc = html.escape(str(src['path']))
+        scan_esc = html.escape(str(src.get('last_scan', '-')))
+        sources_html += f"<tr><td>{path_esc}</td><td>{src['file_count']:,}</td><td>{scan_esc}</td></tr>"
 
     date_range = ""
     d_min, d_max = overview["date_range_original"]
@@ -488,7 +491,7 @@ def _render_html(data: dict) -> str:
     if meta["top_cameras"]:
         max_cam = meta["top_cameras"][0][1]
         for cam, cnt in meta["top_cameras"]:
-            cameras_html += _bar_html(cam, cnt, max_cam, "#8b5cf6")
+            cameras_html += _bar_html(html.escape(str(cam)), cnt, max_cam, "#8b5cf6")
 
     meta_section = f"""
     <section class="report-section">
@@ -598,7 +601,7 @@ def _render_html(data: dict) -> str:
         for remote in cloud:
             name = remote.get("name", remote) if isinstance(remote, dict) else str(remote)
             rtype = remote.get("type", "-") if isinstance(remote, dict) else "-"
-            rows += f"<tr><td>{name}</td><td>{rtype}</td></tr>"
+            rows += f"<tr><td>{html.escape(str(name))}</td><td>{html.escape(str(rtype))}</td></tr>"
         cloud_section = f"""
         <section class="report-section">
           <h2>Cloudove zdroje</h2>
@@ -612,13 +615,13 @@ def _render_html(data: dict) -> str:
     # Recommendations section
     recs_html = ""
     for rec in recs:
-        severity_class = f"rec-{rec['severity']}"
+        severity_class = f"rec-{html.escape(rec['severity'])}"
         recs_html += f"""
         <div class="rec-card {severity_class}">
           <span class="rec-icon">{rec["icon"]}</span>
           <div class="rec-text">
-            <strong>{rec["text"]}</strong>
-            <span class="rec-detail">{rec["detail"]}</span>
+            <strong>{html.escape(str(rec["text"]))}</strong>
+            <span class="rec-detail">{html.escape(str(rec["detail"]))}</span>
           </div>
         </div>
         """

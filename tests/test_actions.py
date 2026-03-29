@@ -244,15 +244,17 @@ def _create_promote_manifest_tsv(path: Path, rows: list[tuple[str, ...]]) -> Non
 
 
 def test_promote_from_manifest_swaps(tmp_path: Path):
-    """Promote swaps quarantine copy into primary location."""
+    """Promote swaps quarantine copy into primary location when content differs (richer copy)."""
     primary = tmp_path / "primary" / "photo.jpg"
     quarantine = tmp_path / "quarantine" / "photo.jpg"
     primary.parent.mkdir(parents=True)
     quarantine.parent.mkdir(parents=True)
 
-    content = b"IDENTICAL_CONTENT" * 50
-    primary.write_bytes(content)
-    quarantine.write_bytes(content)
+    primary_content = b"PRIMARY_CONTENT" * 50
+    quarantine_content = b"RICHER_QUARANTINE_CONTENT" * 50
+    primary.write_bytes(primary_content)
+    quarantine.write_bytes(quarantine_content)
+    content = quarantine_content  # for size assertion
 
     manifest_path = tmp_path / "manifest.tsv"
     _create_promote_manifest_tsv(
@@ -303,15 +305,16 @@ def test_promote_from_manifest_skips_missing(tmp_path: Path):
     assert skipped == 1
 
 
-def test_promote_from_manifest_skips_hash_mismatch(tmp_path: Path):
-    """Promote skips when quarantine and primary have different content."""
+def test_promote_from_manifest_skips_identical_hash(tmp_path: Path):
+    """Promote skips when quarantine and primary have identical content (no promotion needed)."""
     primary = tmp_path / "primary" / "photo.jpg"
     quarantine = tmp_path / "quarantine" / "photo.jpg"
     primary.parent.mkdir(parents=True)
     quarantine.parent.mkdir(parents=True)
 
-    primary.write_bytes(b"PRIMARY_CONTENT" * 50)
-    quarantine.write_bytes(b"QUARANTINE_CONTENT" * 50)
+    content = b"IDENTICAL_CONTENT" * 50
+    primary.write_bytes(content)
+    quarantine.write_bytes(content)
 
     manifest_path = tmp_path / "manifest.tsv"
     _create_promote_manifest_tsv(
@@ -340,9 +343,9 @@ def test_promote_from_manifest_dry_run(tmp_path: Path):
     primary.parent.mkdir(parents=True)
     quarantine.parent.mkdir(parents=True)
 
-    content = b"SAME_CONTENT" * 50
-    primary.write_bytes(content)
-    quarantine.write_bytes(content)
+    primary.write_bytes(b"PRIMARY_CONTENT" * 50)
+    quarantine.write_bytes(b"RICHER_QUARANTINE" * 50)
+    content = b"RICHER_QUARANTINE" * 50
 
     manifest_path = tmp_path / "manifest.tsv"
     _create_promote_manifest_tsv(

@@ -328,3 +328,197 @@ class TestScoreCatalog:
 
         results = score_catalog(db_path, min_score=90)
         assert len(results) == 0
+
+
+# ── Additional coverage tests ──────────────────────────────────────
+
+class TestScoreResolutionEdgeCases:
+    """Cover resolution thresholds at 4MP, 2MP, 0.5MP boundaries."""
+
+    def test_4mp(self):
+        # 2000*2000 = 4 MP
+        assert _score_resolution(2000, 2000, "jpg") == 0.55
+
+    def test_2mp(self):
+        # ~2 MP
+        assert _score_resolution(1600, 1250, "jpg") == 0.4
+
+    def test_half_mp(self):
+        # 1000*500 = 0.5 MP
+        assert _score_resolution(1000, 500, "jpg") == 0.25
+
+    def test_8mp(self):
+        # 4000*2000 = 8 MP exactly
+        assert _score_resolution(4000, 2000, "jpg") == 0.7
+
+
+class TestScoreFileQualityEdgeCases:
+    """Cover video size thresholds and image bpp thresholds."""
+
+    def test_video_100mb(self):
+        assert _score_file_quality(100 * 1024 * 1024, None, None, "mp4") == 0.8
+
+    def test_video_20mb(self):
+        assert _score_file_quality(20 * 1024 * 1024, None, None, "mov") == 0.6
+
+    def test_video_5mb(self):
+        assert _score_file_quality(5 * 1024 * 1024, None, None, "avi") == 0.4
+
+    def test_image_8bpp(self):
+        # 8 bpp => size = 8 * W * H / 8 = W * H
+        size = 4000 * 3000  # 8 bpp
+        assert _score_file_quality(size, 4000, 3000, "jpg") == 0.85
+
+    def test_image_4bpp(self):
+        size = 4 * 4000 * 3000 // 8  # 4 bpp
+        assert _score_file_quality(size, 4000, 3000, "jpg") == 0.7
+
+    def test_image_2bpp(self):
+        size = 2 * 4000 * 3000 // 8  # 2 bpp
+        assert _score_file_quality(size, 4000, 3000, "jpg") == 0.55
+
+    def test_image_1bpp(self):
+        size = 1 * 4000 * 3000 // 8  # 1 bpp
+        assert _score_file_quality(size, 4000, 3000, "jpg") == 0.4
+
+    def test_image_low_bpp(self):
+        # 0.5 bpp
+        size = 4000 * 3000 // 16
+        assert _score_file_quality(size, 4000, 3000, "jpg") == 0.2
+
+    def test_image_none_width(self):
+        assert _score_file_quality(10000, None, 3000, "jpg") == 0.3
+
+
+class TestScoreCameraEdgeCases:
+    """Cover unknown brand fallback and more word boundary cases."""
+
+    def test_completely_unknown_device(self):
+        assert _score_camera("SomeRandomBrand", "Model999") == 0.35
+
+    def test_make_only(self):
+        assert _score_camera("Sony", None) == 0.6
+
+    def test_model_only(self):
+        assert _score_camera(None, "iPhone 15 Pro") == 0.7
+
+    def test_hasselblad(self):
+        assert _score_camera("Hasselblad", "X2D") == 1.0
+
+    def test_leica(self):
+        assert _score_camera("Leica", "M11") == 0.95
+
+    def test_iphone_se_word_boundary(self):
+        """iPhone SE should not match iPhone 15 Pro."""
+        assert _score_camera("Apple", "iPhone SE") == 0.3
+
+    def test_fujifilm_unknown_model(self):
+        assert _score_camera("Fujifilm", "SomeModel") == 0.6
+
+
+class TestScoreRecencyEdgeCases:
+    """Cover recency age brackets."""
+
+    def test_two_year_old(self):
+        # ~1.5 years ago
+        from datetime import datetime, timedelta
+        d = datetime.now() - timedelta(days=550)
+        date_str = d.strftime("%Y:%m:%d %H:%M:%S")
+        score = _score_recency(date_str, None)
+        assert score == 0.85
+
+    def test_five_year_old(self):
+        from datetime import datetime, timedelta
+        d = datetime.now() - timedelta(days=4 * 365)
+        date_str = d.strftime("%Y:%m:%d %H:%M:%S")
+        score = _score_recency(date_str, None)
+        assert score == 0.65
+
+    def test_eight_year_old(self):
+        from datetime import datetime, timedelta
+        d = datetime.now() - timedelta(days=8 * 365)
+        date_str = d.strftime("%Y:%m:%d %H:%M:%S")
+        score = _score_recency(date_str, None)
+        assert score == 0.45
+
+    def test_z_suffix_iso(self):
+        """Test that Z timezone suffix is handled."""
+        score = _score_recency("2024:01:15 12:30:00Z", None)
+        assert 0.0 <= score <= 1.0
+
+
+class TestScoreFileExtFromPath:
+    """Cover ext extraction from path when ext key is missing."""
+
+    def test_ext_from_path(self):
+        row = {"path": "/photos/test.cr2", "size": 50_000_000, "width": 6000, "height": 4000}
+        ms = score_file(row)
+        assert ms.total > 0
+        # Should detect cr2 as image extension
+
+    def test_ext_with_dot_prefix(self):
+        row = {"path": "/test.jpg", "ext": ".jpg"}
+        ms = score_file(row)
+        assert ms.total >= 0
+
+
+class TestScoreCatalogHeapOverflow:
+    """Cover the heap replacement path when more files than limit."""
+
+    def test_heap_replacement(self, tmp_path):
+        db_path = tmp_path / "catalog.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript("""
+            CREATE TABLE files (
+                id INTEGER PRIMARY KEY,
+                path TEXT, ext TEXT, size INTEGER, mtime REAL,
+                width INTEGER, height INTEGER, bitrate INTEGER,
+                date_original TEXT, camera_make TEXT, camera_model TEXT,
+                gps_latitude REAL, gps_longitude REAL,
+                metadata_richness REAL, sha256 TEXT, phash TEXT
+            );
+            CREATE TABLE duplicates (file_id INTEGER, group_id INTEGER, is_primary INTEGER);
+            CREATE TABLE file_ratings (file_id INTEGER, rating INTEGER);
+            CREATE TABLE file_notes (file_id INTEGER, note TEXT);
+            CREATE TABLE file_tags (file_id INTEGER, tag_id INTEGER);
+        """)
+        # Insert 5 files with varying quality
+        for i in range(5):
+            conn.execute(
+                "INSERT INTO files (id, path, ext, size, width, height, metadata_richness) "
+                "VALUES (?, ?, 'jpg', ?, ?, ?, ?)",
+                (i + 1, f"/photo_{i}.jpg", (i + 1) * 1_000_000, (i + 1) * 1000, (i + 1) * 750, i * 20.0),
+            )
+        conn.commit()
+        conn.close()
+
+        # Limit to 2 — should trigger heap replacement
+        results = score_catalog(db_path, limit=2)
+        assert len(results) == 2
+        # Results should be sorted descending by score
+        assert results[0].total >= results[1].total
+
+    def test_media_only_false(self, tmp_path):
+        db_path = tmp_path / "catalog.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript("""
+            CREATE TABLE files (
+                id INTEGER PRIMARY KEY,
+                path TEXT, ext TEXT, size INTEGER, mtime REAL,
+                width INTEGER, height INTEGER, bitrate INTEGER,
+                date_original TEXT, camera_make TEXT, camera_model TEXT,
+                gps_latitude REAL, gps_longitude REAL,
+                metadata_richness REAL, sha256 TEXT, phash TEXT
+            );
+            CREATE TABLE duplicates (file_id INTEGER, group_id INTEGER, is_primary INTEGER);
+            CREATE TABLE file_ratings (file_id INTEGER, rating INTEGER);
+            CREATE TABLE file_notes (file_id INTEGER, note TEXT);
+            CREATE TABLE file_tags (file_id INTEGER, tag_id INTEGER);
+            INSERT INTO files (id, path, ext, size, width, height)
+                VALUES (1, '/doc.pdf', 'pdf', 5000, NULL, NULL);
+        """)
+        conn.commit()
+        conn.close()
+
+        results = score_catalog(db_path, media_only=False, limit=10)
+        assert len(results) == 1

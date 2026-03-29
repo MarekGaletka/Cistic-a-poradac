@@ -30,6 +30,18 @@ from .verify import verify_catalog
 logger = logging.getLogger(__name__)
 
 
+def _confirm(message: str, *, yes: bool = False) -> bool:
+    """Prompt user for confirmation. Returns True if confirmed or --yes was passed."""
+    if yes:
+        return True
+    try:
+        answer = input(f"{message} [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer in ("y", "yes")
+
+
 def _parse_roots(value: list[str]) -> list[Path]:
     roots = [Path(v).expanduser().resolve() for v in value]
     return roots
@@ -108,6 +120,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
     else:
         quarantine_root = run_dir / "quarantine" / f"apply_{utc_stamp()}"
 
+    if not args.dry_run and not _confirm(
+        f"Apply quarantine plan from {plan_path}?", yes=getattr(args, "yes", False)
+    ):
+        print("Aborted.")
+        return 0
+
     ensure_dir(quarantine_root)
 
     executed_log = run_dir / "executed_moves.tsv"
@@ -157,6 +175,12 @@ def cmd_promote(args: argparse.Namespace) -> int:
         backup_root = Path(args.backup_root).expanduser().resolve()
     else:
         backup_root = run_dir / "quarantine" / f"promote_backup_{utc_stamp()}"
+
+    if not args.dry_run and not _confirm(
+        f"Promote files from manifest {manifest_path}?", yes=getattr(args, "yes", False)
+    ):
+        print("Aborted.")
+        return 0
 
     ensure_dir(backup_root)
     executed_log = run_dir / "promote_executed.tsv"
@@ -210,6 +234,12 @@ def cmd_tree_apply(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan).expanduser().resolve()
     log_path = Path(args.log).expanduser().resolve() if args.log else (plan_path.parent / "tree_apply_log.tsv")
     ensure_dir(log_path.parent)
+
+    if args.operation == "move" and not args.dry_run and not _confirm(
+        f"Apply tree plan with operation=move from {plan_path}?", yes=getattr(args, "yes", False)
+    ):
+        print("Aborted.")
+        return 0
 
     applied, skipped = apply_tree_plan(
         plan_path=plan_path,
@@ -776,6 +806,22 @@ def cmd_metadata_write(args: argparse.Namespace) -> int:
         print("No tags specified. Use --tag TAG=VALUE")
         return 1
 
+    if not getattr(args, "dry_run", False) and not _confirm(
+        f"Write {len(tags)} tag(s) to {len(paths)} file(s)?", yes=getattr(args, "yes", False)
+    ):
+        print("Aborted.")
+        return 0
+
+    if args.dry_run:
+        for path in paths:
+            if not path.exists():
+                print(f"skip: {path} (not found)")
+            else:
+                tag_str = ", ".join(f"{k}={v}" for k, v in tags.items())
+                print(f"[DRY RUN] would write to {path}: {tag_str}")
+        print("[DRY RUN] No files were modified.")
+        return 0
+
     total_ok = 0
     total_fail = 0
     for path in paths:
@@ -964,6 +1010,10 @@ def cmd_batch_rename(args: argparse.Namespace) -> int:
         print("[DRY RUN] No files were renamed.")
         return 0
 
+    if not _confirm(f"Rename {len(actions)} files?", yes=getattr(args, "yes", False)):
+        print("Aborted.")
+        return 0
+
     result = apply_renames(actions)
     print(f"renamed={result.renamed}")
     print(f"skipped={result.skipped}")
@@ -974,6 +1024,7 @@ def cmd_batch_rename(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from . import __version__
     from .i18n import t  # Lazy import to avoid circular dependency with config
 
     parser = argparse.ArgumentParser(
@@ -981,6 +1032,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="GOD MODE media organizer with metadata-first safety",
         allow_abbrev=False,
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v INFO, -vv DEBUG)")
     parser.add_argument("--log-file", default=None, help="Path for JSON-formatted log file")
     parser.add_argument("--logfile-max-mb", type=int, default=10, help="Max log file size in MB before rotation (default 10)")
@@ -1108,6 +1160,8 @@ def build_parser() -> argparse.ArgumentParser:
     pmw.add_argument("--tag", dest="tags", action="append", required=True, help="Tag to write (format: TAG=VALUE, repeatable)")
     pmw.add_argument("--exiftool-bin", default="exiftool", help="ExifTool binary path")
     pmw.add_argument("--overwrite-original", action="store_true", help="Overwrite in place (no _original backup)")
+    pmw.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
+    pmw.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     pmw.set_defaults(func=cmd_metadata_write)
 
     pv = sub.add_parser("verify", help="Verify catalog integrity against filesystem")
@@ -1142,6 +1196,7 @@ def build_parser() -> argparse.ArgumentParser:
     pap.add_argument("--plan", required=True, help="Path to plan_quarantine.tsv")
     pap.add_argument("--quarantine-root", default=None, help="Target quarantine root")
     pap.add_argument("--dry-run", action="store_true", help="Do not move files, only simulate")
+    pap.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     pap.set_defaults(func=cmd_apply)
 
     pr = sub.add_parser("restore", help="Restore moved files from executed log")
@@ -1155,6 +1210,7 @@ def build_parser() -> argparse.ArgumentParser:
     ppro.add_argument("--manifest", required=True, help="TSV with: size,moved_from,quarantine_path,primary_path")
     ppro.add_argument("--backup-root", default=None, help="Backup location for current primary copies")
     ppro.add_argument("--dry-run", action="store_true", help="Do not move files, only simulate")
+    ppro.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     ppro.set_defaults(func=cmd_promote)
 
     ptp = sub.add_parser("tree-plan", help="Create tree restructuring plan (time/type/modified/people/place)")
@@ -1171,10 +1227,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     pta = sub.add_parser("tree-apply", help="Apply tree restructuring plan")
     pta.add_argument("--plan", required=True, help="Path to tree_plan.tsv")
-    pta.add_argument("--operation", choices=["move", "copy", "hardlink", "symlink"], default="move", help="Apply operation")
+    pta.add_argument(
+        "--operation", choices=["move", "copy", "hardlink", "symlink"],
+        default="hardlink", help="Apply operation (default: hardlink)",
+    )
     pta.add_argument("--collision-policy", choices=["skip", "rename", "overwrite"], default="rename", help="Collision policy")
     pta.add_argument("--log", default=None, help="Optional output log path")
     pta.add_argument("--dry-run", action="store_true", help="Do not modify filesystem, only simulate")
+    pta.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     pta.set_defaults(func=cmd_tree_apply)
 
     plt = sub.add_parser("labels-template", help="Generate labels TSV template for people/place tree modes")
@@ -1258,6 +1318,7 @@ def build_parser() -> argparse.ArgumentParser:
     pbr.add_argument("--ext", default=None, help="Filter by extension (e.g. jpg)")
     pbr.add_argument("--start", type=int, default=1, help="Starting number for {n}")
     pbr.add_argument("--dry-run", action="store_true", help="Preview without renaming")
+    pbr.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     pbr.set_defaults(func=cmd_batch_rename)
 
     return parser
@@ -1277,6 +1338,16 @@ def main() -> int:
         if hasattr(args, "out_dir") and args.out_dir is None and getattr(args, "func", None) not in (cmd_metadata_merge,):
             parser.error("--out-dir is required for this command")
 
+        # Parameter validation
+        if hasattr(args, "min_size_kb") and args.min_size_kb is not None and args.min_size_kb < 0:
+            parser.error("--min-size-kb must be >= 0")
+        if hasattr(args, "port") and args.port is not None and not (1 <= args.port <= 65535):
+            parser.error("--port must be between 1 and 65535")
+        if hasattr(args, "limit") and args.limit is not None and args.limit < 1 and args.limit != 0:
+            parser.error("--limit must be >= 1 (or 0 for unlimited)")
+        if hasattr(args, "workers") and args.workers is not None and args.workers < 1:
+            parser.error("--workers must be >= 1")
+
         log_file = Path(args.log_file) if args.log_file else None
         setup_logging(
             verbosity=args.verbose,
@@ -1291,7 +1362,12 @@ def main() -> int:
         sys.exit(130)
     except SystemExit:
         raise
+    except (ValueError, FileNotFoundError, PermissionError) as exc:
+        # User errors: bad input, missing files, permission issues → exit code 2
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
     except Exception as exc:
+        # Internal/unexpected errors → exit code 1
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 

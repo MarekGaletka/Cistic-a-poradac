@@ -158,10 +158,13 @@ def apply_plan(
                     ensure_dir(dest.parent)
                     if dest.exists():
                         suffix_n = 1
-                        candidate = Path(f"{dest}.dup{suffix_n}")
+                        stem = dest.stem
+                        ext = dest.suffix
+                        parent = dest.parent
+                        candidate = parent / f"{stem}_dup{suffix_n}{ext}"
                         while candidate.exists():
                             suffix_n += 1
-                            candidate = Path(f"{dest}.dup{suffix_n}")
+                            candidate = parent / f"{stem}_dup{suffix_n}{ext}"
                         dest = candidate
                     _tx_log("move_start", {"src": str(move_path), "dest": str(dest)})
                     shutil.move(str(move_path), str(dest))
@@ -307,9 +310,9 @@ def promote_from_manifest(
             skipped_rows.append((size, str(quarantine_path), str(primary_path), "hash_read_error"))
             continue
 
-        if q_hash != p_hash:
+        if q_hash == p_hash:
             skipped += 1
-            skipped_rows.append((size, str(quarantine_path), str(primary_path), "hash_mismatch"))
+            skipped_rows.append((size, str(quarantine_path), str(primary_path), "identical_hash_no_promotion_needed"))
             continue
 
         backup_path = _quarantine_path(backup_root, primary_path)
@@ -317,10 +320,13 @@ def promote_from_manifest(
             ensure_dir(backup_path.parent)
             if backup_path.exists():
                 suffix = 1
-                candidate = Path(f"{backup_path}.dup{suffix}")
+                stem = backup_path.stem
+                ext = backup_path.suffix
+                parent = backup_path.parent
+                candidate = parent / f"{stem}_dup{suffix}{ext}"
                 while candidate.exists():
                     suffix += 1
-                    candidate = Path(f"{backup_path}.dup{suffix}")
+                    candidate = parent / f"{stem}_dup{suffix}{ext}"
                 backup_path = candidate
             shutil.move(str(primary_path), str(backup_path))
             try:

@@ -51,6 +51,10 @@ let _currentPage = null;
 function cleanupCurrentPage() {
   cleanupTasks();
   if (_currentPage === "map") cleanupMap();
+  // Call page-level cleanup if the page module exports one
+  if (_currentPage && pages[_currentPage] && typeof pages[_currentPage].cleanup === "function") {
+    pages[_currentPage].cleanup();
+  }
 }
 
 export function navigate(page) {
@@ -515,8 +519,9 @@ document.addEventListener("keydown", e => {
   }
 
   if (e.target.matches("input, textarea, select")) return;
+  if (e.defaultPrevented) return;
 
-  // Number keys 1-6 navigate to pages (skip if lightbox is open)
+  // Number keys 1-6 navigate to pages (skip if lightbox is open or event already handled)
   const lightboxOverlay = document.getElementById("lightbox-overlay");
   if (_pageKeys[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (lightboxOverlay && !lightboxOverlay.classList.contains("hidden")) return;

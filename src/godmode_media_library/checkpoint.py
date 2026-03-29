@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -114,10 +115,14 @@ def ensure_tables(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")  # WAL for concurrent reads + crash safety
     conn.executescript(_CHECKPOINT_SQL)
+    # Migration: add worker_pid column if missing (for PID-based stale detection)
     try:
-        setattr(conn, _TABLES_OK_ATTR, True)
-    except AttributeError:
-        pass  # Some connection wrappers don't allow setattr — re-setup is harmless
+        conn.execute("SELECT worker_pid FROM consolidation_file_state LIMIT 0")
+    except sqlite3.OperationalError:
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE consolidation_file_state ADD COLUMN worker_pid INTEGER DEFAULT NULL")
+    with contextlib.suppress(AttributeError):
+        setattr(conn, _TABLES_OK_ATTR, True)  # Some connection wrappers don't allow setattr — re-setup is harmless
 
 
 def _ensure(catalog: Catalog) -> None:
@@ -302,14 +307,16 @@ def mark_file(
 ) -> None:
     _ensure(catalog)
     now = _now()
+    # Record worker PID when marking as in_progress for stale detection
+    pid = os.getpid() if status == "in_progress" else None
     conn = catalog.conn
     with conn:
         conn.execute(
             """INSERT INTO consolidation_file_state
                (job_id, file_hash, source_location, step_name, status,
                 dest_location, bytes_transferred, last_error, attempt_count,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                worker_pid, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                ON CONFLICT(job_id, file_hash, step_name) DO UPDATE SET
                    status = CASE
                        -- Terminal states: only 'failed' from verify can override 'completed'
@@ -337,8 +344,9 @@ def mark_file(
                        THEN consolidation_file_state.attempt_count
                        ELSE attempt_count + 1
                    END,
+                   worker_pid = COALESCE(excluded.worker_pid, consolidation_file_state.worker_pid),
                    updated_at = excluded.updated_at""",
-            (job_id, file_hash, source, step, status, dest, bytes_transferred, error, now, now),
+            (job_id, file_hash, source, step, status, dest, bytes_transferred, error, pid, now, now),
         )
 
 
@@ -511,6 +519,18 @@ def get_files_by_source(
     return [_row_to_file_state(r) for r in cur.fetchall()]
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but we can't signal it — still alive
+        return True
+
+
 def reset_stale_in_progress(
     catalog: Catalog,
     job_id: str,
@@ -519,8 +539,9 @@ def reset_stale_in_progress(
 ) -> int:
     """Reset files stuck in 'in_progress' back to 'pending' for retry.
 
-    Only resets files whose updated_at is older than *stale_after_seconds*
-    (default 30 min) to avoid resetting files that are genuinely transferring.
+    Uses PID-based locking: files owned by a still-alive worker process are
+    never reset, regardless of age. Files without a PID or with a dead PID
+    are reset only if older than *stale_after_seconds* (default 30 min).
     """
     _ensure(catalog)
     from datetime import timedelta
@@ -529,18 +550,50 @@ def reset_stale_in_progress(
     stale_threshold = (now_dt - timedelta(seconds=stale_after_seconds)).isoformat()
     now = now_dt.isoformat()
     conn = catalog.conn
+
+    # First, find all in_progress files with PIDs to check liveness
+    cur = conn.execute(
+        """SELECT DISTINCT worker_pid FROM consolidation_file_state
+           WHERE job_id = ? AND step_name = ? AND status = 'in_progress'
+             AND worker_pid IS NOT NULL""",
+        (job_id, step),
+    )
+    dead_pids: list[int] = []
+    for row in cur.fetchall():
+        pid = row[0]
+        if pid and not _is_pid_alive(pid):
+            dead_pids.append(pid)
+
+    total_reset = 0
     with conn:
+        # Reset files with dead worker PIDs (regardless of age)
+        if dead_pids:
+            placeholders = ",".join("?" for _ in dead_pids)
+            cur = conn.execute(
+                f"""UPDATE consolidation_file_state
+                   SET status = 'pending', worker_pid = NULL, updated_at = ?
+                   WHERE job_id = ? AND step_name = ? AND status = 'in_progress'
+                     AND worker_pid IN ({placeholders})""",
+                [now, job_id, step, *dead_pids],
+            )
+            total_reset += cur.rowcount
+
+        # Reset files without a PID that are stale by time
         cur = conn.execute(
             """UPDATE consolidation_file_state
-               SET status = 'pending', updated_at = ?
+               SET status = 'pending', worker_pid = NULL, updated_at = ?
                WHERE job_id = ? AND step_name = ? AND status = 'in_progress'
-                 AND updated_at < ?""",
+                 AND worker_pid IS NULL AND updated_at < ?""",
             (now, job_id, step, stale_threshold),
         )
-    count = cur.rowcount
-    if count:
-        logger.info("Reset %d stale in_progress files (>%ds old) for job %s step %s", count, stale_after_seconds, job_id, step)
-    return count
+        total_reset += cur.rowcount
+
+    if total_reset:
+        logger.info(
+            "Reset %d stale in_progress files (dead PIDs: %s, stale >%ds) for job %s step %s",
+            total_reset, dead_pids or "none", stale_after_seconds, job_id, step,
+        )
+    return total_reset
 
 
 # ---------------------------------------------------------------------------

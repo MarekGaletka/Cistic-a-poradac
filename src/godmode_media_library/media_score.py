@@ -424,19 +424,33 @@ def score_catalog(
         else:
             params = []
 
-        rows = db.execute(query, params).fetchall()
+        # Use SQL-side ordering by metadata_richness (rough score proxy)
+        # and cap the fetch to avoid loading unbounded rows into memory.
+        # Over-fetch by 5x the limit to ensure enough candidates for
+        # Python-side scoring; fall back to full scan only if needed.
+        sql_cap = max(limit * 5, 1000)
+        query += " ORDER BY COALESCE(f.metadata_richness, 0) DESC LIMIT ?"
+        params.append(sql_cap)
 
-    # Score all files
-    scores: list[MediaScore] = []
-    for row in rows:
+        cursor = db.execute(query, params)
+
+    # Score files using a bounded heap
+    import heapq
+    heap: list[tuple[float, int, MediaScore]] = []  # (score, tiebreak, MediaScore)
+    tiebreak = 0
+    for row in cursor:
         row_dict = dict(row)
         ms = score_file(row_dict)
         if ms.total >= min_score:
-            scores.append(ms)
+            tiebreak += 1
+            if len(heap) < limit:
+                heapq.heappush(heap, (ms.total, tiebreak, ms))
+            elif ms.total > heap[0][0]:
+                heapq.heapreplace(heap, (ms.total, tiebreak, ms))
 
-    # Sort by score descending
-    scores.sort(key=lambda s: s.total, reverse=True)
-    return scores[:limit]
+    # Return sorted descending by score
+    result = [item[2] for item in sorted(heap, key=lambda x: x[0], reverse=True)]
+    return result
 
 
 def get_smart_collections(

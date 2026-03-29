@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 
 _heif_registered = False
 
+
+def _register_heif_once() -> None:
+    """Register HEIF opener once at module level (lazy, called on first HEIF encounter)."""
+    global _heif_registered
+    if _heif_registered:
+        return
+    if _check_heif():
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    _heif_registered = True
+
 # Hashable image extensions — formats that Pillow can open natively
 # (or via pillow-heif for HEIC/HEIF).
 # NOTE: RAW camera formats (dng, cr2, cr3, nef, arw, raw) are listed in
@@ -72,19 +84,14 @@ def dhash(path: Path, *, hash_size: int = HASH_SIZE) -> str | None:
     from PIL import Image
 
     # Register HEIF opener if available (once per process)
-    global _heif_registered
-    if not _heif_registered and path.suffix.lower() in (".heic", ".heif") and _check_heif():
-        import pillow_heif
-
-        pillow_heif.register_heif_opener()
-        _heif_registered = True
+    if path.suffix.lower() in (".heic", ".heif"):
+        _register_heif_once()
 
     try:
         with Image.open(path) as img:
             img = img.convert("L")  # grayscale
             img = img.resize((hash_size + 1, hash_size), Image.LANCZOS)
-            get_pixels = getattr(img, "get_flattened_data", None) or img.getdata
-            pixels = list(get_pixels())
+            pixels = list(img.tobytes())
     except (OSError, ValueError):
         logger.debug("Cannot open image for hashing: %s", path)
         return None
@@ -184,6 +191,14 @@ def _nearby_bucket_keys(key: str, threshold: int, prefix_bits: int = 16) -> set[
             for b2 in range(b1 + 1, prefix_bits):
                 flipped = prefix_int ^ (1 << b1) ^ (1 << b2)
                 keys.add(f"{flipped:0{prefix_hex_chars}x}")
+
+    # 3-bit flips — needed for thresholds > 4 to reduce false negatives
+    if max_flips >= 3:
+        for b1 in range(prefix_bits):
+            for b2 in range(b1 + 1, prefix_bits):
+                for b3 in range(b2 + 1, prefix_bits):
+                    flipped = prefix_int ^ (1 << b1) ^ (1 << b2) ^ (1 << b3)
+                    keys.add(f"{flipped:0{prefix_hex_chars}x}")
 
     return keys
 

@@ -35,16 +35,27 @@ def _ensure_key() -> bytes:
 
     key = Fernet.generate_key()
     kp.parent.mkdir(parents=True, exist_ok=True)
-    kp.write_bytes(key)
-    os.chmod(str(kp), 0o600)
+    # Use os.open() with explicit permissions to avoid TOCTOU race
+    # where the file is briefly world-readable before chmod
+    fd = os.open(str(kp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, key)
+    finally:
+        os.close(fd)
     logger.info("Generated new face encryption key at %s", kp)
     return key
 
 
-def _get_fernet():
-    from cryptography.fernet import Fernet
+_fernet_instance = None
 
-    return Fernet(_ensure_key())
+
+def _get_fernet():
+    global _fernet_instance
+    if _fernet_instance is None:
+        from cryptography.fernet import Fernet
+
+        _fernet_instance = Fernet(_ensure_key())
+    return _fernet_instance
 
 
 def encrypt_encoding(encoding) -> bytes:
@@ -83,9 +94,11 @@ def get_decrypt_fn(enabled: bool = True):
 
 def delete_key() -> bool:
     """Delete the encryption key file. Returns True if deleted."""
+    global _fernet_instance
     kp = _key_path()
     if kp.exists():
         kp.unlink()
+        _fernet_instance = None
         logger.info("Deleted face encryption key at %s", kp)
         return True
     return False

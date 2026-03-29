@@ -151,13 +151,14 @@ def test_max_downloads_reached(cat):
 def test_password_hash_stored(cat):
     share = cat.create_share("/tmp/photo.jpg", password="test123")
     found = cat.get_share_by_token(share["token"])
-    # Password is now stored as PBKDF2 hash with salt: "salt_hex:dk_hex"
+    # Password is now stored as PBKDF2 hash with salt and iterations: "salt_hex:600000:dk_hex"
     ph = found["password_hash"]
-    assert ":" in ph, "PBKDF2 hash should contain salt:dk separated by colon"
-    salt_hex, dk_hex = ph.split(":", 1)
+    assert ph.count(":") == 2, "PBKDF2 hash should be salt:iterations:dk"
+    salt_hex, iter_str, dk_hex = ph.split(":", 2)
+    assert iter_str == "600000"
     # Verify the hash by re-deriving with the stored salt
     salt = bytes.fromhex(salt_hex)
-    expected_dk = hashlib.pbkdf2_hmac("sha256", b"test123", salt, 100_000)
+    expected_dk = hashlib.pbkdf2_hmac("sha256", b"test123", salt, 600_000)
     assert dk_hex == expected_dk.hex()
 
 

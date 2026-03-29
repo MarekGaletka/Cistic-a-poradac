@@ -8,10 +8,10 @@ import logging
 import mimetypes
 import os
 import time
-from urllib.parse import quote as _url_quote
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote as _url_quote
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +33,12 @@ _auth_failures: dict[str, list[float]] = defaultdict(list)
 _AUTH_FAILURE_WINDOW = 60.0  # seconds
 _AUTH_FAILURE_MAX = 10  # max failures per IP per window
 _AUTH_FAILURE_MAX_IPS = 10_000  # max unique IPs tracked
+
+# Share password failure rate limiting — track failed share password attempts per IP
+_share_pw_failures: dict[str, list[float]] = defaultdict(list)
+_SHARE_PW_FAILURE_WINDOW = 300.0  # 5 minutes
+_SHARE_PW_FAILURE_MAX = 10  # max failures per IP per window
+_SHARE_PW_FAILURE_MAX_IPS = 10_000
 
 
 def _prune_rate_dict(d: dict[str, list[float]], window: float, max_ips: int) -> None:
@@ -102,6 +108,26 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # CSRF protection: when no API token is set, check Origin header on mutating requests
+    # to prevent cross-site request forgery from malicious websites.
+    if not api_token:
+
+        @app.middleware("http")
+        async def csrf_middleware(request: Request, call_next):
+            if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+                origin = request.headers.get("origin", "")
+                if origin:
+                    # Allow localhost origins (any port)
+                    from urllib.parse import urlparse
+
+                    parsed = urlparse(origin)
+                    if parsed.hostname not in ("localhost", "127.0.0.1", "::1", "[::1]"):
+                        return JSONResponse(
+                            status_code=403,
+                            content={"detail": "CSRF check failed: origin not allowed"},
+                        )
+            return await call_next(request)
+
     # Token-based API authentication (when GML_API_TOKEN is set)
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
@@ -125,7 +151,10 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         now = time.monotonic()
         failures = _auth_failures[client_ip]
         cutoff = now - _AUTH_FAILURE_WINDOW
-        _auth_failures[client_ip] = [t for t in failures if t > cutoff]
+        filtered_failures = [t for t in failures if t > cutoff]
+        if len(filtered_failures) > _AUTH_FAILURE_MAX * 2:
+            filtered_failures = filtered_failures[-_AUTH_FAILURE_MAX * 2:]
+        _auth_failures[client_ip] = filtered_failures
         if len(_auth_failures[client_ip]) >= _AUTH_FAILURE_MAX:
             return JSONResponse(
                 status_code=429,
@@ -186,7 +215,12 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
             hits = _rate_limit_hits[client_ip]
             cutoff = now - _RATE_LIMIT_WINDOW
-            _rate_limit_hits[client_ip] = [t for t in hits if t > cutoff]
+            # Filter to window and cap list size to prevent memory abuse
+            filtered = [t for t in hits if t > cutoff]
+            _PER_IP_LIST_CAP = rate_limit_max * 2  # hard cap: 2x rate limit
+            if len(filtered) > _PER_IP_LIST_CAP:
+                filtered = filtered[-_PER_IP_LIST_CAP:]
+            _rate_limit_hits[client_ip] = filtered
 
             if len(_rate_limit_hits[client_ip]) >= rate_limit_max:
                 return JSONResponse(
@@ -272,6 +306,20 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
             # Password check
             if share["has_password"]:
+                # Rate limit share password attempts per IP
+                client_ip = request.client.host if request and request.client else "unknown"
+                now_pw = time.monotonic()
+                _prune_rate_dict(_share_pw_failures, _SHARE_PW_FAILURE_WINDOW, _SHARE_PW_FAILURE_MAX_IPS)
+                pw_attempts = _share_pw_failures[client_ip]
+                pw_cutoff = now_pw - _SHARE_PW_FAILURE_WINDOW
+                _share_pw_failures[client_ip] = [t for t in pw_attempts if t > pw_cutoff]
+                if len(_share_pw_failures[client_ip]) >= _SHARE_PW_FAILURE_MAX:
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Too many password attempts. Try again later."},
+                        headers={"Retry-After": str(int(_SHARE_PW_FAILURE_WINDOW))},
+                    )
+
                 # Prefer X-Share-Password header or POST body over query param
                 provided_pw = None
                 if request:
@@ -287,8 +335,18 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                         content={"detail": "Password required"},
                     )
                 stored = share["password_hash"]
-                if ":" in stored:
-                    # PBKDF2 format: hex(salt):hex(dk)
+                if stored.count(":") == 2:
+                    # New PBKDF2 format: hex(salt):iterations:hex(dk)
+                    salt_hex, iter_str, dk_hex = stored.split(":", 2)
+                    salt = bytes.fromhex(salt_hex)
+                    iterations = int(iter_str)
+                    expected_dk = bytes.fromhex(dk_hex)
+                    provided_dk = hashlib.pbkdf2_hmac(
+                        "sha256", provided_pw.encode("utf-8"), salt, iterations,
+                    )
+                    pw_ok = hmac.compare_digest(provided_dk, expected_dk)
+                elif ":" in stored:
+                    # Legacy PBKDF2 format: hex(salt):hex(dk) with 100K iterations
                     salt_hex, dk_hex = stored.split(":", 1)
                     salt = bytes.fromhex(salt_hex)
                     expected_dk = bytes.fromhex(dk_hex)
@@ -301,6 +359,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                     pw_hash = hashlib.sha256(provided_pw.encode("utf-8")).hexdigest()
                     pw_ok = hmac.compare_digest(pw_hash, stored)
                 if not pw_ok:
+                    _share_pw_failures[client_ip].append(now_pw)
                     return JSONResponse(
                         status_code=403,
                         content={"detail": "Invalid password"},

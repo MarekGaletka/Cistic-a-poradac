@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import logging
 import os
 import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
-
-import logging
 
 from .audit import collect_file_records
 from .disk_space import check_disk_space
@@ -67,7 +66,7 @@ def _file_category(ext: str) -> str:
 
 
 def _unit_id(key: str) -> str:
-    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
 
 def _load_labels(path: Path | None) -> dict[Path, dict[str, str]]:

@@ -322,16 +322,19 @@ def execute_merge(
             else:
                 cmd.append(f"-{tag_name}+={action.value}")
         else:
-            # Direct copy
+            # Direct copy — write each list item separately to preserve
+            # multi-value tag structure (e.g. IPTC:Keywords)
             if isinstance(action.value, list):
-                val_str = ", ".join(str(v) for v in action.value)
+                for val in action.value:
+                    cmd.append(f"-{tag_name}={val}")
             elif isinstance(action.value, float):
-                val_str = f"{action.value}"
+                cmd.append(f"-{tag_name}={action.value}")
             else:
-                val_str = str(action.value)
-            cmd.append(f"-{tag_name}={val_str}")
+                cmd.append(f"-{tag_name}={action.value}")
 
-    cmd.append(plan.survivor_path)
+    # Protect path from being treated as ExifTool flag if it starts with '-'
+    survivor = plan.survivor_path
+    cmd.append(f"./{survivor}" if survivor.startswith("-") else survivor)
 
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)  # noqa: S603

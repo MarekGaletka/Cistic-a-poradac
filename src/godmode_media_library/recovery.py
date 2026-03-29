@@ -1611,8 +1611,8 @@ def decrypt_signal_attachments(
 
                     # Verify HMAC before decryption
                     if hmac_key:
-                        import hmac as _hmac_mod
                         import hashlib as _hashlib
+                        import hmac as _hmac_mod
                         expected_hmac = _hmac_mod.new(hmac_key, iv + ciphertext, _hashlib.sha256).digest()
                         if not _hmac_mod.compare_digest(stored_hmac, expected_hmac):
                             raise ValueError("HMAC verification failed — data may be corrupted or tampered")

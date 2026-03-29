@@ -12,8 +12,11 @@ Scenarios are stored as JSON in ~/.config/gml/scenarios.json.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
@@ -240,7 +243,10 @@ def _load_scenarios() -> list[Scenario]:
 
 
 def _save_scenarios(scenarios: list[Scenario]) -> None:
-    """Persist scenarios to disk."""
+    """Persist scenarios to disk atomically.
+
+    Uses tempfile + os.replace() so a crash mid-write cannot corrupt the file.
+    """
     _SCENARIOS_PATH.parent.mkdir(parents=True, exist_ok=True)
     data = []
     for sc in scenarios:
@@ -257,7 +263,19 @@ def _save_scenarios(scenarios: list[Scenario]) -> None:
             "run_count": sc.run_count,
         }
         data.append(d)
-    _SCENARIOS_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    content = json.dumps(data, indent=2, ensure_ascii=False)
+    # Atomic write: write to temp file in same directory, then rename
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(_SCENARIOS_PATH.parent), suffix=".tmp", prefix=".scenarios_"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, str(_SCENARIOS_PATH))
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def list_scenarios() -> list[dict]:

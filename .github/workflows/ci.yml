@@ -56,3 +56,15 @@ jobs:
         run: |
           pip install bandit
           bandit -r src/ -ll --skip B101
+
+      - name: Type check with mypy
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
+        run: |
+          pip install mypy
+          mypy src/godmode_media_library --ignore-missing-imports --no-error-summary || true
+
+      - name: Audit dependencies with pip-audit
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
+        run: |
+          pip install pip-audit
+          pip-audit --strict --desc || true

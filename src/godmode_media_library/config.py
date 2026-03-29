@@ -62,8 +62,11 @@ def _load_toml(path: Path) -> dict:
         return {}
     if not path.is_file():
         return {}
-    with path.open("rb") as f:
-        return tomllib.load(f)
+    try:
+        with path.open("rb") as f:
+            return tomllib.load(f)
+    except Exception as exc:
+        raise ConfigValidationError(f"Failed to parse TOML config {path}: {exc}") from exc
 
 
 def load_config(
@@ -112,7 +115,7 @@ def load_config(
                     continue
             elif f.type == "float":
                 # Accept int or float (TOML may produce int for "1" vs "1.0")
-                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                if isinstance(value, bool) or not isinstance(value, int | float):
                     type_errors.append(
                         f"{f.name}: expected float, got {type(value).__name__} ({value!r})"
                     )
@@ -175,6 +178,18 @@ def validate_config(config: GMLConfig) -> None:
     if not (1 <= config.min_samples <= 100):
         errors.append(f"min_samples must be 1-100, got {config.min_samples}")
 
+    if config.min_size_kb < 0:
+        errors.append(f"min_size_kb must be >= 0, got {config.min_size_kb}")
+    if config.large_file_threshold_mb < 1:
+        errors.append(f"large_file_threshold_mb must be >= 1, got {config.large_file_threshold_mb}")
+    if config.max_dimension < 1:
+        errors.append(f"max_dimension must be >= 1, got {config.max_dimension}")
+    if config.geocode_min_delay_seconds < 0:
+        errors.append(f"geocode_min_delay_seconds must be >= 0, got {config.geocode_min_delay_seconds}")
+    if config.rate_limit_per_minute < 0:
+        errors.append(f"rate_limit_per_minute must be >= 0, got {config.rate_limit_per_minute}")
+    if config.dedup_min_file_size_kb < 0:
+        errors.append(f"dedup_min_file_size_kb must be >= 0, got {config.dedup_min_file_size_kb}")
     if config.dedup_strategy not in ("richness", "newest", "largest", "manual"):
         errors.append(f"dedup_strategy must be one of richness/newest/largest/manual, got {config.dedup_strategy}")
     if not (1 <= config.dedup_similarity_threshold <= 64):

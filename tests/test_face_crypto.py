@@ -96,6 +96,7 @@ class TestEncryptedRoundtrip:
 
     def test_wrong_key_rejects(self, tmp_path):
         """Decryption with a different key must fail."""
+        import godmode_media_library.face_crypto as fc
         from cryptography.fernet import Fernet, InvalidToken
 
         key1 = Fernet.generate_key()
@@ -105,21 +106,26 @@ class TestEncryptedRoundtrip:
 
         # Encrypt with key1
         key_file.write_bytes(key1)
+        fc._fernet_instance = None  # Reset cache before changing key
         with patch("godmode_media_library.face_crypto._key_path", return_value=key_file):
             original = [1.0] * _ENCODING_SIZE
             blob = encrypt_encoding(original)
 
         # Try to decrypt with key2
         key_file.write_bytes(key2)
+        fc._fernet_instance = None  # Reset cache to pick up new key
         with patch("godmode_media_library.face_crypto._key_path", return_value=key_file):
             with pytest.raises(Exception):  # InvalidToken or similar
                 decrypt_encoding(blob)
 
     def test_key_auto_generated(self, tmp_path):
         """If no key exists, _ensure_key creates one."""
+        import godmode_media_library.face_crypto as fc
+
         key_file = tmp_path / "config" / "gml" / "face.key"
         assert not key_file.exists()
 
+        fc._fernet_instance = None  # Reset cache so new key gets picked up
         with patch("godmode_media_library.face_crypto._key_path", return_value=key_file):
             original = [2.0] * _ENCODING_SIZE
             blob = encrypt_encoding(original)
