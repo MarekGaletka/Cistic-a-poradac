@@ -11,6 +11,8 @@ let _currentPhase = 0; // 0=A, 1=B, 2=C, 3=D, 4=E, 5=F
 let _transferActive = false;
 let _lastActivity = 0;
 let _localRoots = [];
+let _pollFailCount = 0;      // Issue #8: consecutive poll failures
+let _lastPollSuccess = 0;    // Issue #9: timestamp of last successful poll
 
 /**
  * Pick the most relevant job to display.
@@ -347,6 +349,8 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
   const totalFiles = checkpointProg.total || 0;
   const failed = checkpointProg.failed || progress.files_failed || 0;
   const speed = progress.transfer_speed_bps || 0;
+  const speedExplicitlyZero = "transfer_speed_bps" in progress && progress.transfer_speed_bps === 0;
+  const isServerSideMove = speedExplicitlyZero && transferred > 0;
   const eta = progress.eta_seconds || 0;
   const currentFile = progress.current_file || "";
   const bytesTransferred = checkpointProg.bytes_transferred || progress.bytes_transferred || 0;
@@ -454,7 +458,10 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
       </div>
 
       ${showSubPhase && subPhaseLabel ? `<div class="wiz-sub-phase"><span class="wiz-sub-phase-dot"></span> ${escapeHtml(subPhaseLabel)}</div>` : ""}
-      ${isMetadataPhase && !isPaused && !isFailed ? `<div class="wiz-activity-pulse"><span class="wiz-pulse-dot"></span> Probíhají operace...</div>` : ""}
+      ${!isPaused && !isFailed && !isCompleted ? `<div class="wiz-activity-pulse">
+        <span class="wiz-pulse-dot${_lastPollSuccess > 0 && (Date.now() - _lastPollSuccess > 30000) ? ' wiz-pulse-warn' : ''}"></span>
+        <span>${_lastPollSuccess > 0 ? `Poslední aktualizace: před ${_formatSecondsAgo(_lastPollSuccess)}` : "Probíhají operace..."}</span>
+      </div>` : ""}
 
       <div class="wiz-phase-progress">
         ${progress.files_cataloged > 0 ? `<div class="wiz-phase-detail">\uD83D\uDCC2 Zkatalogizováno: <strong>${(progress.files_cataloged || 0).toLocaleString("cs-CZ")}</strong></div>` : ""}
@@ -478,9 +485,12 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
         </div>` : ""}
 
       <div class="wiz-transfer-stats">
-        <div class="wiz-progress-main">
-          <div class="wiz-progress-track wiz-progress-track-lg"><div class="wiz-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
-          <span class="wiz-progress-pct">${pct.toFixed(1)}%</span>
+        <div class="wiz-progress-text-main">
+          ${totalFiles > 0
+            ? `Přeneseno <strong>${transferred.toLocaleString("cs-CZ")} / ${totalFiles.toLocaleString("cs-CZ")}</strong> souborů <span class="wiz-progress-pct-inline">(${pct.toFixed(1)}\u00A0%)</span>`
+            : bytesTotal > 0
+              ? `Přeneseno <strong>${formatBytes(bytesTransferred)} / ${formatBytes(bytesTotal)}</strong> <span class="wiz-progress-pct-inline">(${pct.toFixed(1)}\u00A0%)</span>`
+              : `Přeneseno <strong>${transferred.toLocaleString("cs-CZ")}</strong> souborů`}
         </div>
         <div class="wiz-metrics-grid">
           <div class="wiz-metric">
@@ -493,13 +503,13 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
           </div>
           ${isTransferPhase ? `
           <div class="wiz-metric">
-            <span class="wiz-metric-value">${speed > 0 ? formatBytes(speed) + "/s" : "\u2014"}</span>
-            <span class="wiz-metric-label">Rychlost</span>
+            <span class="wiz-metric-value">${speed > 0 ? formatBytes(speed) + "/s" : (isServerSideMove ? "Okamžité operace (server-side move)" : "\u2014")}</span>
+            <span class="wiz-metric-label">${isServerSideMove ? "Okamžité operace" : "Rychlost"}</span>
           </div>
-          <div class="wiz-metric">
+          ${!(isMetadataPhase || isServerSideMove) ? `<div class="wiz-metric">
             <span class="wiz-metric-value">${speed > 0 && eta > 0 ? formatEta(eta) : "\u2014"}</span>
             <span class="wiz-metric-label">Zbývající čas</span>
-          </div>` : ""}
+          </div>` : ""}` : ""}
           <div class="wiz-metric ${failed > 0 ? "wiz-metric-warn" : ""}">
             <span class="wiz-metric-value">${failed.toLocaleString("cs-CZ")}</span>
             <span class="wiz-metric-label">Selhalo</span>
@@ -992,6 +1002,8 @@ async function doSync() {
 
 function startPolling() {
   stopPolling();
+  _pollFailCount = 0;
+  _lastPollSuccess = Date.now();
   _pollTimer = setInterval(pollStatus, 2000);
 }
 
@@ -1004,8 +1016,14 @@ function stopPolling() {
 
 async function pollStatus() {
   try {
-    const data = await api("/consolidation/status");
+    const fetchOpts = _pollFailCount >= 10 ? { timeout: 10000 } : {};
+    const data = await api("/consolidation/status", fetchOpts);
     const active = _pickActiveJob(data.jobs || []);
+
+    // Issue #8: successful poll — reset failure counter and hide warning
+    _pollFailCount = 0;
+    _lastPollSuccess = Date.now();
+    _hideDisconnectWarning();
 
     if (!active) {
       stopPolling();
@@ -1034,8 +1052,34 @@ async function pollStatus() {
 
     renderPhaseContent(data, active);
   } catch {
-    // Silent fail during poll
+    // Issue #8: track consecutive failures
+    _pollFailCount++;
+    if (_pollFailCount >= 3) {
+      _showDisconnectWarning();
+    }
+    if (_pollFailCount >= 10) {
+      // Try a recovery reload with longer timeout on next tick
+      // (already handled above via fetchOpts)
+    }
   }
+}
+
+// Issue #8: disconnect warning bar
+function _showDisconnectWarning() {
+  if (document.getElementById("wiz-disconnect-bar")) return;
+  const bar = document.createElement("div");
+  bar.id = "wiz-disconnect-bar";
+  bar.className = "wiz-disconnect-bar";
+  bar.textContent = "\u26A0\uFE0F Odpojeno \u2014 obnovuji spojen\u00ED...";
+  const page = _container?.querySelector(".consolidation-page");
+  if (page) {
+    page.insertBefore(bar, page.querySelector(".wizard-content") || page.firstChild);
+  }
+}
+
+function _hideDisconnectWarning() {
+  const bar = document.getElementById("wiz-disconnect-bar");
+  if (bar) bar.remove();
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1103,14 @@ function formatEta(seconds) {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m`;
   return `${seconds}s`;
+}
+
+// Issue #9: format "Xs" / "Xmin" ago from a timestamp
+function _formatSecondsAgo(ts) {
+  const sec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  return `${min}min`;
 }
 
 function escapeHtml(str) {

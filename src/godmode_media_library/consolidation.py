@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -1292,6 +1293,12 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 for future in as_completed([pool.submit(_do_move, t) for t in tasks]):
                     t_fs, t_dest_path, t_staging, t_file_size, moved = future.result()
                     move_counter += 1
+                    ctx.report(Phase.STREAM,
+                               f"Přesouvám {move_counter}/{len(tasks)} souborů na finální cesty...",
+                               5,
+                               bytes_transferred=total_stream_bytes,
+                               transfer_speed_bps=0,
+                               eta_seconds=0)
                     if moved:
                         # Update dest to final path (status stays COMPLETED)
                         ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
@@ -1879,6 +1886,153 @@ def _phase_9_dedup(ctx: PhaseContext) -> None:
     ctx.finish_phase(Phase.DEDUP)
 
 
+_SURROG_PATTERN = re.compile(r"(_surrog)+")
+
+
+def _surrog_cleanup(ctx: PhaseContext, dest_files: list[dict]) -> dict:
+    """Clean up accumulated _surrog suffixes from filenames on destination.
+
+    When gws-backup is both source and destination, collision detection can
+    produce names like file_surrog_surrog_surrog.pdf. This step:
+      1. Finds files with _surrog in their name
+      2. Strips ALL _surrog suffixes from the stem
+      3. Re-adds a proper 6-char hash suffix via _make_collision_safe logic
+      4. Renames via server-side rclone moveto (instant on GDrive)
+      5. Updates checkpoint DB dest_location for affected files
+
+    Returns {"renamed": int, "failed": int, "skipped": int}.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Collect all current dest paths for collision checking
+    all_dest_paths: set[str] = set()
+    surrog_files: list[dict] = []
+
+    for f in dest_files:
+        if f.get("IsDir"):
+            continue
+        fpath = f.get("Path", f.get("Name", ""))
+        if not fpath:
+            continue
+        all_dest_paths.add(fpath)
+        if "_surrog" in fpath:
+            surrog_files.append(f)
+
+    if not surrog_files:
+        logger.info("surrog_cleanup: no files with _surrog suffix found")
+        return {"renamed": 0, "failed": 0, "skipped": 0}
+
+    logger.info("surrog_cleanup: found %d files with _surrog in name", len(surrog_files))
+    ctx.report(Phase.ORGANIZE, f"Surrog cleanup: {len(surrog_files)} souboru k prejmenovani...", 10)
+
+    renamed = 0
+    failed = 0
+    skipped = 0
+
+    rename_tasks: list[tuple[str, str]] = []  # (old_path, new_path)
+
+    for f in surrog_files:
+        fpath = f.get("Path", f.get("Name", ""))
+        p = PurePosixPath(fpath)
+        stem = p.stem
+        suffix = p.suffix
+        parent = p.parent
+
+        # Strip all _surrog occurrences from the stem
+        clean_stem = _SURROG_PATTERN.sub("", stem)
+        if clean_stem == stem:
+            # No actual _surrog pattern (shouldn't happen but be safe)
+            continue
+
+        # Compute a proper hash suffix: use MD5 of the clean path for determinism
+        clean_base = str(parent / f"{clean_stem}{suffix}")
+        raw_hash = hashlib.md5(clean_base.encode()).hexdigest()  # noqa: S324
+        hash_suffix = raw_hash[:6]
+        candidate = str(parent / f"{clean_stem}_{hash_suffix}{suffix}")
+
+        # Extend hash if collision
+        hash_len = 6
+        while candidate in all_dest_paths and candidate != fpath and hash_len < len(raw_hash):
+            hash_len = min(hash_len + 4, len(raw_hash))
+            candidate = str(parent / f"{clean_stem}_{raw_hash[:hash_len]}{suffix}")
+
+        if candidate in all_dest_paths and candidate != fpath:
+            # Even with full hash there's a collision -- skip to avoid overwrite
+            logger.warning("surrog_cleanup: skipping %s, clean name %s already exists", fpath, candidate)
+            skipped += 1
+            continue
+
+        if candidate == fpath:
+            # Already clean (unlikely but possible)
+            continue
+
+        rename_tasks.append((fpath, candidate))
+        # Reserve the new path to prevent collisions within this batch
+        all_dest_paths.add(candidate)
+
+    if not rename_tasks:
+        logger.info("surrog_cleanup: no renames needed after analysis")
+        return {"renamed": 0, "failed": 0, "skipped": skipped}
+
+    logger.info("surrog_cleanup: %d renames to execute", len(rename_tasks))
+
+    def _do_rename(old_path: str, new_path: str) -> tuple[str, str, bool, str | None]:
+        src_full = f"{ctx.config.dest_path}/{old_path}"
+        dst_full = f"{ctx.config.dest_path}/{new_path}"
+        logger.info("surrog_cleanup: %s -> %s", old_path, new_path)
+        result = _rclone_moveto(ctx.config.dest_remote, src_full, ctx.config.dest_remote, dst_full)
+        return (old_path, new_path, result["success"], result.get("error"))
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futures = [pool.submit(_do_rename, old, new) for old, new in rename_tasks]
+        for idx, future in enumerate(as_completed(futures)):
+            if idx % 50 == 0 and _check_pause(ctx):
+                ctx.report(Phase.ORGANIZE, "Pozastaveno uzivatelem", 10)
+                for f_remaining in futures:
+                    f_remaining.cancel()
+                break
+
+            old_path, new_path, success, error = future.result()
+            if success:
+                renamed += 1
+                # Update checkpoint DB: replace old dest_location with new one
+                old_dest_loc = f"{ctx.config.dest_remote}:{ctx.config.dest_path}/{old_path}"
+                new_dest_loc = f"{ctx.config.dest_remote}:{ctx.config.dest_path}/{new_path}"
+                try:
+                    conn = ctx.cat.conn
+                    with conn:
+                        conn.execute(
+                            """UPDATE consolidation_file_state
+                               SET dest_location = ?, updated_at = ?
+                               WHERE job_id = ? AND dest_location = ?""",
+                            (new_dest_loc, datetime.now(tz=timezone.utc).isoformat(), ctx.job.job_id, old_dest_loc),
+                        )
+                except Exception as db_exc:
+                    logger.warning("surrog_cleanup: DB update failed for %s: %s", old_path, db_exc)
+
+                # Update the in-memory dest_files list so organize phase sees correct paths
+                for ff in dest_files:
+                    if ff.get("Path") == old_path or ff.get("Name") == old_path:
+                        if "Path" in ff:
+                            ff["Path"] = new_path
+                        if "Name" in ff:
+                            ff["Name"] = PurePosixPath(new_path).name
+                        break
+            else:
+                failed += 1
+                logger.warning("surrog_cleanup: failed to rename %s -> %s: %s", old_path, new_path, error)
+
+            if (idx + 1) % 25 == 0:
+                ctx.report(
+                    Phase.ORGANIZE,
+                    f"Surrog cleanup: {renamed}/{len(rename_tasks)} prejmenovano...",
+                    10,
+                )
+
+    logger.info("surrog_cleanup: done — renamed=%d, failed=%d, skipped=%d", renamed, failed, skipped)
+    return {"renamed": renamed, "failed": failed, "skipped": skipped}
+
+
 def _phase_10_organize(ctx: PhaseContext) -> None:
     """Phase 10: Organize files on destination by category and date.
 
@@ -1911,6 +2065,10 @@ def _phase_10_organize(ctx: PhaseContext) -> None:
         ctx.results["organize"] = {"error": str(exc)[:ERROR_TRUNCATE_LEN]}
         ctx.finish_phase(Phase.ORGANIZE)
         return
+
+    # --- Step 0: Clean up accumulated _surrog suffixes ---
+    surrog_result = _surrog_cleanup(ctx, dest_files)
+    ctx.results["surrog_cleanup"] = surrog_result
 
     moves_done = 0
     moves_failed = 0
