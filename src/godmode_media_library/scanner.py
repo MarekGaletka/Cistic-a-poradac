@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -30,6 +31,7 @@ def incremental_scan(
     exiftool_bin: str = "exiftool",
     workers: int = 1,
     progress_callback: Callable[[dict], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> ScanStats:
     """Scan filesystem roots and update catalog incrementally.
 
@@ -76,6 +78,13 @@ def incremental_scan(
     unchanged_indices: list[tuple[int, str]] = []  # (file_infos index, path_str) for batch load
 
     for idx, path in enumerate(all_paths):
+        if idx % 100 == 0:
+            if cancel_event and cancel_event.is_set():
+                logger.info("Scan cancelled by pause signal")
+                catalog.commit()
+                return stats
+            if progress_callback and idx % 500 == 0:
+                progress_callback({"phase": "scanning", "total": len(all_paths), "processed": idx})
         try:
             st = path.stat()
         except OSError:
@@ -86,15 +95,17 @@ def incremental_scan(
         seen_paths.add(path_str)
         stats.files_scanned += 1
 
-        size = int(st.st_size)
+        _SQLITE_MAX_INT = 2**63 - 1
+
+        size = min(int(st.st_size), _SQLITE_MAX_INT)
         mtime = float(st.st_mtime)
         ctime = float(st.st_ctime)
         ext = path.suffix.lower().lstrip(".")
         birthtime = safe_stat_birthtime(path)
         xattr = meaningful_xattr_count(path)
-        inode = int(st.st_ino)
-        device = int(st.st_dev)
-        nlink = int(st.st_nlink)
+        inode = min(int(st.st_ino), _SQLITE_MAX_INT)
+        device = min(int(st.st_dev), _SQLITE_MAX_INT)
+        nlink = min(int(st.st_nlink), _SQLITE_MAX_INT)
         asset_key = path_to_key.get(path)
         is_component = path_is_component.get(path, False)
 
@@ -175,6 +186,10 @@ def incremental_scan(
                     )
 
     # ── Phase 2: Parallel SHA-256 hashing ─────────────────────────────
+    if cancel_event and cancel_event.is_set():
+        logger.info("Scan cancelled by pause signal before hashing")
+        catalog.commit()
+        return stats
     if progress_callback:
         progress_callback({"phase": "hashing", "total": len(all_paths), "processed": stats.files_scanned, "to_hash": len(paths_to_hash)})
     if paths_to_hash:
@@ -245,6 +260,10 @@ def incremental_scan(
                 file_infos[fi_idx]["phash"] = _compute_phash(p, ext)
 
     # ── Phase 5: Sequential catalog upsert ────────────────────────────
+    if cancel_event and cancel_event.is_set():
+        logger.info("Scan cancelled by pause signal before saving")
+        catalog.commit()
+        return stats
     if progress_callback:
         progress_callback({"phase": "saving", "total": len(file_infos), "processed": 0})
     for upsert_idx, info in enumerate(file_infos):

@@ -243,7 +243,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             "default-src 'self'; "
             "script-src 'self' https://unpkg.com; "
             "style-src 'self' 'unsafe-inline' https://unpkg.com; "
-            "img-src 'self' data: blob:; "
+            "img-src 'self' data: blob: https://*.tile.openstreetmap.org; "
             "connect-src 'self' ws: wss:"
         )
         # Prevent browser caching of JS/CSS so changes are picked up immediately

@@ -117,7 +117,7 @@ PHASE_NUMBER: dict[str, int] = {
 # ---------------------------------------------------------------------------
 
 # Batch sizes
-STREAM_BATCH_SIZE = 200
+STREAM_BATCH_SIZE = 1000
 CATALOG_COMMIT_INTERVAL = 1000
 VERIFY_REPORT_INTERVAL = 50
 

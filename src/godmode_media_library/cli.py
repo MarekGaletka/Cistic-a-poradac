@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -448,6 +449,107 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _get_pid_file() -> Path:
+    """Return the canonical PID file path (shared with .app launcher)."""
+    app_support = Path.home() / "Library" / "Application Support" / "GOD MODE Media Library"
+    app_support.mkdir(parents=True, exist_ok=True)
+    return app_support / "server.pid"
+
+
+def _kill_old_server(port: int) -> None:
+    """Kill ALL existing server instances to prevent DB locks and zombie processes.
+
+    Uses two strategies:
+      1. PID file (shared with .app launcher) — reliable for known instances
+      2. lsof port scan — catches orphans not tracked by PID file
+      3. Process name scan — catches instances on different ports
+
+    Waits with verification that processes actually died.
+    """
+    import signal
+    import subprocess as _sp
+    import time
+
+    my_pid = os.getpid()
+    pids_to_kill: set[int] = set()
+
+    # Strategy 1: PID file
+    pid_file = _get_pid_file()
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+            if old_pid != my_pid:
+                try:
+                    os.kill(old_pid, 0)  # Check if alive
+                    pids_to_kill.add(old_pid)
+                except OSError:
+                    pass  # Already dead
+            pid_file.unlink(missing_ok=True)
+        except (ValueError, OSError):
+            pid_file.unlink(missing_ok=True)
+
+    # Strategy 2: lsof port scan
+    try:
+        result = _sp.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for p in result.stdout.split():
+            p = p.strip()
+            if p and int(p) != my_pid:
+                pids_to_kill.add(int(p))
+    except (OSError, ValueError, _sp.TimeoutExpired):
+        pass
+
+    # Strategy 3: Find all 'gml serve' processes (catches instances on other ports)
+    try:
+        result = _sp.run(
+            ["pgrep", "-f", "gml serve"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for p in result.stdout.split():
+            p = p.strip()
+            if p and int(p) != my_pid:
+                pids_to_kill.add(int(p))
+    except (OSError, ValueError, _sp.TimeoutExpired):
+        pass
+
+    if not pids_to_kill:
+        return
+
+    # SIGTERM all found processes
+    for pid in pids_to_kill:
+        try:
+            print(f"Ukončuji předchozí server (PID {pid})...")
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    # Wait up to 5 seconds for graceful shutdown, verify each process died
+    for _ in range(10):
+        still_alive = set()
+        for pid in pids_to_kill:
+            try:
+                os.kill(pid, 0)
+                still_alive.add(pid)
+            except OSError:
+                pass
+        if not still_alive:
+            break
+        time.sleep(0.5)
+    else:
+        # Force kill any remaining
+        for pid in still_alive:
+            try:
+                print(f"Vynucuji ukončení serveru (PID {pid})...")
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.5)
+
+    print(f"Ukončeno {len(pids_to_kill)} předchozích instancí.")
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     try:
         import uvicorn  # Lazy import: optional dependency, may not be installed
@@ -455,6 +557,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print("Web UI requires: pip install godmode-media-library[web]")
         print("  or: pip install fastapi uvicorn[standard]")
         return 2
+
+    _kill_old_server(args.port)
+
+    # Write PID file (same location as .app launcher) so both know about each other
+    pid_file = _get_pid_file()
+    pid_file.write_text(str(os.getpid()))
 
     from .web.app import create_app  # Lazy import: only needed when serving web UI
 
@@ -469,7 +577,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     print("GOD MODE Media Library — Web UI")
     print(f"http://{args.host}:{args.port}")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    finally:
+        pid_file.unlink(missing_ok=True)
     return 0
 
 

@@ -92,7 +92,7 @@ def _consolidation_progress_dict(p) -> dict:
     return {
         "phase": p.phase,
         "phase_label": p.phase_label,
-        "current_step": p.current_step,
+        "current_step": max(p.current_step, 1),
         "total_steps": p.total_steps,
         "files_cataloged": p.files_cataloged,
         "files_unique": p.files_unique,
@@ -107,6 +107,7 @@ def _consolidation_progress_dict(p) -> dict:
         "errors": p.errors,
         "paused": p.paused,
         "dry_run": p.dry_run,
+        "current_file": getattr(p, "current_file", ""),
     }
 
 
@@ -171,6 +172,22 @@ def consolidation_status(request: Request):
             status["disk_free_gb"] = round(usage.free / (1024**3), 2)
         except OSError:
             pass
+
+    # Enrich active job with live task progress (files_cataloged, phase_label, etc.)
+    if status.get("has_active_job") and status.get("jobs"):
+        active = status["jobs"][0]
+        try:
+            from ..shared import _tasks as tasks_dict, _tasks_lock
+            with _tasks_lock:
+                snapshot = list(tasks_dict.values())
+            for t in snapshot:
+                if getattr(t, "command", "").startswith("consolidation:") and getattr(t, "status", None) == "running":
+                    prog = getattr(t, "progress", None)
+                    if prog:
+                        active["task_progress"] = prog
+                    break
+        except Exception:
+            pass  # best-effort enrichment
 
     return status
 

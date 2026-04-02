@@ -54,7 +54,7 @@ import tempfile
 import threading
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -65,9 +65,12 @@ from .catalog import Catalog
 from .cloud import (
     RcloneTransferError,
     _dynamic_timeout,
+    _rclone_bin,
+    check_rclone,
     check_volume_mounted,
     get_native_hash_type,
     list_remotes,
+    rclone_bulk_copy,
     rclone_check_file,
     rclone_copy,
     rclone_copyto,
@@ -75,6 +78,7 @@ from .cloud import (
     rclone_hashsum,
     rclone_is_reachable,
     rclone_ls_paginated,
+    rclone_server_side_move,
     rclone_verify_transfer,
     retry_with_backoff,
     wait_for_connectivity,
@@ -324,6 +328,23 @@ def _software_subcategory(path: str) -> str:
     return "Other"
 
 
+def _check_pause(ctx: PhaseContext) -> bool:
+    """Check if the job was paused. Returns True if paused (caller should break/return)."""
+    with _pause_events_lock:
+        entry = _pause_events.get(ctx.job.job_id)
+        if entry and entry[0].is_set():
+            logger.info("Job %s paused via in-process signal", ctx.job.job_id)
+            ckpt.update_job(ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED)
+            ctx.progress.paused = True
+            return True
+    _job_check = ckpt.get_job(ctx.cat, ctx.job.job_id)
+    if _job_check and _job_check.status == JobStatus.PAUSED:
+        logger.info("Job %s paused externally", ctx.job.job_id)
+        ctx.progress.paused = True
+        return True
+    return False
+
+
 def _build_dest_path(
     base_path: str,
     filename: str,
@@ -373,7 +394,9 @@ def _make_collision_safe(
     stem = p.stem
     suffix = p.suffix
     # MD5 is used here only for collision-avoidance suffix generation, not security.
-    full_hash = file_hash if file_hash else hashlib.md5(dest_path.encode()).hexdigest()  # noqa: S324
+    raw_hash = file_hash if file_hash else hashlib.md5(dest_path.encode()).hexdigest()  # noqa: S324
+    # Strip "surrogate:" prefix so suffix is a real hex hash, not "_surrog"
+    full_hash = raw_hash.split(":", 1)[1] if ":" in raw_hash else raw_hash
 
     hash_len = 6
     candidate = str(p.parent / f"{stem}_{full_hash[:hash_len]}{suffix}")
@@ -543,30 +566,108 @@ def _phase_1_wait_for_sources(ctx: PhaseContext) -> None:
     ctx.finish_phase(Phase.WAIT_FOR_SOURCES)
 
 
+def _rclone_lsjson_recursive_stream(remote: str, timeout: int = 1800) -> Iterator[dict]:
+    """Single recursive rclone lsjson call — much faster than folder-by-folder walk.
+
+    Uses ``--fast-list`` for providers that support it (gdrive, s3, etc.)
+    which reduces API calls dramatically.  Streams results by reading
+    stdout incrementally so memory stays bounded.
+    """
+    if not check_rclone():
+        return
+    cmd = [
+        _rclone_bin(), "lsjson", f"{remote}:",
+        "-R", "--no-mimetype", "--fast-list",
+    ]
+    logger.info("cloud_catalog: starting %s", " ".join(cmd))
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError as exc:
+        logger.warning("rclone lsjson spawn error for %s: %s", remote, exc)
+        return
+
+    import ijson  # type: ignore[import-untyped]
+
+    try:
+        # ijson streams JSON array items one by one — constant memory
+        for item in ijson.items(proc.stdout, "item"):  # type: ignore[arg-type]
+            yield item
+    except Exception:
+        # Fallback: if ijson is not installed, read full output
+        pass
+    finally:
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    if proc.returncode and proc.returncode != 0:
+        stderr = (proc.stderr.read() if proc.stderr else "") or ""
+        logger.warning("rclone lsjson -R failed for %s (rc=%d): %s", remote, proc.returncode, stderr[:300])
+
+
+def _rclone_lsjson_recursive_fallback(remote: str, timeout: int = 1800) -> list[dict]:
+    """Fallback: single recursive call, parse full JSON output at once."""
+    if not check_rclone():
+        return []
+    cmd = [
+        _rclone_bin(), "lsjson", f"{remote}:",
+        "-R", "--no-mimetype", "--fast-list",
+    ]
+    logger.info("cloud_catalog fallback: %s", " ".join(cmd))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode != 0:
+            logger.warning("rclone lsjson -R failed for %s: %s", remote, result.stderr[:300])
+            return []
+        return json.loads(result.stdout) if result.stdout.strip() else []
+    except subprocess.TimeoutExpired:
+        logger.warning("rclone lsjson -R timed out for %s after %ds", remote, timeout)
+        return []
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("rclone lsjson -R error for %s: %s", remote, exc)
+        return []
+
+
+def _rclone_lsjson_fast(remote: str, timeout: int = 1800) -> Iterator[dict]:
+    """Best-effort fast recursive listing — tries ijson streaming, falls back to full parse."""
+    try:
+        import ijson  # noqa: F401
+        yield from _rclone_lsjson_recursive_stream(remote, timeout)
+    except ImportError:
+        logger.info("ijson not installed, using full-parse fallback for %s", remote)
+        yield from _rclone_lsjson_recursive_fallback(remote, timeout)
+
+
 def _phase_2_cloud_catalog_scan(ctx: PhaseContext) -> None:
-    """Phase 2: Paginated metadata scan of all cloud remotes."""
+    """Phase 2: Fast recursive scan of all cloud remotes."""
     if ctx.phase_done(Phase.CLOUD_CATALOG_SCAN):
         logger.info("Phase %s already done, skipping", Phase.CLOUD_CATALOG_SCAN)
         return
 
-    ctx.report(Phase.CLOUD_CATALOG_SCAN, "Katalogizace vzdálených zdroju...", 2)
+    ctx.report(Phase.CLOUD_CATALOG_SCAN, "Katalogizace vzdálených zdrojů...", 2)
     ckpt.update_job(ctx.cat, ctx.job.job_id, current_step=Phase.CLOUD_CATALOG_SCAN)
 
     total_cataloged = 0
     total_skipped_non_media = 0
+    remote_count = len(ctx.available)
     conn = ctx.conn
+    commit_interval = 100  # frequent commits & progress updates
 
-    for rname in ctx.available:
-        ctx.report(Phase.CLOUD_CATALOG_SCAN, f"Skenuji {rname}...", 2, files_cataloged=total_cataloged)
+    for ridx, rname in enumerate(ctx.available):
+        _check_pause(ctx)
+        # Skip dest remote to prevent self-copy (gws-backup copying its own GML-Consolidated)
+        if rname == ctx.config.dest_remote:
+            logger.info("Skipping dest remote %s to prevent self-copy", rname)
+            continue
+        ctx.report(
+            Phase.CLOUD_CATALOG_SCAN,
+            f"Skenuji {rname}... ({ridx + 1}/{remote_count})",
+            2,
+            files_cataloged=total_cataloged,
+        )
         try:
-            files = rclone_ls_paginated(
-                rname,
-                "",
-                max_depth=-1,
-                inter_page_delay=ctx.config.api_delay,
-            )
-
-            for f in files:
+            for f in _rclone_lsjson_fast(rname):
                 if f.get("IsDir"):
                     continue
 
@@ -621,9 +722,14 @@ def _phase_2_cloud_catalog_scan(ctx: PhaseContext) -> None:
 
                 total_cataloged += 1
 
-                if total_cataloged % CATALOG_COMMIT_INTERVAL == 0:
+                if total_cataloged % commit_interval == 0:
                     conn.commit()
-                    ctx.report(Phase.CLOUD_CATALOG_SCAN, f"Skenuji {rname}... ({total_cataloged})", 2, files_cataloged=total_cataloged)
+                    ctx.report(
+                        Phase.CLOUD_CATALOG_SCAN,
+                        f"Skenuji {rname}... ({total_cataloged} souborů)",
+                        2,
+                        files_cataloged=total_cataloged,
+                    )
 
             conn.commit()
 
@@ -653,10 +759,27 @@ def _phase_3_local_scan(ctx: PhaseContext) -> None:
         try:
             from .scanner import incremental_scan  # Lazy import to avoid circular dependency
 
+            # Get pause event for this job
+            with _pause_events_lock:
+                pause_entry = _pause_events.get(ctx.job.job_id)
+                pause_event = pause_entry[0] if pause_entry else None
+
+            def _scan_progress(info):
+                processed = info.get("processed", 0)
+                total_files = info.get("total", 0)
+                ctx.report(
+                    Phase.LOCAL_SCAN,
+                    f"Skenovani lokalnich souboru... ({processed:,}/{total_files:,})",
+                    3,
+                    files_cataloged=ctx.progress.files_cataloged + processed,
+                )
+
             stats = incremental_scan(
                 catalog=ctx.cat,
                 roots=[Path(r) for r in ctx.config.local_roots],
                 workers=ctx.config.scan_workers,
+                progress_callback=_scan_progress,
+                cancel_event=pause_event,
             )
             local_scanned = getattr(stats, "files_scanned", 0) if stats else 0
         except PermissionError as exc:
@@ -737,6 +860,21 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
     conn = ctx.conn
     conn.row_factory = sqlite3.Row
+
+    # Recovery: fix files that were transferred via bulk copy but process crashed
+    # before server-side moves could mark them COMPLETED. Only recover files with
+    # staging dest_location (set by post-bulk-copy marking), not files with final
+    # dest (set during IN_PROGRESS planning — may not have been transferred).
+    _recovered = conn.execute(
+        """UPDATE consolidation_file_state
+           SET status = 'completed', updated_at = ?
+           WHERE job_id = ? AND step_name = ? AND status IN ('pending', 'in_progress')
+             AND dest_location LIKE '%/.staging/%'""",
+        (datetime.now(timezone.utc).isoformat(), ctx.job.job_id, Phase.STREAM),
+    ).rowcount
+    if _recovered:
+        conn.commit()
+        logger.info("Recovery: marked %d bulk-copied files as completed (staging dest found)", _recovered)
 
     # Get ALL cloud files for transfer (no dedup filtering)
     cur = conn.execute("""
@@ -893,26 +1031,23 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 break
 
         source_failures: dict[str, int] = {}
+        PARALLEL_TRANSFERS = 8
+
+        # --- Prepare batch: build transfer tasks sequentially ---
+        transfer_tasks: list[tuple] = []  # (fs, src_remote, src_path, dest_path, file_size)
 
         for fs in pending:
-            # Per-file pause check — responsive to user pause requests
+            # Pause check between preparations
             with _pause_events_lock:
                 _pause_entry_inner = _pause_events.get(ctx.job.job_id)
                 _pause_signaled_inner = _pause_entry_inner[0].is_set() if _pause_entry_inner else False
             if _pause_signaled_inner:
-                logger.info("Job %s paused via signal (per-file check), stopping", ctx.job.job_id)
+                logger.info("Job %s paused via signal, stopping", ctx.job.job_id)
                 ckpt.update_job(ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED)
                 ctx.progress.paused = True
                 ctx.report(Phase.STREAM, "Pozastaveno uzivatelem", 5)
                 break
-            _job_check_inner = ckpt.get_job(ctx.cat, ctx.job.job_id)
-            if _job_check_inner and _job_check_inner.status == JobStatus.PAUSED:
-                logger.info("Job %s paused (per-file check), stopping", ctx.job.job_id)
-                ctx.progress.paused = True
-                ctx.report(Phase.STREAM, "Pozastaveno uzivatelem", 5)
-                break
 
-            # --- Google 750GB/day upload limit check ---
             if ctx.daily_bytes_uploaded >= GOOGLE_DAILY_UPLOAD_SAFETY:
                 pause_msg = "Denní limit Google uploadu (750 GB) — pipeline automaticky pokračuje zítra"
                 logger.warning("Daily upload limit reached (%d bytes), pausing", ctx.daily_bytes_uploaded)
@@ -922,273 +1057,271 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 ctx.report(Phase.STREAM, pause_msg, 5)
                 break
 
-            # --- Watchdog stall detection ---
-            time_since_last = time.monotonic() - ctx.last_transfer_time
-            if time_since_last > WATCHDOG_STALL_SECONDS:
-                ctx.progress.error = "Možná zaseklé — zkontroluj připojení"
-                ctx.report(Phase.STREAM, ctx.progress.error, 5)
-
             parts = fs.source_location.split(":", 1)
             src_remote = parts[0]
             src_path = parts[1] if len(parts) > 1 else parts[0]
 
-            # Report current file being processed
-            ctx.progress.current_file = PurePosixPath(src_path).name
-
             if src_remote == "local":
-                # Local files: upload to destination
-                local_path = src_path
-                if not os.path.exists(local_path):
-                    ckpt.mark_file(
-                        ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                        Phase.STREAM, FileStatus.FAILED, error="Lokální soubor nenalezen",
-                    )
-                    continue
-                # Use rclone copyto for local → cloud
-                src_remote_for_transfer = ""
-                src_path_for_transfer = local_path
-            else:
-                src_remote_for_transfer = src_remote
-                src_path_for_transfer = src_path
-
-            # Source remote connectivity check (skip for local)
-            if src_remote != "local":
-                if source_failures.get(src_remote, 0) >= MAX_SOURCE_FAILURES:
-                    logger.warning(
-                        "Source %s has %d consecutive failures, deferring remaining files",
-                        src_remote, source_failures[src_remote],
-                    )
+                if not os.path.exists(src_path):
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
+                                   Phase.STREAM, FileStatus.FAILED, error="Lokální soubor nenalezen")
                     continue
 
-                if not rclone_is_reachable(src_remote, timeout=10):
-                    logger.warning("Source %s unreachable, waiting...", src_remote)
-                    if not wait_for_connectivity(src_remote, timeout=SOURCE_CONNECTIVITY_WAIT):
-                        source_failures[src_remote] = source_failures.get(src_remote, 0) + MAX_SOURCE_FAILURES
-                        logger.warning("Source %s still unreachable, skipping batch", src_remote)
-                        continue
-
-                # Verify source file still exists (handles resume after source disappears)
-                src_check = rclone_check_file(src_remote, src_path)
-                if not src_check.get("exists"):
-                    logger.warning("Source file disappeared: %s:%s", src_remote, src_path)
-                    ckpt.mark_file(
-                        ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                        Phase.STREAM, FileStatus.FAILED, error="source disappeared",
-                    )
-                    continue
-
-            # --- Bundle integrity: transfer bundle as directory ---
-            bundle_root = _get_bundle_root(src_path) if src_remote != "local" else None
-            if bundle_root and src_remote != "local":
-                # Transfer entire bundle directory
-                dest_bundle_path = f"{ctx.config.dest_path}/{bundle_root}"
-                ckpt.mark_file(
-                    ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                    Phase.STREAM, FileStatus.IN_PROGRESS,
-                    dest=f"{ctx.config.dest_remote}:{dest_bundle_path}",
-                )
-                try:
-                    result = _rclone_copy_dir(src_remote, bundle_root, ctx.config.dest_remote, dest_bundle_path)
-                    if result["success"]:
-                        ckpt.mark_file(
-                            ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                            Phase.STREAM, FileStatus.COMPLETED,
-                            dest=f"{ctx.config.dest_remote}:{dest_bundle_path}",
-                        )
-                        ctx.last_transfer_time = time.monotonic()
-                        # Clear watchdog warning on success
-                        if ctx.progress.error == "Možná zaseklé — zkontroluj připojení":
-                            ctx.progress.error = None
-                    else:
-                        ckpt.mark_file(
-                            ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                            Phase.STREAM, FileStatus.FAILED,
-                            error=result.get("error", "bundle copy failed")[:ERROR_TRUNCATE_LEN],
-                        )
-                except Exception as exc:
-                    ckpt.mark_file(
-                        ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                        Phase.STREAM, FileStatus.FAILED,
-                        error=str(exc)[:ERROR_TRUNCATE_LEN],
-                    )
+            if src_remote != "local" and source_failures.get(src_remote, 0) >= MAX_SOURCE_FAILURES:
                 continue
 
-            # Build collision-safe destination path (single query for date + size)
+            # Bundle handling (sequential — rare)
+            bundle_root = _get_bundle_root(src_path) if src_remote != "local" else None
+            if bundle_root and src_remote != "local":
+                dest_bundle_path = f"{ctx.config.dest_path}/{bundle_root}"
+                ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
+                               Phase.STREAM, FileStatus.IN_PROGRESS,
+                               dest=f"{ctx.config.dest_remote}:{dest_bundle_path}")
+                try:
+                    result = _rclone_copy_dir(src_remote, bundle_root, ctx.config.dest_remote, dest_bundle_path)
+                    status = FileStatus.COMPLETED if result["success"] else FileStatus.FAILED
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
+                                   Phase.STREAM, status,
+                                   dest=f"{ctx.config.dest_remote}:{dest_bundle_path}",
+                                   error=None if result["success"] else result.get("error", "")[:ERROR_TRUNCATE_LEN])
+                    if result["success"]:
+                        ctx.last_transfer_time = time.monotonic()
+                except Exception as exc:
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
+                                   Phase.STREAM, FileStatus.FAILED, error=str(exc)[:ERROR_TRUNCATE_LEN])
+                continue
+
+            # Build collision-safe destination path
             filename = PurePosixPath(src_path).name
-            file_row = conn.execute(
-                "SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
-                (fs.file_hash,),
-            ).fetchone()
+            file_row = conn.execute("SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
+                                    (fs.file_hash,)).fetchone()
             mod_time = file_row["date_original"] if file_row else None
             file_size = file_row["size"] if file_row else None
 
-            dest_path = _build_dest_path(
-                ctx.config.dest_path,
-                filename,
-                fs.file_hash,
-                mod_time,
-                ctx.config.structure_pattern,
-            )
+            dest_path = _build_dest_path(ctx.config.dest_path, filename, fs.file_hash, mod_time,
+                                         ctx.config.structure_pattern)
             if dest_path in dest_paths_used:
                 dest_path = _make_collision_safe(dest_path, fs.file_hash, dest_paths_used)
             dest_paths_used.add(dest_path)
 
-            # Get source hash for post-transfer comparison (if dest supports it)
-            source_hash = None
-            if dest_hash_type and src_remote != "local":
-                source_hash = rclone_hashsum(src_remote, src_path, hash_type=dest_hash_type)
+            ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
+                           Phase.STREAM, FileStatus.IN_PROGRESS,
+                           dest=f"{ctx.config.dest_remote}:{dest_path}")
 
-            # Transfer
-            ckpt.mark_file(
-                ctx.cat,
-                ctx.job.job_id,
-                fs.file_hash,
-                fs.source_location,
-                Phase.STREAM,
-                FileStatus.IN_PROGRESS,
-                dest=f"{ctx.config.dest_remote}:{dest_path}",
-            )
+            transfer_tasks.append((fs, src_remote, src_path, dest_path, file_size))
 
-            try:
-                result = retry_with_backoff(
-                    rclone_copyto,
-                    src_remote_for_transfer if src_remote != "local" else src_path,
-                    src_path_for_transfer if src_remote != "local" else "",
-                    ctx.config.dest_remote,
-                    dest_path,
-                    max_retries=ctx.config.max_transfer_retries,
-                    retryable_exceptions=(RcloneTransferError, RuntimeError, OSError),
-                    file_size=file_size,
-                    bwlimit=ctx.config.bwlimit,
-                    checksum=True,
-                    raise_on_failure=True,
+        if ctx.progress.paused:
+            break
+
+        # --- Execute transfers using BULK mode ---
+        if not transfer_tasks:
+            pending = ckpt.get_pending_files(ctx.cat, ctx.job.job_id, Phase.STREAM, limit=STREAM_BATCH_SIZE)
+            continue
+
+        # Group tasks by source remote for bulk transfer
+        from collections import defaultdict
+        remote_groups: dict[str, list[tuple]] = defaultdict(list)
+        for task in transfer_tasks:
+            fs, src_remote, src_path, dest_path, file_size = task
+            remote_groups[src_remote].append(task)
+
+        for src_remote, tasks in remote_groups.items():
+            if ctx.progress.paused:
+                break
+
+            if src_remote == "local":
+                # ── BULK LOCAL TRANSFER ──
+                # Same pattern as cloud bulk: copy to staging, then server-side move
+                staging_base = f"{ctx.config.dest_path}/.staging/local"
+                src_paths = [t[2] for t in tasks]  # absolute local paths
+                task_map = {t[2]: t for t in tasks}
+
+                ctx.report(Phase.STREAM, f"Bulk upload: local ({len(tasks)} souborů)...", 5,
+                           files_transferred=_wal_counter, bytes_transferred=total_stream_bytes)
+
+                def _bulk_local_progress(files_done, bytes_done, speed_bps):
+                    ctx.progress.current_file = f"local: {files_done}/{len(tasks)}"
+                    ctx.last_transfer_time = time.monotonic()
+                    mb_done = bytes_done / (1024 * 1024)
+                    speed_mbs = speed_bps / (1024 * 1024) if speed_bps else 0
+                    label = f"local: {files_done}/{len(tasks)} ({mb_done:.0f} MB)"
+                    if speed_mbs:
+                        label += f" [{speed_mbs:.1f} MB/s]"
+                    ctx.report(Phase.STREAM, label, 5,
+                               files_transferred=_wal_counter + files_done,
+                               bytes_transferred=total_stream_bytes + bytes_done,
+                               transfer_speed_bps=speed_bps)
+
+                bulk_result = rclone_bulk_copy(
+                    "local", ctx.config.dest_remote, staging_base, src_paths,
+                    transfers=4, checkers=8, bwlimit=ctx.config.bwlimit,
+                    progress_fn=_bulk_local_progress,
                 )
 
-                if result["success"]:
-                    verify = rclone_verify_transfer(
-                        ctx.config.dest_remote,
-                        dest_path,
-                        expected_size=file_size,
-                        expected_hash=source_hash,
-                        hash_type=dest_hash_type or "sha256",
-                    )
-                    if verify["verified"]:
-                        transferred_bytes = result["bytes"] or file_size or 0
-                        ckpt.mark_file(
-                            ctx.cat,
-                            ctx.job.job_id,
-                            fs.file_hash,
-                            fs.source_location,
-                            Phase.STREAM,
-                            FileStatus.COMPLETED,
-                            dest=f"{ctx.config.dest_remote}:{dest_path}",
-                            bytes_transferred=transferred_bytes,
-                        )
-                        total_stream_bytes += transferred_bytes
-                        ctx.daily_bytes_uploaded += transferred_bytes
-                        ctx.last_transfer_time = time.monotonic()
-                        source_failures[src_remote] = 0
-                        # Clear watchdog warning on success
-                        if ctx.progress.error == "Možná zaseklé — zkontroluj připojení":
-                            ctx.progress.error = None
-                    else:
-                        error_msg = f"Verification failed: {verify.get('error', 'unknown')}"
-                        logger.error("VERIFY FAIL for %s: %s", fs.source_location, error_msg)
-                        ckpt.mark_file(
-                            ctx.cat,
-                            ctx.job.job_id,
-                            fs.file_hash,
-                            fs.source_location,
-                            Phase.STREAM,
-                            FileStatus.FAILED,
-                            error=error_msg,
-                        )
-                else:
-                    error_msg = result.get("error", "unknown")[:ERROR_TRUNCATE_LEN]
-                    ckpt.mark_file(
-                        ctx.cat,
-                        ctx.job.job_id,
-                        fs.file_hash,
-                        fs.source_location,
-                        Phase.STREAM,
-                        FileStatus.FAILED,
-                        error=error_msg,
-                    )
-                    source_failures[src_remote] = source_failures.get(src_remote, 0) + 1
-
+                if not bulk_result["success"]:
+                    error_msg = bulk_result.get("error", "bulk local upload failed")
+                    logger.warning("Bulk local upload failed: %s", error_msg)
                     if any(q in error_msg.lower() for q in QUOTA_ERRORS):
-                        logger.error("QUOTA/RATE LIMIT detected: %s — pausing job", error_msg)
-                        ckpt.update_job(
-                            ctx.cat,
-                            ctx.job.job_id,
-                            status=JobStatus.PAUSED,
-                            error=f"Cilové uloziste plné nebo rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}",
-                        )
+                        ckpt.update_job(ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED,
+                                        error=f"Rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}")
                         ctx.progress.paused = True
-                        ctx.report(Phase.STREAM, "Pozastaveno — uloziste plné", 5)
                         break
+                    for task in tasks:
+                        ckpt.mark_file(ctx.cat, ctx.job.job_id, task[0].file_hash, task[0].source_location,
+                                       Phase.STREAM, FileStatus.FAILED, error=error_msg[:ERROR_TRUNCATE_LEN])
+                    continue
 
-            except RcloneTransferError as exc:
-                error_msg = str(exc)[:ERROR_TRUNCATE_LEN]
-                ckpt.mark_file(
-                    ctx.cat,
-                    ctx.job.job_id,
-                    fs.file_hash,
-                    fs.source_location,
-                    Phase.STREAM,
-                    FileStatus.FAILED,
-                    error=error_msg,
-                )
-                source_failures[src_remote] = source_failures.get(src_remote, 0) + 1
+                total_stream_bytes += bulk_result["bytes"]
+                ctx.daily_bytes_uploaded += bulk_result["bytes"]
+                ctx.last_transfer_time = time.monotonic()
 
-                if any(q in error_msg.lower() for q in QUOTA_ERRORS):
-                    logger.error("QUOTA/RATE LIMIT detected after retries: %s — pausing job", error_msg)
-                    ckpt.update_job(
-                        ctx.cat,
-                        ctx.job.job_id,
-                        status=JobStatus.PAUSED,
-                        error=f"Cilové uloziste plné nebo rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}",
-                    )
-                    ctx.progress.paused = True
-                    ctx.report(Phase.STREAM, "Pozastaveno — uloziste plné", 5)
-                    break
-
-            except Exception as exc:
-                ckpt.mark_file(
-                    ctx.cat,
-                    ctx.job.job_id,
-                    fs.file_hash,
-                    fs.source_location,
-                    Phase.STREAM,
-                    FileStatus.FAILED,
-                    error=str(exc)[:ERROR_TRUNCATE_LEN],
-                )
-                source_failures[src_remote] = source_failures.get(src_remote, 0) + 1
-
-            # WAL checkpoint every 500 files
-            _wal_counter += 1
-            if _wal_counter % 500 == 0:
+                # Mark all COMPLETED with staging path
+                for task in tasks:
+                    t_fs = task[0]
+                    t_file_size = task[4]
+                    t_staging_dest = f"{staging_base}/{task[2]}"
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
+                                   Phase.STREAM, FileStatus.COMPLETED,
+                                   dest=f"{ctx.config.dest_remote}:{t_staging_dest}",
+                                   bytes_transferred=t_file_size or 0)
+                    _wal_counter += 1
                 ckpt.wal_checkpoint(ctx.cat)
 
-            # Progress update with EMA-smoothed speed
-            p = ckpt.get_job_progress(ctx.cat, ctx.job.job_id, Phase.STREAM)
-            elapsed = time.monotonic() - ctx.stream_start_time
-            instant_speed = _estimate_speed(total_stream_bytes, elapsed)
-            ctx.progress._ema_speed = _ema_speed(ctx.progress._ema_speed, instant_speed)
-            smoothed_speed = ctx.progress._ema_speed
-            remaining_bytes = total_bytes_estimate - total_stream_bytes
-            eta = int(remaining_bytes / smoothed_speed) if smoothed_speed > 0 else 0
+                # Server-side move from staging to final paths
+                from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            ctx.report(
-                Phase.STREAM,
-                f"Streaming: {ctx.progress.current_file}",
-                5,
-                files_transferred=p[FileStatus.COMPLETED],
-                bytes_transferred=p["bytes_transferred"],
-                errors=p[FileStatus.FAILED],
-                transfer_speed_bps=smoothed_speed,
-                eta_seconds=eta,
+                ctx.report(Phase.STREAM, f"Přesouvám {len(tasks)} souborů na finální cesty...", 5,
+                           bytes_transferred=total_stream_bytes)
+
+                def _do_local_move(task_args):
+                    t_fs, _, t_src_path, t_dest_path, t_file_size = task_args
+                    t_staging = f"{staging_base}/{t_src_path}"
+                    moved = rclone_server_side_move(ctx.config.dest_remote, t_staging, t_dest_path)
+                    return (t_fs, t_dest_path, t_staging, t_file_size, moved)
+
+                with ThreadPoolExecutor(max_workers=16) as pool:
+                    for future in as_completed([pool.submit(_do_local_move, t) for t in tasks]):
+                        t_fs, t_dest_path, t_staging, t_file_size, moved = future.result()
+                        if moved:
+                            ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
+                                           Phase.STREAM, FileStatus.COMPLETED,
+                                           dest=f"{ctx.config.dest_remote}:{t_dest_path}",
+                                           bytes_transferred=t_file_size or 0)
+                        else:
+                            logger.warning("Server-side move failed: %s → %s", t_staging, t_dest_path)
+                continue
+
+            # ── BULK CLOUD TRANSFER ──
+            # Phase A: Bulk copy all files from this remote to staging area
+            staging_base = f"{ctx.config.dest_path}/.staging/{src_remote}"
+            src_paths = [t[2] for t in tasks]  # extract src_path from each task
+            task_map = {t[2]: t for t in tasks}  # src_path → task tuple
+
+            ctx.report(Phase.STREAM, f"Bulk transfer: {src_remote} ({len(tasks)} souborů)...", 5,
+                       files_transferred=_wal_counter, bytes_transferred=total_stream_bytes)
+
+            def _bulk_progress(files_done, bytes_done, speed_bps):
+                ctx.progress.current_file = f"{src_remote}: {files_done}/{len(tasks)}"
+                ctx.last_transfer_time = time.monotonic()
+                mb_done = bytes_done / (1024 * 1024)
+                speed_mbs = speed_bps / (1024 * 1024) if speed_bps else 0
+                speed_str = f"{speed_mbs:.1f} MB/s" if speed_mbs else ""
+                label = f"{src_remote}: {files_done}/{len(tasks)} ({mb_done:.0f} MB)"
+                if speed_str:
+                    label += f" [{speed_str}]"
+                ctx.report(Phase.STREAM, label, 5,
+                           files_transferred=_wal_counter + files_done,
+                           bytes_transferred=total_stream_bytes + bytes_done,
+                           transfer_speed_bps=speed_bps)
+
+            bulk_result = rclone_bulk_copy(
+                src_remote, ctx.config.dest_remote, staging_base, src_paths,
+                transfers=32, checkers=64, bwlimit=ctx.config.bwlimit,
+                progress_fn=_bulk_progress,
             )
+
+            if not bulk_result["success"]:
+                error_msg = bulk_result.get("error", "bulk copy failed")
+                logger.warning("Bulk copy from %s failed: %s", src_remote, error_msg)
+                if any(q in error_msg.lower() for q in QUOTA_ERRORS):
+                    ckpt.update_job(ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED,
+                                    error=f"Rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}")
+                    ctx.progress.paused = True
+                    break
+                # Mark all as failed and continue to next remote
+                for task in tasks:
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, task[0].file_hash, task[0].source_location,
+                                   Phase.STREAM, FileStatus.FAILED, error=error_msg[:ERROR_TRUNCATE_LEN])
+                continue
+
+            total_stream_bytes += bulk_result["bytes"]
+            ctx.daily_bytes_uploaded += bulk_result["bytes"]
+            ctx.last_transfer_time = time.monotonic()
+
+            # CRITICAL: Mark ALL files COMPLETED immediately after bulk copy succeeds.
+            # This prevents re-transfer if the process crashes before server-side moves finish.
+            # Files are initially marked with staging path; server-side move updates to final path.
+            for task in tasks:
+                t_fs = task[0]
+                t_file_size = task[4]
+                t_staging_dest = f"{staging_base}/{task[2]}"
+                ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
+                               Phase.STREAM, FileStatus.COMPLETED,
+                               dest=f"{ctx.config.dest_remote}:{t_staging_dest}",
+                               bytes_transferred=t_file_size or 0)
+                _wal_counter += 1
+            ckpt.wal_checkpoint(ctx.cat)
+            logger.info("Marked %d files COMPLETED (staging) for %s after bulk copy", len(tasks), src_remote)
+
+            # Phase B: Server-side move from staging to final paths (instant on GDrive)
+            # Parallelized — each moveto is a metadata-only API call
+            ctx.report(Phase.STREAM, f"Přesouvám {len(tasks)} souborů na finální cesty...", 5,
+                       bytes_transferred=total_stream_bytes)
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            move_counter = 0
+
+            def _do_move(task_args):
+                t_fs, _, t_src_path, t_dest_path, t_file_size = task_args
+                t_staging = f"{staging_base}/{t_src_path}"
+                moved = rclone_server_side_move(ctx.config.dest_remote, t_staging, t_dest_path)
+                return (t_fs, t_dest_path, t_staging, t_file_size, moved)
+
+            with ThreadPoolExecutor(max_workers=16) as pool:
+                for future in as_completed([pool.submit(_do_move, t) for t in tasks]):
+                    t_fs, t_dest_path, t_staging, t_file_size, moved = future.result()
+                    move_counter += 1
+                    if moved:
+                        # Update dest to final path (status stays COMPLETED)
+                        ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
+                                       Phase.STREAM, FileStatus.COMPLETED,
+                                       dest=f"{ctx.config.dest_remote}:{t_dest_path}",
+                                       bytes_transferred=t_file_size or 0)
+                    else:
+                        logger.warning("Server-side move failed: %s → %s (file stays in staging)", t_staging, t_dest_path)
+                    if move_counter % 500 == 0:
+                        ckpt.wal_checkpoint(ctx.cat)
+
+        # Progress update after all remotes in this batch
+        p = ckpt.get_job_progress(ctx.cat, ctx.job.job_id, Phase.STREAM)
+        elapsed = time.monotonic() - ctx.stream_start_time
+        instant_speed = _estimate_speed(total_stream_bytes, elapsed)
+        ctx.progress._ema_speed = _ema_speed(ctx.progress._ema_speed, instant_speed)
+        smoothed_speed = ctx.progress._ema_speed
+        remaining_bytes = total_bytes_estimate - total_stream_bytes
+        eta = int(remaining_bytes / smoothed_speed) if smoothed_speed > 0 else 0
+
+        ctx.report(
+            Phase.STREAM,
+            f"Streaming: {ctx.progress.current_file or '...'}",
+            5,
+            files_transferred=p[FileStatus.COMPLETED],
+            bytes_transferred=p["bytes_transferred"],
+            errors=p[FileStatus.FAILED],
+            transfer_speed_bps=smoothed_speed,
+            eta_seconds=eta,
+        )
 
         if ctx.progress.paused:
             break
@@ -1223,127 +1356,75 @@ def _phase_6_retry_failed(ctx: PhaseContext) -> None:
         conn = ctx.conn
         conn.row_factory = sqlite3.Row
 
-        # Detect native hash type for destination
-        dest_hash_type = get_native_hash_type(ctx.config.dest_remote)
+        # Pre-filter: skip local, max attempts, unreachable remotes
+        reachable_cache: dict[str, bool] = {}
+        retry_tasks: list[tuple] = []  # (fs, src_remote, src_path, dest_path, file_size)
 
         for fs in failed_files:
             if fs.attempt_count >= MAX_RETRY_ATTEMPTS:
-                logger.warning("Skipping %s: too many attempts (%d)", fs.source_location, fs.attempt_count)
                 continue
-
             parts = fs.source_location.split(":", 1)
             src_remote = parts[0]
             src_path = parts[1] if len(parts) > 1 else parts[0]
-
             if src_remote == "local":
                 continue
-
-            if (
-                not rclone_is_reachable(src_remote, timeout=DEST_CONNECTIVITY_TIMEOUT)
-                and not wait_for_connectivity(src_remote, timeout=RETRY_CONNECTIVITY_WAIT)
-            ):
-                logger.warning("Source %s unreachable for retry, skipping", src_remote)
+            # Cache reachability per remote
+            if src_remote not in reachable_cache:
+                reachable_cache[src_remote] = (
+                    rclone_is_reachable(src_remote, timeout=DEST_CONNECTIVITY_TIMEOUT)
+                    or wait_for_connectivity(src_remote, timeout=RETRY_CONNECTIVITY_WAIT)
+                )
+            if not reachable_cache[src_remote]:
                 continue
 
-            file_row = conn.execute(
-                "SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
-                (fs.file_hash,),
-            ).fetchone()
+            file_row = conn.execute("SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
+                                    (fs.file_hash,)).fetchone()
             file_size = file_row["size"] if file_row else None
-
             if fs.dest_location and ":" in fs.dest_location:
                 dest_path = fs.dest_location.split(":", 1)[1]
             else:
                 filename = PurePosixPath(src_path).name
                 mod_time = file_row["date_original"] if file_row else None
-                dest_path = _build_dest_path(
-                    ctx.config.dest_path,
-                    filename,
-                    fs.file_hash,
-                    mod_time,
-                    ctx.config.structure_pattern,
-                )
-                logger.warning(
-                    "Retry %s: no stored dest_location, rebuilt path %s (may differ from Phase 5 collision-safe path)",
-                    fs.source_location,
-                    dest_path,
-                )
+                dest_path = _build_dest_path(ctx.config.dest_path, filename, fs.file_hash, mod_time,
+                                             ctx.config.structure_pattern)
+            retry_tasks.append((fs, src_remote, src_path, dest_path, file_size))
 
+        # Parallel retry transfers
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _do_retry(args):
+            r_fs, r_src_remote, r_src_path, r_dest_path, r_file_size = args
             try:
-                retry_timeout = (
-                    int(_dynamic_timeout(file_size) * ctx.config.retry_timeout_multiplier) if file_size else DEFAULT_RETRY_TIMEOUT
-                )
-                result = rclone_copyto(
-                    src_remote,
-                    src_path,
-                    ctx.config.dest_remote,
-                    dest_path,
-                    file_size=file_size,
-                    timeout=retry_timeout,
-                    bwlimit=ctx.config.bwlimit,
-                    checksum=True,
-                )
-
-                if result["success"]:
-                    # Get source hash for comparison
-                    retry_source_hash = None
-                    if dest_hash_type:
-                        retry_source_hash = rclone_hashsum(src_remote, src_path, hash_type=dest_hash_type)
-
-                    verify = rclone_verify_transfer(
-                        ctx.config.dest_remote,
-                        dest_path,
-                        expected_size=file_size,
-                        expected_hash=retry_source_hash,
-                        hash_type=dest_hash_type or "sha256",
-                    )
-                    if verify["verified"]:
-                        ckpt.mark_file(
-                            ctx.cat,
-                            ctx.job.job_id,
-                            fs.file_hash,
-                            fs.source_location,
-                            Phase.STREAM,
-                            FileStatus.COMPLETED,
-                            dest=f"{ctx.config.dest_remote}:{dest_path}",
-                            bytes_transferred=result["bytes"] or file_size or 0,
-                        )
-                        retried_ok += 1
-                    else:
-                        ckpt.mark_file(
-                            ctx.cat,
-                            ctx.job.job_id,
-                            fs.file_hash,
-                            fs.source_location,
-                            Phase.STREAM,
-                            FileStatus.FAILED,
-                            error=f"Retry verify failed: {verify.get('error', '')}",
-                        )
-                        retried_fail += 1
-                else:
-                    ckpt.mark_file(
-                        ctx.cat,
-                        ctx.job.job_id,
-                        fs.file_hash,
-                        fs.source_location,
-                        Phase.STREAM,
-                        FileStatus.FAILED,
-                        error=result.get("error", "retry failed")[:ERROR_TRUNCATE_LEN],
-                    )
-                    retried_fail += 1
+                retry_timeout = (int(_dynamic_timeout(r_file_size) * ctx.config.retry_timeout_multiplier)
+                                 if r_file_size else DEFAULT_RETRY_TIMEOUT)
+                result = rclone_copyto(r_src_remote, r_src_path, ctx.config.dest_remote, r_dest_path,
+                                       file_size=r_file_size, timeout=retry_timeout,
+                                       bwlimit=ctx.config.bwlimit, checksum=True)
+                return (r_fs, r_dest_path, r_file_size, result, None)
             except Exception as exc:
-                ckpt.mark_file(
-                    ctx.cat,
-                    ctx.job.job_id,
-                    fs.file_hash,
-                    fs.source_location,
-                    Phase.STREAM,
-                    FileStatus.FAILED,
-                    error=f"Retry exception: {str(exc)[:ERROR_TRUNCATE_SHORT]}",
-                )
-                retried_fail += 1
+                return (r_fs, r_dest_path, r_file_size, None, exc)
 
-            ctx.report(Phase.RETRY_FAILED, f"Retry: {retried_ok} OK, {retried_fail} fail", 6, files_retried=retried_ok)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for future in as_completed([pool.submit(_do_retry, t) for t in retry_tasks]):
+                r_fs, r_dest_path, r_file_size, result, exc = future.result()
+                if exc is not None:
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, r_fs.file_hash, r_fs.source_location,
+                                   Phase.STREAM, FileStatus.FAILED,
+                                   error=f"Retry exception: {str(exc)[:ERROR_TRUNCATE_SHORT]}")
+                    retried_fail += 1
+                elif result and result["success"]:
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, r_fs.file_hash, r_fs.source_location,
+                                   Phase.STREAM, FileStatus.COMPLETED,
+                                   dest=f"{ctx.config.dest_remote}:{r_dest_path}",
+                                   bytes_transferred=result["bytes"] or r_file_size or 0)
+                    retried_ok += 1
+                else:
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, r_fs.file_hash, r_fs.source_location,
+                                   Phase.STREAM, FileStatus.FAILED,
+                                   error=(result.get("error", "retry failed") if result else "unknown")[:ERROR_TRUNCATE_LEN])
+                    retried_fail += 1
+                ctx.report(Phase.RETRY_FAILED, f"Retry: {retried_ok} OK, {retried_fail} fail", 6,
+                           files_retried=retried_ok)
 
         ctx.results["retry"] = {"retried_ok": retried_ok, "retried_fail": retried_fail}
     else:
@@ -1386,88 +1467,98 @@ def _phase_7_verify(ctx: PhaseContext) -> None:
 
     # Detect native hash type for hash-based verification
     dest_hash_type = get_native_hash_type(ctx.config.dest_remote)
+    # Cache which source remotes natively support the dest hash type
+    # Only compare hashes when both sides support the same type natively
+    _src_hash_cache: dict[str, bool] = {}
     hash_verified_count = 0
 
     verified_ok = 0
     verified_fail = 0
     total_to_verify = len(completed_transfers)
 
-    for idx, row in enumerate(completed_transfers):
+    # Parallel verification — read-only operations, fully safe
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _src_supports_hash(src_remote_name: str) -> bool:
+        """Check if source remote natively supports the dest hash type."""
+        if src_remote_name not in _src_hash_cache:
+            src_hash = get_native_hash_type(src_remote_name)
+            _src_hash_cache[src_remote_name] = (src_hash == dest_hash_type) if dest_hash_type else False
+        return _src_hash_cache[src_remote_name]
+
+    def _verify_one(row):
+        """Verify a single file. Returns (file_hash, dest_loc, status, error, is_hash_verified)."""
         dest_loc = row["dest_location"]
         if not dest_loc or ":" not in dest_loc:
-            continue
+            return (row["file_hash"], dest_loc, "skip", None, False)
 
-        remote, path = dest_loc.split(":", 1)
-        expected_bytes = row["bytes_transferred"]
+        try:
+            remote, path = dest_loc.split(":", 1)
+            expected_bytes = row["bytes_transferred"]
 
-        # Step 1: Size check (fast)
-        check = rclone_check_file(remote, path, expected_size=expected_bytes)
-        if not check["exists"]:
-            verified_fail += 1
-            ckpt.mark_file(
-                ctx.cat,
-                ctx.job.job_id,
-                row["file_hash"],
-                dest_loc,
-                Phase.STREAM,
-                FileStatus.FAILED,
-                error="verify_missing: file not found on destination",
-            )
-            logger.error("VERIFY FAIL: %s — file missing", dest_loc)
-            continue
+            # Step 1: Size check (fast)
+            check = rclone_check_file(remote, path, expected_size=expected_bytes)
+            if not check["exists"]:
+                return (row["file_hash"], dest_loc, "fail", "verify_missing: file not found on destination", False)
 
-        if check.get("size_match") is False:
-            verified_fail += 1
-            ckpt.mark_file(
-                ctx.cat,
-                ctx.job.job_id,
-                row["file_hash"],
-                dest_loc,
-                Phase.STREAM,
-                FileStatus.FAILED,
-                error=f"verify_size_mismatch: expected={expected_bytes}, got={check.get('size')}",
-            )
-            logger.error("VERIFY FAIL: %s — size mismatch (expected=%s, got=%s)", dest_loc, expected_bytes, check.get("size"))
-            continue
+            if check.get("size_match") is False:
+                return (row["file_hash"], dest_loc, "fail",
+                        f"verify_size_mismatch: expected={expected_bytes}, got={check.get('size')}", False)
 
-        # Step 2: Hash check (definitive, if native hash available)
-        if dest_hash_type:
-            # Get hash from source for comparison
-            src_loc = row["source_location"]
-            src_parts = src_loc.split(":", 1) if src_loc else []
-            src_remote_name = src_parts[0] if len(src_parts) > 1 else None
-            src_path_name = src_parts[1] if len(src_parts) > 1 else None
+            # Step 2: Hash check — ONLY when source natively supports dest hash type
+            # Cross-remote hash comparison (e.g. pcloud SHA-1 vs Google MD5) is unreliable
+            if dest_hash_type:
+                src_loc = row["source_location"]
+                src_parts = src_loc.split(":", 1) if src_loc else []
+                src_remote_name = src_parts[0] if len(src_parts) > 1 else None
+                src_path_name = src_parts[1] if len(src_parts) > 1 else None
 
-            dest_hash = rclone_hashsum(remote, path, hash_type=dest_hash_type)
-            source_hash = None
-            if src_remote_name and src_path_name:
-                source_hash = rclone_hashsum(src_remote_name, src_path_name, hash_type=dest_hash_type)
+                if src_remote_name and src_path_name and _src_supports_hash(src_remote_name):
+                    dest_hash = rclone_hashsum(remote, path, hash_type=dest_hash_type)
+                    source_hash = rclone_hashsum(src_remote_name, src_path_name, hash_type=dest_hash_type)
 
-            if dest_hash and source_hash:
-                if dest_hash.lower() == source_hash.lower():
-                    verified_ok += 1
-                    hash_verified_count += 1
-                else:
-                    verified_fail += 1
-                    ckpt.mark_file(
-                        ctx.cat,
-                        ctx.job.job_id,
-                        row["file_hash"],
-                        dest_loc,
-                        Phase.STREAM,
-                        FileStatus.FAILED,
-                        error=f"verify_hash_mismatch: src={source_hash[:16]}..., dest={dest_hash[:16]}...",
-                    )
-                    logger.error("VERIFY FAIL: %s — %s hash mismatch", dest_loc, dest_hash_type)
+                    if dest_hash and source_hash:
+                        if dest_hash.lower() == source_hash.lower():
+                            return (row["file_hash"], dest_loc, "ok", None, True)
+                        else:
+                            return (row["file_hash"], dest_loc, "fail",
+                                    f"verify_hash_mismatch: src={source_hash[:16]}..., dest={dest_hash[:16]}...", False)
+                    logger.debug("Hash unavailable for %s, relying on size check", dest_loc)
+
+            # Size check passed (hash not comparable across different remotes)
+            return (row["file_hash"], dest_loc, "ok", None, False)
+        except Exception as exc:
+            return (row["file_hash"], dest_loc, "fail_exc", str(exc)[:200], False)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futures = [pool.submit(_verify_one, row) for row in completed_transfers]
+        for idx, future in enumerate(as_completed(futures)):
+            if idx % 100 == 0 and _check_pause(ctx):
+                ctx.report(Phase.VERIFY, "Pozastaveno uzivatelem", 7)
+                # Cancel remaining futures
+                for f in futures:
+                    f.cancel()
+                break
+
+            file_hash, dest_loc, status, error, is_hash = future.result()
+            if status == "skip":
                 continue
-            # If either hash unavailable, fall through to size-only pass
-            logger.debug("Hash unavailable for %s (dest=%s, src=%s), relying on size check", dest_loc, dest_hash, source_hash)
+            elif status == "ok":
+                verified_ok += 1
+                if is_hash:
+                    hash_verified_count += 1
+            elif status in ("fail", "fail_exc"):
+                verified_fail += 1
+                if error and status == "fail":
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, file_hash, dest_loc,
+                                   Phase.STREAM, FileStatus.FAILED, error=error)
+                    logger.error("VERIFY FAIL: %s — %s", dest_loc, error)
+                else:
+                    logger.warning("Verify failed for %s: %s", dest_loc, error)
 
-        # Size check passed (and hash not available or not comparable)
-        verified_ok += 1
-
-        if (idx + 1) % VERIFY_REPORT_INTERVAL == 0:
-            ctx.report(Phase.VERIFY, f"Overeno {idx + 1}/{total_to_verify}...", 7, files_verified=verified_ok, errors=verified_fail)
+            if (idx + 1) % VERIFY_REPORT_INTERVAL == 0:
+                ctx.report(Phase.VERIFY, f"Overeno {idx + 1}/{total_to_verify}...", 7,
+                           files_verified=verified_ok, errors=verified_fail)
 
     ctx.results["verify"] = {
         "total_checked": total_to_verify,
@@ -1569,15 +1660,11 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
     files_from_archives = 0
     archives_failed = 0
 
-    for archive_path in archives:
-        ctx.report(
-            Phase.EXTRACT_ARCHIVES,
-            f"Rozbaluji {PurePosixPath(archive_path).name}...",
-            8,
-            archives_extracted=archives_extracted,
-            archive_files_added=files_from_archives,
-        )
+    # Parallel archive extraction — each archive uses isolated temp directory
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    def _extract_one(archive_path: str) -> tuple[str, bool, int, str | None]:
+        """Extract a single archive. Returns (archive_path, success, files_count, error)."""
         try:
             with tempfile.TemporaryDirectory(prefix="gml_archive_") as tmpdir:
                 # Download archive to temp dir
@@ -1596,7 +1683,6 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 lower_path = archive_path.lower()
                 if lower_path.endswith(".zip"):
                     with zipfile.ZipFile(local_archive, "r") as zf:
-                        # Zip Slip protection: reject entries with path traversal
                         for info in zf.infolist():
                             member_path = os.path.realpath(os.path.join(extract_dir, info.filename))
                             real_extract = os.path.realpath(extract_dir)
@@ -1613,20 +1699,17 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                     with tarfile.open(local_archive, "r:") as tf:
                         _safe_tar_extractall(tf, extract_dir)
                 elif lower_path.endswith(".7z"):
-                    # Use 7z command-line tool
                     subprocess.run(
                         ["7z", "x", local_archive, f"-o{extract_dir}", "-y"],
                         capture_output=True, text=True, timeout=1800, check=True,
                     )
                 elif lower_path.endswith(".rar"):
-                    # Use unrar command-line tool
                     subprocess.run(
                         ["unrar", "x", "-o+", local_archive, extract_dir + "/"],
                         capture_output=True, text=True, timeout=1800, check=True,
                     )
                 else:
-                    logger.warning("Unsupported archive format: %s", archive_path)
-                    continue
+                    return (archive_path, False, 0, f"Unsupported format: {archive_path}")
 
                 # Count extracted files
                 extracted_files = []
@@ -1638,10 +1721,9 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
 
                 if not extracted_files:
                     logger.info("Archive %s was empty", archive_path)
-                    continue
+                    return (archive_path, True, 0, None)
 
                 # Upload extracted files to destination
-                # Determine upload path: same parent directory as the archive
                 archive_parent = str(PurePosixPath(archive_path).parent)
                 if archive_parent == ".":
                     archive_parent = ""
@@ -1651,19 +1733,13 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                     _resolve_rclone(), "copy",
                     extract_dir,
                     f"{ctx.config.dest_remote}:{upload_base}",
+                    "--transfers", "8", "--checkers", "16",
                 ]
                 upload_result = subprocess.run(upload_cmd, capture_output=True, text=True, timeout=3600)
 
                 if upload_result.returncode != 0:
-                    logger.warning(
-                        "Upload of extracted files from %s failed (rc=%d), keeping archive: %s",
-                        archive_path, upload_result.returncode,
-                        (upload_result.stderr or "")[:200],
-                    )
-                    archives_failed += 1
-                    continue
-
-                files_from_archives += len(extracted_files)
+                    return (archive_path, False, 0,
+                            f"Upload failed (rc={upload_result.returncode}): {(upload_result.stderr or '')[:150]}")
 
                 # Verify upload by checking file count on destination
                 verify_cmd = [
@@ -1672,21 +1748,15 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 ]
                 verify_result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=300)
                 if verify_result.returncode != 0:
-                    logger.warning(
-                        "Cannot verify upload of %s — keeping archive for safety: %s",
-                        archive_path, (verify_result.stderr or "")[:200],
-                    )
-                    archives_failed += 1
-                    continue
+                    return (archive_path, False, 0,
+                            f"Cannot verify upload: {(verify_result.stderr or '')[:150]}")
 
-                # Parse rclone size output and verify file count
                 try:
                     size_info = json.loads(verify_result.stdout)
                     remote_count = size_info.get("count", 0)
                 except (json.JSONDecodeError, KeyError):
                     remote_count = 0
 
-                # Calculate expected local size for comparison
                 local_total_size = sum(
                     os.path.getsize(os.path.join(extract_dir, f))
                     for f in extracted_files
@@ -1695,20 +1765,12 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 remote_total_size = size_info.get("bytes", 0) if isinstance(size_info, dict) else 0
 
                 if remote_count < len(extracted_files):
-                    logger.warning(
-                        "Upload verification failed for %s: expected %d files, found %d — keeping archive",
-                        archive_path, len(extracted_files), remote_count,
-                    )
-                    archives_failed += 1
-                    continue
+                    return (archive_path, False, 0,
+                            f"File count mismatch: expected {len(extracted_files)}, found {remote_count}")
 
                 if local_total_size > 0 and remote_total_size < local_total_size * 0.95:
-                    logger.warning(
-                        "Upload verification failed for %s: size mismatch (local=%d, remote=%d) — keeping archive",
-                        archive_path, local_total_size, remote_total_size,
-                    )
-                    archives_failed += 1
-                    continue
+                    return (archive_path, False, 0,
+                            f"Size mismatch: local={local_total_size}, remote={remote_total_size}")
 
                 # Delete the archive from destination only after verified upload
                 delete_result = _rclone_delete(ctx.config.dest_remote, f"{ctx.config.dest_path}/{archive_path}")
@@ -1717,14 +1779,38 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 else:
                     logger.warning("Extracted archive %s but failed to delete: %s", archive_path, delete_result.get("error"))
 
-                archives_extracted += 1
+                return (archive_path, True, len(extracted_files), None)
 
         except subprocess.CalledProcessError as exc:
-            logger.warning("Failed to extract archive %s: %s", archive_path, exc.stderr[:200] if exc.stderr else str(exc))
-            archives_failed += 1
+            return (archive_path, False, 0, (exc.stderr[:200] if exc.stderr else str(exc)))
         except Exception as exc:
-            logger.warning("Failed to extract archive %s: %s", archive_path, str(exc)[:200])
-            archives_failed += 1
+            return (archive_path, False, 0, str(exc)[:200])
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_extract_one, ap) for ap in archives]
+        for idx, future in enumerate(as_completed(futures)):
+            if idx % 5 == 0 and _check_pause(ctx):
+                ctx.report(Phase.EXTRACT_ARCHIVES, "Pozastaveno uzivatelem", 8)
+                for f in futures:
+                    f.cancel()
+                break
+
+            ap, success, fcount, error = future.result()
+            if success:
+                archives_extracted += 1
+                files_from_archives += fcount
+            else:
+                if error:
+                    logger.warning("Failed to extract archive %s: %s", ap, error)
+                archives_failed += 1
+
+            ctx.report(
+                Phase.EXTRACT_ARCHIVES,
+                f"Rozbaleno {archives_extracted}/{len(archives)} archivu...",
+                8,
+                archives_extracted=archives_extracted,
+                archive_files_added=files_from_archives,
+            )
 
     ctx.results["extract_archives"] = {
         "archives_found": len(archives),
@@ -1752,6 +1838,10 @@ def _phase_9_dedup(ctx: PhaseContext) -> None:
         return
 
     if ctx.phase_done(Phase.DEDUP):
+        return
+
+    if _check_pause(ctx):
+        ctx.report(Phase.DEDUP, "Pozastaveno uzivatelem", 9)
         return
 
     ctx.report(Phase.DEDUP, "Finalni deduplikace nad vsemi daty...", 9)
@@ -1826,6 +1916,9 @@ def _phase_10_organize(ctx: PhaseContext) -> None:
     moves_failed = 0
     category_counts: dict[str, int] = {"Media": 0, "Documents": 0, "Software": 0, "Other": 0}
 
+    # Build move list first, then execute in parallel
+    move_tasks: list[tuple[str, str, str]] = []  # (fpath, new_path, category)
+
     for f in dest_files:
         if f.get("IsDir"):
             continue
@@ -1844,12 +1937,10 @@ def _phase_10_organize(ctx: PhaseContext) -> None:
         mod_time = f.get("ModTime", "")
 
         if category == "Software":
-            # Software: move to Software/macOS/, Software/Windows/, or Software/Other/
             subcat = _software_subcategory(fpath)
             filename = PurePosixPath(fpath).name
             new_path = f"Software/{subcat}/{filename}"
         else:
-            # Media, Documents, Other: Category/Year/Month/filename
             filename = PurePosixPath(fpath).name
             year, month = "unknown", "00"
             if mod_time:
@@ -1861,28 +1952,44 @@ def _phase_10_organize(ctx: PhaseContext) -> None:
                         break
             new_path = f"{category}/{year}/{month}/{filename}"
 
-        # Skip if already at the correct path
-        if fpath == new_path:
-            continue
+        if fpath != new_path:
+            move_tasks.append((fpath, new_path, category))
 
-        # Move file using rclone moveto (server-side)
+    logger.info("Organize: %d files to move into categories", len(move_tasks))
+
+    # Parallel server-side moves — metadata-only on same remote, no collision risk (unique paths)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _do_move(args):
+        fpath, new_path, _cat = args
         src_full = f"{ctx.config.dest_path}/{fpath}"
         dst_full = f"{ctx.config.dest_path}/{new_path}"
-
         result = _rclone_moveto(ctx.config.dest_remote, src_full, ctx.config.dest_remote, dst_full)
-        if result["success"]:
-            moves_done += 1
-        else:
-            moves_failed += 1
-            logger.warning("organize: failed to move %s -> %s: %s", fpath, new_path, result.get("error"))
+        return (fpath, new_path, result["success"], result.get("error"))
 
-        if moves_done % 50 == 0:
-            ctx.report(
-                Phase.ORGANIZE,
-                f"Organizace: {moves_done} presunuto...",
-                10,
-                files_organized=moves_done,
-            )
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futures = [pool.submit(_do_move, t) for t in move_tasks]
+        for idx, future in enumerate(as_completed(futures)):
+            if idx % 100 == 0 and _check_pause(ctx):
+                ctx.report(Phase.ORGANIZE, "Pozastaveno uzivatelem", 10)
+                for f in futures:
+                    f.cancel()
+                break
+
+            fpath, new_path, success, error = future.result()
+            if success:
+                moves_done += 1
+            else:
+                moves_failed += 1
+                logger.warning("organize: failed to move %s -> %s: %s", fpath, new_path, error)
+
+            if (idx + 1) % 50 == 0:
+                ctx.report(
+                    Phase.ORGANIZE,
+                    f"Organizace: {moves_done}/{len(move_tasks)} presunuto...",
+                    10,
+                    files_organized=moves_done,
+                )
 
     ctx.results["organize"] = {
         "moves_done": moves_done,
@@ -2056,6 +2163,7 @@ def run_consolidation(
                     config.dest_path = saved.get("dest_path", config.dest_path)
                     config.disk_path = saved.get("disk_path", config.disk_path)
                     config.source_remotes = saved.get("source_remotes", config.source_remotes)
+                    config.local_roots = saved.get("local_roots", config.local_roots)
                     config.bwlimit = saved.get("bwlimit", config.bwlimit)
                     logger.info(
                         "Restored config from job: dest=%s:%s, disk=%s, bwlimit=%s",
@@ -2075,6 +2183,7 @@ def run_consolidation(
                     "dest_path": config.dest_path,
                     "disk_path": config.disk_path,
                     "source_remotes": config.source_remotes,
+                    "local_roots": config.local_roots,
                     "dry_run": config.dry_run,
                     "bwlimit": config.bwlimit,
                     "completed_phases": [],
@@ -2153,13 +2262,15 @@ def get_consolidation_status(catalog_path: str | Path) -> dict[str, Any]:
         consolidation_jobs = [j for j in jobs if j.job_type in CONSOLIDATION_JOB_TYPES]
 
         # Detect orphaned jobs: marked "running" in DB but no in-process event
+        # Mark as "paused" (not "failed") so they can be resumed on next run
         with _pause_events_lock:
             live_job_ids = set(_pause_events.keys())
         for j in consolidation_jobs:
             if j.status == JobStatus.RUNNING and j.job_id not in live_job_ids:
-                logger.warning("Orphaned job %s detected (running in DB, no live process) — marking failed", j.job_id)
-                ckpt.complete_job(cat, j.job_id, error="Server restarted, job interrupted")
-                j.status = JobStatus.FAILED
+                logger.warning("Orphaned job %s detected (running in DB, no live process) — marking paused for resume", j.job_id)
+                ckpt.update_job(cat, j.job_id, status=JobStatus.PAUSED,
+                                error="Server restart — automaticky pokračuje při dalším spuštění")
+                j.status = JobStatus.PAUSED
 
         active = [j for j in consolidation_jobs if j.status in (JobStatus.CREATED, JobStatus.RUNNING, JobStatus.PAUSED)]
 
@@ -2169,19 +2280,21 @@ def get_consolidation_status(catalog_path: str | Path) -> dict[str, Any]:
             "jobs": [],
         }
 
-        # Check source availability for active jobs
+        # Check source availability (always, so wizard can show remotes before first job)
         sources_available: list[str] = []
         sources_unavailable: list[str] = []
         if active:
             active_config = active[0].config or {}
             source_remotes = active_config.get("source_remotes", [])
-            if not source_remotes:
-                source_remotes = [r.name for r in list_remotes()]
-            for rname in source_remotes:
-                if rclone_is_reachable(rname, timeout=5):
-                    sources_available.append(rname)
-                else:
-                    sources_unavailable.append(rname)
+        else:
+            source_remotes = []
+        if not source_remotes:
+            source_remotes = [r.name for r in list_remotes()]
+        for rname in source_remotes:
+            if rclone_is_reachable(rname, timeout=5):
+                sources_available.append(rname)
+            else:
+                sources_unavailable.append(rname)
         result["sources_available"] = sources_available
         result["sources_unavailable"] = sources_unavailable
 

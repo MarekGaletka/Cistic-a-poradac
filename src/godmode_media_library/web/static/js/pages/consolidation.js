@@ -3,12 +3,73 @@
 import { t } from "../i18n.js";
 import { $, showToast, formatBytes } from "../utils.js";
 import { api, apiPost } from "../api.js";
+import { openFolderPicker } from "../folder-picker.js";
 
 let _container = null;
 let _pollTimer = null;
 let _currentPhase = 0; // 0=A, 1=B, 2=C, 3=D, 4=E, 5=F
 let _transferActive = false;
 let _lastActivity = 0;
+let _localRoots = [];
+
+/**
+ * Pick the most relevant job to display.
+ * Priority: running > paused > created > failed (most recent only).
+ * This prevents old failed jobs from overshadowing a currently running job.
+ */
+function _pickActiveJob(jobs) {
+  const priority = { running: 0, paused: 1, created: 2, completed: 3, failed: 4 };
+  const candidates = jobs
+    .filter(j => j.status in priority)
+    .sort((a, b) => {
+      const pa = priority[a.status], pb = priority[b.status];
+      if (pa !== pb) return pa - pb;
+      // Same priority — prefer most recently updated
+      return (b.updated_at || "").localeCompare(a.updated_at || "");
+    });
+  return candidates[0] || null;
+}
+
+function _renderLocalChips() {
+  const el = document.getElementById("wiz-local-chips");
+  if (!el) return;
+  if (_localRoots.length === 0) {
+    el.innerHTML = `<span class="text-muted">${t("consolidation.no_local_roots")}</span>`;
+    return;
+  }
+  el.innerHTML = _localRoots.map((p, i) => `
+    <span class="wiz-chip">
+      <span class="wiz-chip-text">${escapeHtml(p)}</span>
+      <button type="button" class="wiz-chip-remove" data-idx="${i}">\u00D7</button>
+    </span>
+  `).join("");
+  el.querySelectorAll(".wiz-chip-remove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      _localRoots.splice(Number(btn.dataset.idx), 1);
+      _renderLocalChips();
+    });
+  });
+}
+
+async function _autoDetectDisks(showToastMsg = false) {
+  try {
+    const data = await api("/consolidation/available-disks");
+    const disks = data.disks || [];
+    let added = 0;
+    for (const d of disks) {
+      if (!_localRoots.includes(d.path)) {
+        _localRoots.push(d.path);
+        added++;
+      }
+    }
+    _renderLocalChips();
+    if (showToastMsg) {
+      showToast(added > 0
+        ? t("consolidation.disks_detected", { count: added })
+        : t("consolidation.no_new_disks"), added > 0 ? "success" : "info");
+    }
+  } catch (_) { /* ignore */ }
+}
 
 const WIZARD_PHASES = [
   { key: "A", icon: "\uD83D\uDCE1", label: () => t("consolidation.phase_a") },
@@ -62,9 +123,7 @@ export async function render(container) {
 async function initWizard() {
   try {
     const data = await api("/consolidation/status");
-    const active = (data.jobs || []).find(
-      j => j.status === "running" || j.status === "paused" || j.status === "created"
-    );
+    const active = _pickActiveJob(data.jobs || []);
 
     // Detect current phase from active job
     if (active) {
@@ -124,9 +183,20 @@ function renderStepIndicator() {
 async function reloadPhase() {
   try {
     const data = await api("/consolidation/status");
-    const active = (data.jobs || []).find(
-      j => j.status === "running" || j.status === "paused" || j.status === "created"
-    );
+    const active = _pickActiveJob(data.jobs || []);
+    // Merge detailed task progress (files_cataloged, phase_label, etc.) into job progress
+    if (active) {
+      try {
+        const tasks = await api("/tasks");
+        const task = (tasks.tasks || []).find(t => t.command === "consolidation:ultimate" && t.status === "running");
+        if (task) {
+          const taskDetail = await api(`/tasks/${task.id}`);
+          if (taskDetail?.progress) {
+            active._taskProgress = taskDetail.progress;
+          }
+        }
+      } catch (_) { /* task fetch is best-effort */ }
+    }
     renderPhaseContent(data, active);
   } catch (e) {
     const el = $("#wizard-content");
@@ -160,8 +230,11 @@ function renderPhaseA(el, data, activeJob) {
   const sourcesAvail = data.sources_available || [];
   const sourcesUnavail = data.sources_unavailable || [];
   const allSources = [...sourcesAvail, ...sourcesUnavail];
-  const isRunning = activeJob && (activeJob.status === "running" || activeJob.status === "paused");
-  const progress = activeJob?.progress || {};
+  const isRunning = activeJob && (activeJob.status === "running" || activeJob.status === "paused" || activeJob.status === "created" || activeJob.status === "failed");
+  const checkpointProgress = activeJob?.progress || {};
+  const taskProgress = activeJob?.task_progress || {};
+  // Merge: task progress has the detailed fields, checkpoint progress has transfer totals
+  const progress = { ...checkpointProgress, ...taskProgress };
   const isPaused = activeJob?.status === "paused" || progress.paused;
 
   // If transfer is active, show transfer view
@@ -201,11 +274,10 @@ function renderPhaseA(el, data, activeJob) {
 
       <div class="wiz-section">
         <label class="wiz-section-label">${t("consolidation.local_roots")}</label>
-        <textarea id="wiz-local-roots" class="wiz-textarea" rows="4"
-          placeholder="${t("consolidation.local_roots_placeholder")}">${escapeHtml((savedConfig.local_roots || []).join("\n"))}</textarea>
+        <div id="wiz-local-chips" class="wiz-chips"></div>
         <div class="wiz-hint-row">
-          <span class="wiz-hint">${t("consolidation.local_roots_hint")}</span>
-          <button type="button" id="btn-wiz-common" class="wiz-hint-btn">${t("consolidation.common_paths")}</button>
+          <button type="button" id="btn-wiz-add-folder" class="wiz-btn-secondary wiz-btn-sm">\uD83D\uDCC2 ${t("consolidation.add_folder")}</button>
+          <button type="button" id="btn-wiz-detect-disks" class="wiz-btn-secondary wiz-btn-sm">\uD83D\uDD0D ${t("consolidation.detect_disks")}</button>
         </div>
       </div>
 
@@ -245,44 +317,106 @@ function renderPhaseA(el, data, activeJob) {
       </div>
     </div>`;
 
-  // Bind common paths
-  bindButton("#btn-wiz-common", () => {
-    const ta = $("#wiz-local-roots");
-    if (!ta) return;
-    const paths = [
-      "/Users/$USER/Pictures",
-      "/Users/$USER/Downloads",
-      "/Users/$USER/Desktop",
-      "/Volumes/iPhone/DCIM",
-      "/Volumes/4TB/Photos",
-    ].join("\n");
-    showToast(`${t("consolidation.common_paths")}:\n${paths}`, "info", 8000);
+  // Render initial local root chips
+  _localRoots = [...(savedConfig.local_roots || [])];
+  _renderLocalChips();
+
+  // Auto-detect connected disks and add them
+  _autoDetectDisks();
+
+  // Bind add folder via picker
+  bindButton("#btn-wiz-add-folder", () => {
+    openFolderPicker((paths) => {
+      for (const p of paths) {
+        if (!_localRoots.includes(p)) _localRoots.push(p);
+      }
+      _renderLocalChips();
+    }, _localRoots);
   });
+
+  // Bind detect disks
+  bindButton("#btn-wiz-detect-disks", () => _autoDetectDisks(true));
 
   // Bind start
   bindButton("#btn-wiz-start", doStart);
 }
 
 function renderPhaseATransfer(el, activeJob, progress, isPaused) {
-  const transferred = progress.files_transferred || 0;
-  const failed = progress.files_failed || 0;
+  const checkpointProg = activeJob?.progress || {};
+  const transferred = checkpointProg.completed || progress.files_transferred || 0;
+  const totalFiles = checkpointProg.total || 0;
+  const failed = checkpointProg.failed || progress.files_failed || 0;
   const speed = progress.transfer_speed_bps || 0;
   const eta = progress.eta_seconds || 0;
   const currentFile = progress.current_file || "";
-  const bytesTransferred = progress.bytes_transferred || 0;
+  const bytesTransferred = checkpointProg.bytes_transferred || progress.bytes_transferred || 0;
   const bytesTotal = progress.bytes_total_estimate || 0;
-  const pct = bytesTotal > 0 ? Math.min((bytesTransferred / bytesTotal) * 100, 100) : 0;
+  const pct = totalFiles > 0 ? Math.min((transferred / totalFiles) * 100, 100)
+    : bytesTotal > 0 ? Math.min((bytesTransferred / bytesTotal) * 100, 100) : 0;
 
-  // Watchdog check
+  // Pipeline step mapping — Czech labels for display (#12)
+  const STEP_ORDER = [
+    "wait_for_sources", "cloud_catalog_scan", "local_scan", "register_files",
+    "stream", "extract_archives", "dedup", "retry_failed", "verify", "organize", "report", "complete"
+  ];
+  const STEP_LABELS = {
+    wait_for_sources: "Čekám na zdroje",
+    cloud_catalog_scan: "Skenuji cloudové zdroje",
+    local_scan: "Skenuji lokální soubory",
+    register_files: "Registruji soubory",
+    stream: "Přenáším soubory",
+    extract_archives: "Rozbaluji archivy",
+    dedup: "Odstraňuji duplikáty",
+    retry_failed: "Opakuji selhané",
+    verify: "Ověřuji integritu",
+    organize: "Organizuji soubory",
+    report: "Generuji report",
+    complete: "Hotovo"
+  };
+  const currentStepName = activeJob?.current_step || progress.phase || "";
+  const stepIdx = STEP_ORDER.indexOf(currentStepName);
+  const totalSteps = STEP_ORDER.length;
+  const phasePct = stepIdx >= 0 ? Math.min(((stepIdx + 1) / totalSteps) * 100, 100)
+    : progress.total_steps > 0 ? Math.min((progress.current_step / progress.total_steps) * 100, 100) : 0;
+  const stepDisplay = stepIdx >= 0 ? stepIdx + 1 : Math.max(progress.current_step || 0, 1);
+  // Use Czech label, fall back to phase_label from server, then raw step name (#12)
+  const stepLabel = STEP_LABELS[currentStepName] || progress.phase_label || currentStepName || "";
+
+  // Sub-phase label from server: e.g. "dropbox: 234/1560 (1.2 GB) [3.5 MB/s]" (#3, #12)
+  const subPhaseLabel = progress.phase_label || "";
+  const showSubPhase = currentStepName === "stream" || currentStepName === "retry_failed" || currentStepName === "organize";
+
+  // Phase type detection
+  const phase = currentStepName || progress.phase || "";
+  const isTransferPhase = phase === "stream" || phase === "stream_cloud" || phase === "retry_failed" || phase === "download_to_disk";
+  const isMetadataPhase = phase === "organize" || phase === "dedup" || phase === "verify" || phase === "extract_archives" || phase === "report";
   const now = Date.now();
   if (speed > 0 || transferred > 0) _lastActivity = now;
-  const stalled = !isPaused && _transferActive && _lastActivity > 0 && (now - _lastActivity > 60000);
+  const stalled = !isPaused && _transferActive && isTransferPhase && _lastActivity > 0 && (now - _lastActivity > 60000);
 
   // Google limit detection
   const googleLimit = progress.google_limit_reached || false;
 
-  const statusLabel = isPaused ? t("consolidation.paused") : t("consolidation.running");
-  const statusColor = isPaused ? "var(--color-warning)" : "var(--color-success)";
+  // Status detection
+  const isFailed = activeJob?.status === "failed";
+  const isCompleted = activeJob?.status === "completed";
+  const jobError = activeJob?.error || progress.error || "";
+  const statusLabel = isCompleted ? "DOKONČENO"
+    : isFailed ? "SELHALO"
+    : isPaused ? "POZASTAVENO"
+    : "BĚŽÍ";
+  const statusColor = isCompleted ? "var(--color-success, #38a169)"
+    : isFailed ? "var(--color-danger, #e53e3e)"
+    : isPaused ? "var(--color-warning)"
+    : "var(--color-success)";
+
+  // Failed state reason (#10)
+  let failedReason = "";
+  if (isFailed && jobError) {
+    failedReason = jobError;
+  } else if (isPaused && jobError) {
+    failedReason = jobError;
+  }
 
   // Per-remote scan progress
   const scanProgress = progress.scan_progress || {};
@@ -291,8 +425,8 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
   el.innerHTML = `
     <div class="wiz-phase-card">
       <div class="wiz-phase-header">
-        <h3>\u2601\uFE0F ${t("consolidation.transfer_title")}</h3>
-        <p class="wiz-phase-desc">${t("consolidation.transfer_desc")}</p>
+        <h3>\u2601\uFE0F Přenos dat na Google 6TB</h3>
+        <p class="wiz-phase-desc">Všechna data ze všech zdrojů se kopírují na cílový cloud. Bez deduplikace.</p>
       </div>
 
       <div class="wiz-status-badge" style="border-color:${statusColor}">
@@ -300,12 +434,38 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
         <span class="wiz-job-id">${escapeHtml((activeJob.job_id || "").slice(0, 8))}</span>
       </div>
 
-      ${stalled ? `<div class="wiz-watchdog-bar">\u26A0\uFE0F ${t("consolidation.watchdog_warning")}</div>` : ""}
-      ${googleLimit ? `<div class="wiz-warning-bar">\uD83D\uDEAB ${t("consolidation.google_limit_warning")}</div>` : ""}
+      ${failedReason ? `<div class="wiz-error-msg" style="margin:12px 0;padding:12px 16px;background:${isFailed ? "var(--color-danger-bg, #fff5f5)" : "var(--color-warning-bg, #fffaf0)"};border:1px solid ${isFailed ? "var(--color-danger, #e53e3e)" : "var(--color-warning, #dd6b20)"};border-radius:var(--radius-sm);font-size:0.9em;">
+        ${isFailed ? "\u274C" : "\u23F8\uFE0F"} <strong>${isFailed ? "Důvod selhání" : "Důvod pozastavení"}:</strong> ${escapeHtml(failedReason)}
+      </div>` : ""}
+      ${stalled ? `<div class="wiz-watchdog-bar">\u26A0\uFE0F Přenos se zastavil — zkontrolujte připojení</div>` : ""}
+      ${googleLimit ? `<div class="wiz-warning-bar">\uD83D\uDEAB Denní limit Google uploadu (750 GB) — pokračuje automaticky zítra</div>` : ""}
+
+      <div class="wiz-phase-stepper">
+        <div class="wiz-stepper-label">${stepLabel}</div>
+        <div class="wiz-stepper-track">
+          ${STEP_ORDER.map((s, i) => {
+            const done = i < stepIdx;
+            const active = i === stepIdx;
+            const cls = done ? "wiz-step-done" : active ? "wiz-step-active" : "wiz-step-pending";
+            return `<div class="wiz-step-dot ${cls}" title="${STEP_LABELS[s] || s}"></div>`;
+          }).join("")}
+        </div>
+        <div class="wiz-stepper-count">${stepDisplay} / ${totalSteps}</div>
+      </div>
+
+      ${showSubPhase && subPhaseLabel ? `<div class="wiz-sub-phase"><span class="wiz-sub-phase-dot"></span> ${escapeHtml(subPhaseLabel)}</div>` : ""}
+      ${isMetadataPhase && !isPaused && !isFailed ? `<div class="wiz-activity-pulse"><span class="wiz-pulse-dot"></span> Probíhají operace...</div>` : ""}
+
+      <div class="wiz-phase-progress">
+        ${progress.files_cataloged > 0 ? `<div class="wiz-phase-detail">\uD83D\uDCC2 Zkatalogizováno: <strong>${(progress.files_cataloged || 0).toLocaleString("cs-CZ")}</strong></div>` : ""}
+        ${progress.files_unique > 0 ? `<div class="wiz-phase-detail">\u2728 Unikátních: <strong>${(progress.files_unique || 0).toLocaleString("cs-CZ")}</strong></div>` : ""}
+        ${progress.files_verified > 0 ? `<div class="wiz-phase-detail">\u2705 Ověřeno: <strong>${(progress.files_verified || 0).toLocaleString("cs-CZ")}</strong></div>` : ""}
+        ${progress.files_retried > 0 ? `<div class="wiz-phase-detail">\uD83D\uDD04 Opakováno: <strong>${(progress.files_retried || 0).toLocaleString("cs-CZ")}</strong></div>` : ""}
+      </div>
 
       ${scanRemotes.length > 0 ? `
         <div class="wiz-scan-section">
-          <label class="wiz-section-label">${t("consolidation.transfer_scanning")}</label>
+          <label class="wiz-section-label">Skenování zdrojů</label>
           ${scanRemotes.map(r => {
             const s = scanProgress[r];
             const sPct = s.total > 0 ? Math.min((s.done / s.total) * 100, 100) : 0;
@@ -324,41 +484,57 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
         </div>
         <div class="wiz-metrics-grid">
           <div class="wiz-metric">
-            <span class="wiz-metric-value">${transferred.toLocaleString("cs-CZ")}</span>
-            <span class="wiz-metric-label">${t("consolidation.transfer_files")}</span>
+            <span class="wiz-metric-value">${totalFiles > 0 ? `${transferred.toLocaleString("cs-CZ")} / ${totalFiles.toLocaleString("cs-CZ")}` : transferred.toLocaleString("cs-CZ")}</span>
+            <span class="wiz-metric-label">Přenesených souborů</span>
           </div>
           <div class="wiz-metric">
-            <span class="wiz-metric-value">${formatBytes(bytesTransferred)}</span>
-            <span class="wiz-metric-label">${t("consolidation.transfer_bytes")}</span>
+            <span class="wiz-metric-value">${bytesTotal > 0 ? `${formatBytes(bytesTransferred)} / ${formatBytes(bytesTotal)}` : formatBytes(bytesTransferred)}</span>
+            <span class="wiz-metric-label">Přeneseno dat</span>
           </div>
+          ${isTransferPhase ? `
           <div class="wiz-metric">
             <span class="wiz-metric-value">${speed > 0 ? formatBytes(speed) + "/s" : "\u2014"}</span>
-            <span class="wiz-metric-label">${t("consolidation.transfer_speed")}</span>
+            <span class="wiz-metric-label">Rychlost</span>
           </div>
           <div class="wiz-metric">
-            <span class="wiz-metric-value">${eta > 0 ? formatEta(eta) : "\u2014"}</span>
-            <span class="wiz-metric-label">${t("consolidation.transfer_eta")}</span>
-          </div>
-          <div class="wiz-metric wiz-metric-warn">
-            <span class="wiz-metric-value">${failed}</span>
-            <span class="wiz-metric-label">${t("consolidation.files_failed")}</span>
+            <span class="wiz-metric-value">${speed > 0 && eta > 0 ? formatEta(eta) : "\u2014"}</span>
+            <span class="wiz-metric-label">Zbývající čas</span>
+          </div>` : ""}
+          <div class="wiz-metric ${failed > 0 ? "wiz-metric-warn" : ""}">
+            <span class="wiz-metric-value">${failed.toLocaleString("cs-CZ")}</span>
+            <span class="wiz-metric-label">Selhalo</span>
           </div>
         </div>
-        ${currentFile ? `<div class="wiz-current-file"><span>${t("consolidation.transfer_current")}:</span> <code>${escapeHtml(currentFile)}</code></div>` : ""}
-        ${progress.error ? `<div class="wiz-error-msg">\u274C ${escapeHtml(progress.error)}</div>` : ""}
+        ${currentFile ? `<div class="wiz-current-file"><span>Aktuální:</span> <code>${escapeHtml(currentFile)}</code></div>` : ""}
       </div>
+
+      ${isCompleted ? `
+      <div class="wiz-completed-summary" style="margin:16px 0;padding:16px;background:var(--color-success-bg, #f0fff4);border:1px solid var(--color-success, #38a169);border-radius:var(--radius-sm);">
+        \u2705 <strong>Přenos dokončen úspěšně.</strong> ${checkpointProg.skipped > 0 ? ` ${checkpointProg.skipped.toLocaleString("cs-CZ")} souborů přeskočeno (neexistující cache).` : ""}
+      </div>` : ""}
 
       <div class="wiz-nav">
         <div></div>
+        ${isCompleted ? `
         <div class="wiz-btn-group">
-          <button id="btn-wiz-pause" class="wiz-btn-warning" ${isPaused ? "disabled" : ""}>\u23F8\uFE0F ${t("consolidation.pause")}</button>
-          <button id="btn-wiz-resume" class="wiz-btn-secondary" ${!isPaused ? "disabled" : ""}>\u25B6\uFE0F ${t("consolidation.resume")}</button>
-        </div>
+          <button id="btn-wiz-restart" class="wiz-btn-primary">\u2795 Nový job</button>
+        </div>` : isFailed ? `
+        <div class="wiz-btn-group">
+          <button id="btn-wiz-restart" class="wiz-btn-primary">\uD83D\uDD04 Spustit znovu</button>
+        </div>` : `
+        <div class="wiz-btn-group">
+          <button id="btn-wiz-pause" class="wiz-btn-warning" ${isPaused ? "disabled" : ""}>\u23F8\uFE0F Pozastavit</button>
+          <button id="btn-wiz-resume" class="wiz-btn-secondary" ${!isPaused ? "disabled" : ""}>\u25B6\uFE0F Pokračovat</button>
+        </div>`}
       </div>
     </div>`;
 
-  bindButton("#btn-wiz-pause", doPause);
-  bindButton("#btn-wiz-resume", doResume);
+  if (isFailed || isCompleted) {
+    bindButton("#btn-wiz-restart", doStart);
+  } else {
+    bindButton("#btn-wiz-pause", doPause);
+    bindButton("#btn-wiz-resume", doResume);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -691,7 +867,7 @@ function getWizardConfig() {
 
   return {
     source_remotes: sources,
-    local_roots: ($("#wiz-local-roots")?.value || "").split("\n").map(s => s.trim()).filter(Boolean),
+    local_roots: _localRoots,
     dest_remote: $("#wiz-dest-remote")?.value || "gws-backup",
     dest_path: $("#wiz-dest-path")?.value || "GML-Consolidated",
     disk_path: $("#wiz-disk-path")?.value || "/Volumes/4TB/GML-Library",
@@ -707,10 +883,11 @@ function getWizardConfig() {
 async function doStart() {
   if (!confirm(t("consolidation.start_confirm"))) return;
 
-  const btn = $("#btn-wiz-start");
-  if (!btn) return;
-  btn.disabled = true;
-  btn.textContent = `\u23F3 ${t("consolidation.starting")}`;
+  const btn = $("#btn-wiz-start") || $("#btn-wiz-restart");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = `\u23F3 ${t("consolidation.starting")}`;
+  }
 
   try {
     const config = getWizardConfig();
@@ -719,11 +896,13 @@ async function doStart() {
     _transferActive = true;
     _lastActivity = Date.now();
     startPolling();
-    await reloadPhase();
+    setTimeout(() => reloadPhase(), 500);
   } catch (e) {
     showToast(t("general.error", { message: e.message }), "error");
-    btn.disabled = false;
-    btn.textContent = `\uD83D\uDE80 ${t("consolidation.start")}`;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = `\uD83D\uDE80 ${t("consolidation.start")}`;
+    }
   }
 }
 
@@ -826,9 +1005,7 @@ function stopPolling() {
 async function pollStatus() {
   try {
     const data = await api("/consolidation/status");
-    const active = (data.jobs || []).find(
-      j => j.status === "running" || j.status === "paused" || j.status === "created"
-    );
+    const active = _pickActiveJob(data.jobs || []);
 
     if (!active) {
       stopPolling();

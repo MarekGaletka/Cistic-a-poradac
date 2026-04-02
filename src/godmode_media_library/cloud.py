@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import platform
 import re as _re
 import shutil
@@ -35,8 +36,10 @@ def _validate_remote_name(name: str) -> str:
 
     Raises ValueError if the name is invalid.
     """
-    if not name or len(name) > 64:
-        raise ValueError(f"Invalid remote name: must be 1-64 characters, got {len(name) if name else 0}")
+    if name is None or (not name and name != "") or len(name) > 64:
+        raise ValueError(f"Invalid remote name: must be 0-64 characters, got {len(name) if name is not None else 'None'}")
+    if not name:
+        return name  # Empty string = local filesystem, valid
     if not _SAFE_REMOTE_NAME_RE.match(name):
         raise ValueError(
             f"Invalid remote name '{name}': only alphanumeric characters, "
@@ -1226,6 +1229,10 @@ def rclone_ls_paginated(
 
                     if item.get("IsDir"):
                         if max_depth == -1 or depth < max_depth:
+                            # Skip .staging directories to avoid scanning
+                            # recursive self-copy structures
+                            if item["Name"] == ".staging":
+                                continue
                             next_dirs.append(full_path)
                     else:
                         yield item
@@ -1254,6 +1261,150 @@ def _dynamic_timeout(file_size: int | None, min_speed_bps: int = 500_000) -> int
         return 600  # default 10 min for unknown size
     estimated_seconds = file_size / min_speed_bps
     return max(120, int(estimated_seconds * 2))  # 2x safety margin, no cap
+
+
+def rclone_bulk_copy(
+    src_remote: str,
+    dst_remote: str,
+    dst_base_path: str,
+    file_paths: list[str],
+    *,
+    transfers: int = 32,
+    checkers: int = 64,
+    bwlimit: str | None = None,
+    progress_fn: Callable | None = None,
+) -> dict:
+    """Bulk copy files from one remote to another using --files-from.
+
+    Uses a SINGLE rclone process with internal parallelism — dramatically
+    faster than individual copyto calls for many small files.
+
+    Args:
+        src_remote: source remote name (e.g. "dropbox")
+        dst_remote: destination remote name (e.g. "gws-backup")
+        dst_base_path: staging directory on destination (e.g. "GML-Staging/dropbox")
+        file_paths: list of paths within src_remote to copy
+        transfers: number of parallel transfers (default 16)
+        checkers: number of parallel checkers (default 32)
+        bwlimit: bandwidth limit (e.g. "50M")
+        progress_fn: callback(files_done, bytes_done, speed_bps) for live updates
+
+    Returns {"success": bool, "files_transferred": int, "bytes": int, "error": str|None}
+    """
+    if not check_rclone() or not file_paths:
+        return {"success": True, "files_transferred": 0, "bytes": 0, "error": None}
+
+    is_local_source = (not src_remote or src_remote == "local")
+    if not is_local_source:
+        _validate_remote_name(src_remote)
+    _validate_remote_name(dst_remote)
+
+    import re
+    import tempfile
+    import time
+
+    # Write file list to temp file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="gml_bulk_") as f:
+        for fp in file_paths:
+            f.write(fp + "\n")
+        files_from_path = f.name
+
+    try:
+        source = "/" if is_local_source else f"{src_remote}:"
+        cmd = [
+            _rclone_bin(), "copy",
+            source,
+            f"{dst_remote}:{dst_base_path}",
+            "--files-from", files_from_path,
+            "--transfers", str(transfers),
+            "--checkers", str(checkers),
+            "--no-traverse",
+            "--stats", "2s",
+            "--stats-one-line",
+            "--use-json-log",
+            "-v",
+            "--drive-chunk-size", "64M",
+            "--drive-upload-cutoff", "64M",
+            "--multi-thread-streams", "8",
+            "--buffer-size", "64M",
+            "--fast-list",
+            "--size-only",
+            "--server-side-across-configs",
+        ]
+        if bwlimit:
+            cmd.extend(["--bwlimit", bwlimit])
+
+        logger.info("bulk_copy: %s → %s:%s (%d files, %d transfers)",
+                     src_remote, dst_remote, dst_base_path, len(file_paths), transfers)
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+        files_done = 0
+        bytes_done = 0
+        speed_bps = 0
+
+        for line in iter(proc.stdout.readline, ""):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Parse JSON log lines from rclone --use-json-log
+            try:
+                entry = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            # Stats lines contain a "stats" object with structured progress
+            stats = entry.get("stats")
+            if stats:
+                bytes_done = stats.get("bytes", bytes_done)
+                files_done = stats.get("transfers", files_done)
+                speed_bps = int(stats.get("speed", 0))
+                if progress_fn:
+                    progress_fn(files_done, bytes_done, speed_bps)
+
+        proc.wait(timeout=3600)
+
+        # rclone exit codes: 0=success, 1=partial (some files not transferred)
+        # Treat exit code 1 as partial success — transferred files are valid
+        partial_ok = proc.returncode in (0, 1)
+        return {
+            "success": partial_ok,
+            "files_transferred": files_done or (len(file_paths) if proc.returncode == 0 else 0),
+            "bytes": bytes_done,
+            "error": None if proc.returncode == 0 else f"rclone exit code {proc.returncode} (partial: {files_done} files OK)",
+        }
+    except Exception as exc:
+        logger.warning("bulk_copy failed for %s: %s", src_remote, exc)
+        return {"success": False, "files_transferred": 0, "bytes": 0, "error": str(exc)}
+    finally:
+        try:
+            os.unlink(files_from_path)
+        except OSError:
+            pass
+
+
+def rclone_server_side_move(
+    remote: str,
+    src_path: str,
+    dst_path: str,
+    *,
+    timeout: int = 30,
+) -> bool:
+    """Server-side move within the same remote (instant for Google Drive)."""
+    if not check_rclone():
+        return False
+    _validate_remote_name(remote)
+    cmd = [
+        _rclone_bin(), "moveto",
+        f"{remote}:{src_path}",
+        f"{remote}:{dst_path}",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
 
 
 def rclone_copyto(
@@ -1309,14 +1460,15 @@ def rclone_copyto(
     cmd = [
         _rclone_bin(),
         "copyto",
-        f"{src_remote}:{src_path}",
-        f"{dst_remote}:{dst_path}",
-        "--retries",
-        "3",
-        "--low-level-retries",
-        "10",
+        src_path if not src_remote else f"{src_remote}:{src_path}",
+        dst_path if not dst_remote else f"{dst_remote}:{dst_path}",
+        "--retries", "3",
+        "--low-level-retries", "10",
         "--stats-one-line",
         "-v",
+        "--multi-thread-streams", "4",
+        "--drive-chunk-size", "64M",
+        "--server-side-across-configs",
     ]
     if bwlimit:
         cmd.extend(["--bwlimit", bwlimit])
