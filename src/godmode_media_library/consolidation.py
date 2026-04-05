@@ -877,41 +877,95 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
         conn.commit()
         logger.info("Recovery: marked %d bulk-copied files as completed (staging dest found)", _recovered)
 
-    # Get ALL cloud files for transfer (no dedup filtering)
-    cur = conn.execute("""
-        SELECT sha256, path, source_remote, size, date_original, metadata_richness
-        FROM files
-        WHERE sha256 IS NOT NULL
-          AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
-        ORDER BY source_remote, path
-    """)
-    all_cloud_files = cur.fetchall()
+    # ── Collect hashes already transferred in ANY previous completed job ──
+    already_done_hashes: set[str] = set()
+    prev_jobs = conn.execute(
+        """SELECT job_id FROM consolidation_jobs
+           WHERE status = 'completed' AND job_id != ?""",
+        (ctx.job.job_id,),
+    ).fetchall()
+    for pj in prev_jobs:
+        cur_done = conn.execute(
+            """SELECT file_hash FROM consolidation_file_state
+               WHERE job_id = ? AND status = 'completed'""",
+            (pj["job_id"],),
+        )
+        already_done_hashes.update(row["file_hash"] for row in cur_done)
+    if already_done_hashes:
+        logger.info("Skipping %d file hashes already transferred in previous jobs", len(already_done_hashes))
 
-    # Also get local files for upload
-    cur_local = conn.execute("""
-        SELECT sha256, path, size, date_original FROM files
-        WHERE sha256 IS NOT NULL
-          AND (source_remote IS NULL OR source_remote = '' OR source_remote = 'local')
-    """)
-    local_files = cur_local.fetchall()
+    # ── Determine which sources to include based on config ──
+    wanted_remotes: set[str] = set(ctx.config.source_remotes) if ctx.config.source_remotes else set()
+    wanted_local_roots: list[str] = list(ctx.config.local_roots) if ctx.config.local_roots else []
+    include_all = not wanted_remotes and not wanted_local_roots  # No filter = include everything
 
-    total_bytes_estimate = sum(row["size"] or 0 for row in all_cloud_files)
+    # Get cloud files filtered by source_remotes config
+    all_cloud_files = []
+    if include_all or wanted_remotes:
+        if wanted_remotes:
+            remote_placeholders = ",".join("?" for _ in wanted_remotes)
+            cur = conn.execute(f"""
+                SELECT sha256, path, source_remote, size, date_original, metadata_richness
+                FROM files
+                WHERE sha256 IS NOT NULL
+                  AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
+                  AND source_remote IN ({remote_placeholders})
+                ORDER BY source_remote, path
+            """, list(wanted_remotes))  # noqa: S608
+        else:
+            cur = conn.execute("""
+                SELECT sha256, path, source_remote, size, date_original, metadata_richness
+                FROM files
+                WHERE sha256 IS NOT NULL
+                  AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
+                ORDER BY source_remote, path
+            """)
+        all_cloud_files = cur.fetchall()
+
+    # Get local files filtered by local_roots config
+    local_files = []
+    if include_all or wanted_local_roots:
+        if wanted_local_roots:
+            conditions = " OR ".join("path LIKE ? || '%'" for _ in wanted_local_roots)
+            prefixes = [r.rstrip("/") + "/" for r in wanted_local_roots]
+            cur_local = conn.execute(f"""
+                SELECT sha256, path, size, date_original FROM files
+                WHERE sha256 IS NOT NULL
+                  AND (source_remote IS NULL OR source_remote = '' OR source_remote = 'local')
+                  AND ({conditions})
+            """, prefixes)  # noqa: S608
+        else:
+            cur_local = conn.execute("""
+                SELECT sha256, path, size, date_original FROM files
+                WHERE sha256 IS NOT NULL
+                  AND (source_remote IS NULL OR source_remote = '' OR source_remote = 'local')
+            """)
+        local_files = cur_local.fetchall()
+
+    # Filter out dest remote files (never copy dest onto itself)
+    dest_remote = ctx.config.dest_remote
+    all_cloud_files = [r for r in all_cloud_files if r["source_remote"] != dest_remote]
+
+    total_bytes_estimate = sum(row["size"] or 0 for row in all_cloud_files) + sum(row["size"] or 0 for row in local_files)
     ctx.progress.bytes_total_estimate = total_bytes_estimate
 
-    # Register ALL files as pending (no dedup skipping)
+    # Register files as pending, skipping already-transferred hashes
     registered = 0
-    bundles_detected: set[str] = set()  # Track bundle roots to avoid duplicate transfers
+    skipped_already_done = 0
+    bundles_detected: set[str] = set()
 
     for row in all_cloud_files:
+        if row["sha256"] in already_done_hashes:
+            skipped_already_done += 1
+            continue
+
         source = row["source_remote"] or "local"
         fpath = row["path"]
 
-        # Bundle integrity: detect if file is inside a bundle
         bundle_root = _get_bundle_root(fpath)
         if bundle_root and source != "local":
             bundle_key = f"{source}:{bundle_root}"
             if bundle_key in bundles_detected:
-                # Already registered as part of a bundle — skip individual file
                 continue
             bundles_detected.add(bundle_key)
 
@@ -925,8 +979,11 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
         )
         registered += 1
 
-    # Register local files as pending too (for upload)
     for row in local_files:
+        if row["sha256"] in already_done_hashes:
+            skipped_already_done += 1
+            continue
+
         ckpt.mark_file(
             ctx.cat,
             ctx.job.job_id,
@@ -936,6 +993,11 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             FileStatus.PENDING,
         )
         registered += 1
+
+    logger.info(
+        "Registered %d files for streaming (%d skipped as already transferred, %d bundle roots)",
+        registered, skipped_already_done, len(bundles_detected),
+    )
 
     logger.info("Registered %d files for streaming (including %d bundle roots)", registered, len(bundles_detected))
 
@@ -1886,7 +1948,9 @@ def _phase_9_dedup(ctx: PhaseContext) -> None:
     ctx.finish_phase(Phase.DEDUP)
 
 
-_SURROG_PATTERN = re.compile(r"(_surrog)+")
+# Match _surrog, _surrogate, _surrogate: and combinations, plus ate: residue from broken cleanup
+_SURROG_PATTERN = re.compile(r"(_surrog(ate:?)?)+")
+_ATE_RESIDUE_PATTERN = re.compile(r"ate:(?=_[0-9a-f])")
 
 
 def _surrog_cleanup(ctx: PhaseContext, dest_files: list[dict]) -> dict:
@@ -1915,7 +1979,7 @@ def _surrog_cleanup(ctx: PhaseContext, dest_files: list[dict]) -> dict:
         if not fpath:
             continue
         all_dest_paths.add(fpath)
-        if "_surrog" in fpath:
+        if "_surrog" in fpath or "ate:_" in fpath:
             surrog_files.append(f)
 
     if not surrog_files:
@@ -1938,10 +2002,11 @@ def _surrog_cleanup(ctx: PhaseContext, dest_files: list[dict]) -> dict:
         suffix = p.suffix
         parent = p.parent
 
-        # Strip all _surrog occurrences from the stem
+        # Strip all _surrog/_surrogate:/_surrogate and ate: residue from the stem
         clean_stem = _SURROG_PATTERN.sub("", stem)
+        clean_stem = _ATE_RESIDUE_PATTERN.sub("", clean_stem)
         if clean_stem == stem:
-            # No actual _surrog pattern (shouldn't happen but be safe)
+            # No actual pattern found — skip
             continue
 
         # Compute a proper hash suffix: use MD5 of the clean path for determinism
@@ -1977,10 +2042,9 @@ def _surrog_cleanup(ctx: PhaseContext, dest_files: list[dict]) -> dict:
     logger.info("surrog_cleanup: %d renames to execute", len(rename_tasks))
 
     def _do_rename(old_path: str, new_path: str) -> tuple[str, str, bool, str | None]:
-        src_full = f"{ctx.config.dest_path}/{old_path}"
-        dst_full = f"{ctx.config.dest_path}/{new_path}"
+        # old_path/new_path already include dest_path prefix from lsjson
         logger.info("surrog_cleanup: %s -> %s", old_path, new_path)
-        result = _rclone_moveto(ctx.config.dest_remote, src_full, ctx.config.dest_remote, dst_full)
+        result = _rclone_moveto(ctx.config.dest_remote, old_path, ctx.config.dest_remote, new_path)
         return (old_path, new_path, result["success"], result.get("error"))
 
     with ThreadPoolExecutor(max_workers=16) as pool:
@@ -1996,8 +2060,9 @@ def _surrog_cleanup(ctx: PhaseContext, dest_files: list[dict]) -> dict:
             if success:
                 renamed += 1
                 # Update checkpoint DB: replace old dest_location with new one
-                old_dest_loc = f"{ctx.config.dest_remote}:{ctx.config.dest_path}/{old_path}"
-                new_dest_loc = f"{ctx.config.dest_remote}:{ctx.config.dest_path}/{new_path}"
+                # old_path/new_path already include dest_path prefix
+                old_dest_loc = f"{ctx.config.dest_remote}:{old_path}"
+                new_dest_loc = f"{ctx.config.dest_remote}:{new_path}"
                 try:
                     conn = ctx.cat.conn
                     with conn:
@@ -2086,7 +2151,11 @@ def _phase_10_organize(ctx: PhaseContext) -> None:
             continue
 
         # Skip files already in a category folder
-        top_folder = PurePosixPath(fpath).parts[0] if PurePosixPath(fpath).parts else ""
+        # fpath includes dest_path prefix (e.g. GML-Consolidated/Documents/...)
+        parts = PurePosixPath(fpath).parts
+        # Find the category-level part: skip dest_path prefix if present
+        cat_idx = 1 if ctx.config.dest_path and len(parts) > 1 else 0
+        top_folder = parts[cat_idx] if len(parts) > cat_idx else ""
         if top_folder in ("Media", "Documents", "Software", "Other"):
             continue
 
@@ -2120,9 +2189,10 @@ def _phase_10_organize(ctx: PhaseContext) -> None:
 
     def _do_move(args):
         fpath, new_path, _cat = args
-        src_full = f"{ctx.config.dest_path}/{fpath}"
-        dst_full = f"{ctx.config.dest_path}/{new_path}"
-        result = _rclone_moveto(ctx.config.dest_remote, src_full, ctx.config.dest_remote, dst_full)
+        # fpath already includes dest_path prefix from lsjson;
+        # new_path is relative (e.g. Documents/year/month/file) — prepend dest_path
+        dst_full = f"{ctx.config.dest_path}/{new_path}" if ctx.config.dest_path else new_path
+        result = _rclone_moveto(ctx.config.dest_remote, fpath, ctx.config.dest_remote, dst_full)
         return (fpath, new_path, result["success"], result.get("error"))
 
     with ThreadPoolExecutor(max_workers=16) as pool:

@@ -719,12 +719,18 @@ class Catalog:
             first_seen = existing[1]
             self.conn.execute(
                 """UPDATE files SET
-                    size=?, mtime=?, ctime=?, birthtime=?, ext=?, sha256=?,
+                    size=?, mtime=?, ctime=?, birthtime=?, ext=?,
+                    sha256=COALESCE(?, sha256),
                     inode=?, device=?, nlink=?, asset_key=?, asset_component=?,
                     xattr_count=?, first_seen=?, last_scanned=?,
                     duration_seconds=?, width=?, height=?, video_codec=?,
-                    audio_codec=?, bitrate=?, phash=?, date_original=?,
-                    camera_make=?, camera_model=?, gps_latitude=?, gps_longitude=?
+                    audio_codec=?, bitrate=?,
+                    phash=COALESCE(?, phash),
+                    date_original=COALESCE(?, date_original),
+                    camera_make=COALESCE(?, camera_make),
+                    camera_model=COALESCE(?, camera_model),
+                    gps_latitude=COALESCE(?, gps_latitude),
+                    gps_longitude=COALESCE(?, gps_longitude)
                 WHERE id=?""",
                 (
                     row.size,
@@ -806,18 +812,18 @@ class Catalog:
         row = cur.fetchone()
         return (row[0], row[1]) if row else None
 
-    def get_all_mtime_size_for_root(self, root: str) -> dict[str, tuple[float, int]]:
-        """Batch lookup: returns {path: (mtime, size)} for all files under *root*.
+    def get_all_mtime_size_for_root(self, root: str) -> dict[str, tuple[float, int, bool]]:
+        """Batch lookup: returns {path: (mtime, size, has_hash)} for all files under *root*.
 
         Uses a prefix query (LIKE 'root%') so it works for any subtree.
         """
         prefix = root.rstrip("/") + "/"
         escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         cur = self.conn.execute(
-            "SELECT path, mtime, size FROM files WHERE path LIKE ? || '%' ESCAPE '\\'",
+            "SELECT path, mtime, size, sha256 IS NOT NULL FROM files WHERE path LIKE ? || '%' ESCAPE '\\'",
             (escaped_prefix,),
         )
-        return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+        return {row[0]: (row[1], row[2], bool(row[3])) for row in cur.fetchall()}
 
     def mark_removed(self, paths: list[str]) -> int:
         """Delete catalog entries for removed files. Returns count deleted.
@@ -826,14 +832,21 @@ class Catalog:
         """
         if not paths:
             return 0
-        # Collect inode/device pairs before deletion so we can update remaining hardlinks
-        placeholders = ",".join("?" for _ in paths)
-        inode_rows = self.conn.execute(
-            f"SELECT DISTINCT inode, device FROM files WHERE path IN ({placeholders}) AND inode IS NOT NULL AND device IS NOT NULL",  # noqa: S608
-            paths,
-        ).fetchall()
-        cur = self.conn.execute(f"DELETE FROM files WHERE path IN ({placeholders})", paths)  # noqa: S608
-        deleted = cur.rowcount
+        # Process in chunks to avoid SQLite variable limit (~32K)
+        _CHUNK = 500
+        inode_rows: list[tuple] = []
+        deleted = 0
+        for i in range(0, len(paths), _CHUNK):
+            chunk = paths[i : i + _CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            inode_rows.extend(
+                self.conn.execute(
+                    f"SELECT DISTINCT inode, device FROM files WHERE path IN ({placeholders}) AND inode IS NOT NULL AND device IS NOT NULL",  # noqa: S608
+                    chunk,
+                ).fetchall()
+            )
+            cur = self.conn.execute(f"DELETE FROM files WHERE path IN ({placeholders})", chunk)  # noqa: S608
+            deleted += cur.rowcount
         # Decrement nlink on remaining files that shared the same inode/device
         for inode, device in inode_rows:
             self.conn.execute(
@@ -951,12 +964,17 @@ class Catalog:
         """Return a mapping of path -> group_id for paths that are in duplicate groups."""
         if not paths:
             return {}
-        placeholders = ",".join("?" for _ in paths)
-        cur = self.conn.execute(
-            f"SELECT f.path, d.group_id FROM duplicates d JOIN files f ON d.file_id = f.id WHERE f.path IN ({placeholders})",  # noqa: S608
-            paths,
-        )
-        return {row[0]: row[1] for row in cur.fetchall()}
+        result: dict[str, str] = {}
+        _CHUNK = 500
+        for i in range(0, len(paths), _CHUNK):
+            chunk = paths[i : i + _CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self.conn.execute(
+                f"SELECT f.path, d.group_id FROM duplicates d JOIN files f ON d.file_id = f.id WHERE f.path IN ({placeholders})",  # noqa: S608
+                chunk,
+            )
+            result.update({row[0]: row[1] for row in cur.fetchall()})
+        return result
 
     def paths_without_metadata(self) -> list[str]:
         """Return paths of files that don't have ExifTool metadata extracted yet."""

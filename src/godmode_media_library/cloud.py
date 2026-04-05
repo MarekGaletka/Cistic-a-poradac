@@ -1195,16 +1195,58 @@ def rclone_ls_paginated(
     max_depth: int = 1,
     inter_page_delay: float = 0.5,
 ) -> Iterator[dict]:
-    """Yield remote files lazily via breadth-first directory walk.
+    """Yield remote files lazily.
 
-    Instead of one recursive call, walks directory tree level by level
-    and *yields* file dicts as they arrive — constant memory overhead
-    regardless of remote size (same dict format as rclone_ls).
+    When max_depth == -1 (full recursive), uses a single `rclone lsjson -R`
+    call which is vastly faster than per-folder BFS (minutes vs hours).
+    For shallow listings (max_depth >= 0), uses BFS walk with per-folder calls.
     """
     if not check_rclone():
         return
     _validate_remote_name(remote)
 
+    # ── Fast path: single recursive call ──
+    if max_depth == -1:
+        target = f"{remote}:{path}" if path else f"{remote}:"
+        cmd = [_rclone_bin(), "lsjson", target, "-R", "--no-mimetype", "--fast-list"]
+        logger.info("rclone_ls_paginated: using fast recursive listing for %s", target)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if result.returncode != 0:
+                logger.warning("rclone lsjson -R failed for %s: %s", target, result.stderr.strip()[:200])
+                return
+            items = json.loads(result.stdout)
+            for item in items:
+                if item.get("IsDir"):
+                    continue
+                fpath = item.get("Path", item.get("Name", ""))
+                # Skip .staging directories
+                if "/.staging/" in fpath or fpath.startswith(".staging/"):
+                    continue
+                if path:
+                    item["Path"] = f"{path}/{fpath}"
+                yield item
+        except subprocess.TimeoutExpired:
+            logger.warning("rclone lsjson -R timed out for %s (30min), falling back to BFS", target)
+            # Fall through to BFS walk below
+            yield from _rclone_ls_bfs(remote, path, max_depth=-1, inter_page_delay=inter_page_delay)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("rclone lsjson -R error for %s: %s, falling back to BFS", target, exc)
+            yield from _rclone_ls_bfs(remote, path, max_depth=-1, inter_page_delay=inter_page_delay)
+        return
+
+    # ── Shallow listing: BFS walk ──
+    yield from _rclone_ls_bfs(remote, path, max_depth=max_depth, inter_page_delay=inter_page_delay)
+
+
+def _rclone_ls_bfs(
+    remote: str,
+    path: str = "",
+    *,
+    max_depth: int = 1,
+    inter_page_delay: float = 0.5,
+) -> Iterator[dict]:
+    """BFS directory walk — used for shallow listings or as fallback."""
     import time
 
     dirs_to_scan: list[str] = [path]
@@ -1229,15 +1271,12 @@ def rclone_ls_paginated(
 
                     if item.get("IsDir"):
                         if max_depth == -1 or depth < max_depth:
-                            # Skip .staging directories to avoid scanning
-                            # recursive self-copy structures
                             if item["Name"] == ".staging":
                                 continue
                             next_dirs.append(full_path)
                     else:
                         yield item
 
-                # Rate limit protection — pause between API calls
                 if inter_page_delay > 0:
                     time.sleep(inter_page_delay)
 

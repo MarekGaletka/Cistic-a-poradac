@@ -271,7 +271,7 @@ def test_scan_progress_callback(tmp_path: Path) -> None:
         incremental_scan(cat, [media], progress_callback=on_progress)
 
     phases = {c.get("phase") for c in callbacks}
-    assert "discovery" in phases
+    assert "scanning" in phases
 
 
 # ── Multi-worker hashing ────────────────────────────────────────────
