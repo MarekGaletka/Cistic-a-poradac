@@ -843,6 +843,16 @@ const translations = {
     "people.cleanup_hint": "Smaže všechny automaticky pojmenované osoby (Person_NNN) a uvolní jejich obličeje pro nové přiřazení",
     "people.cleanup_confirm": "Smazat všechny automaticky generované osoby (Person_001, Person_002…)? Pojmenované osoby zůstanou zachovány. Poté spusťte znovu seskupení.",
     "people.cleanup_done": "Vyčištěno: {deleted} auto-osob smazáno, {freed} obličejů uvolněno",
+    "people.unidentified_banner": "{count} obličejů detekováno, ale žádný není přiřazen k osobě. Klikněte na neidentifikované obličeje a přiřaďte je.",
+    "people.scan_faces_hint": "Spustí detekci obličejů ve všech naskenovaných souborech pomocí HOG modelu",
+    "people.cluster_hint": "Seskupí podobné obličeje do skupin pro snazší přiřazení",
+
+    // Map
+    "map.empty_gps_message": "Zatím žádné soubory s GPS. Spusťte skenování s extrakcí metadat pro zobrazení souborů na mapě.",
+    "map.go_to_pipeline": "Přejít na nastavení pipeline",
+
+    // Gallery
+    "gallery.empty_collection_message": "Tato kolekce je zatím prázdná. Přidejte média a spusťte hodnocení kvality.",
 
     // Cloud
     "cloud.title": "Cloudová úložiště",

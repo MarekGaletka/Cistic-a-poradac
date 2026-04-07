@@ -86,11 +86,33 @@ export async function render(container) {
     if (!files.length) {
       container.innerHTML = `
         <div class="page-header"><h2>${t("map.title")}</h2></div>
-        <div class="empty-state-hero" style="padding:40px 0">
-          <div class="empty-state-icon">&#127758;</div>
-          <h3 class="empty-state-title">${t("map.empty_title")}</h3>
-          <p class="empty-state-subtitle">${t("map.empty_hint")}</p>
+        <div class="map-empty-wrapper">
+          <div id="map-container" class="map-container-empty"></div>
+          <div class="map-empty-overlay">
+            <div class="map-empty-card">
+              <div class="map-empty-icon">&#127758;</div>
+              <h3 class="map-empty-title">${t("map.empty_title")}</h3>
+              <p class="map-empty-text">${t("map.empty_gps_message")}</p>
+              <button class="btn btn-primary" id="btn-map-pipeline">${t("map.go_to_pipeline")}</button>
+            </div>
+          </div>
         </div>`;
+
+      // Initialize map in background so it's ready when files appear
+      cleanup();
+      if (typeof L !== "undefined") {
+        _leafletMap = L.map("map-container").setView([49.8, 15.5], 7);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 19,
+        }).addTo(_leafletMap);
+        setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
+      }
+
+      // Navigate to settings/pipeline
+      document.getElementById("btn-map-pipeline")?.addEventListener("click", () => {
+        location.hash = "#settings";
+      });
       return;
     }
 

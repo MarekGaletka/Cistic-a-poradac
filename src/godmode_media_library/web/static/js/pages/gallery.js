@@ -223,7 +223,12 @@ function _renderGrid(files) {
   if (!grid) return;
 
   if (!files.length) {
-    grid.innerHTML = `<div class="gallery-empty">${t("gallery.empty_collection")}</div>`;
+    grid.innerHTML = `
+      <div class="gallery-empty-state">
+        <div class="gallery-empty-state-icon">&#127912;</div>
+        <h3>${t("gallery.empty_collection")}</h3>
+        <p class="gallery-empty-state-text">${t("gallery.empty_collection_message")}</p>
+      </div>`;
     return;
   }
 

@@ -17,10 +17,10 @@ export async function render(container) {
       <div class="people-header">
         <h2>${t("people.title")}</h2>
         <div class="people-toolbar">
-          <button class="btn btn-primary" id="btn-face-detect">
+          <button class="btn btn-primary" id="btn-face-detect" title="${t("people.scan_faces_hint")}">
             <span class="btn-icon">&#128269;</span> ${t("people.scan_faces")}
           </button>
-          <button class="btn" id="btn-face-cluster">
+          <button class="btn" id="btn-face-cluster" title="${t("people.cluster_hint")}">
             <span class="btn-icon">&#127922;</span> ${t("people.cluster")}
           </button>
           <button class="btn btn-subtle" id="btn-cleanup-auto" title="${t("people.cleanup_hint")}">
@@ -32,6 +32,7 @@ export async function render(container) {
         </div>
       </div>
       <div id="privacy-banner"></div>
+      <div id="people-unidentified-banner"></div>
       <div id="face-stats" class="people-stats"></div>
       <div class="people-layout">
         <div class="people-sidebar" id="people-sidebar">
@@ -41,7 +42,7 @@ export async function render(container) {
           </div>
           <div id="persons-list" class="persons-list"></div>
           <div class="people-sidebar-section">
-            <h4>${t("people.unidentified")}</h4>
+            <h4>${t("people.unidentified")} <span id="unidentified-badge" class="people-unid-badge"></span></h4>
             <div id="unidentified-count" class="people-unidentified-count"></div>
           </div>
         </div>
@@ -99,6 +100,24 @@ async function loadStats() {
       <div class="stat-card"><span class="stat-value">${stats.identified_faces}</span><span class="stat-label">${t("people.identified")}</span></div>
       <div class="stat-card"><span class="stat-value">${stats.unidentified_faces}</span><span class="stat-label">${t("people.unidentified")}</span></div>
       <div class="stat-card"><span class="stat-value">${stats.named_persons}</span><span class="stat-label">${t("people.named")}</span></div>`;
+
+    // Show prominent banner when faces detected but none identified
+    const bannerEl = $("#people-unidentified-banner");
+    if (bannerEl) {
+      if (stats.total_faces > 0 && stats.identified_faces === 0) {
+        bannerEl.innerHTML = `
+          <div class="people-action-banner">
+            <span class="people-action-banner-icon">&#9888;</span>
+            <div class="people-action-banner-text">
+              <strong>${t("people.unidentified_banner", { count: stats.total_faces })}</strong>
+            </div>
+            <button class="btn btn-primary btn-small" id="btn-banner-unidentified">${t("people.unidentified")} (${stats.unidentified_faces})</button>
+          </div>`;
+        $("#btn-banner-unidentified")?.addEventListener("click", () => showUnidentified());
+      } else {
+        bannerEl.innerHTML = "";
+      }
+    }
   } catch { /* stats may fail if no faces yet */ }
 }
 
@@ -117,6 +136,13 @@ async function loadPersons() {
         ? `<button class="btn btn-link" id="btn-show-unidentified">${count} ${t("people.unidentified_faces")}</button>`
         : `<span class="text-muted">0</span>`;
       $("#btn-show-unidentified")?.addEventListener("click", () => showUnidentified());
+
+      // Update badge
+      const badge = $("#unidentified-badge");
+      if (badge) {
+        badge.textContent = count > 0 ? count.toLocaleString() : "";
+        badge.style.display = count > 0 ? "inline-flex" : "none";
+      }
     }
   } catch (e) {
     const list = $("#persons-list");
