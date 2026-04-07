@@ -1217,7 +1217,7 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
                 bulk_result = rclone_bulk_copy(
                     "local", ctx.config.dest_remote, staging_base, src_paths,
-                    transfers=4, checkers=8, bwlimit=ctx.config.bwlimit,
+                    transfers=16, checkers=32, bwlimit=ctx.config.bwlimit,
                     progress_fn=_bulk_local_progress,
                 )
 
@@ -1242,7 +1242,7 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 for task in tasks:
                     t_fs = task[0]
                     t_file_size = task[4]
-                    t_staging_dest = f"{staging_base}/{task[2]}"
+                    t_staging_dest = f"{staging_base}/{task[2].lstrip('/')}"
                     ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
                                    Phase.STREAM, FileStatus.COMPLETED,
                                    dest=f"{ctx.config.dest_remote}:{t_staging_dest}",
@@ -1258,7 +1258,7 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
                 def _do_local_move(task_args):
                     t_fs, _, t_src_path, t_dest_path, t_file_size = task_args
-                    t_staging = f"{staging_base}/{t_src_path}"
+                    t_staging = f"{staging_base}/{t_src_path.lstrip('/')}"
                     moved = rclone_server_side_move(ctx.config.dest_remote, t_staging, t_dest_path)
                     return (t_fs, t_dest_path, t_staging, t_file_size, moved)
 
