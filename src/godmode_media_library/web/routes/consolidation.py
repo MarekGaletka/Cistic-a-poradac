@@ -185,6 +185,7 @@ def consolidation_status(request: Request):
                     prog = getattr(t, "progress", None)
                     if prog:
                         active["task_progress"] = prog
+                    active["task_id"] = t.id
                     break
         except Exception:
             pass  # best-effort enrichment

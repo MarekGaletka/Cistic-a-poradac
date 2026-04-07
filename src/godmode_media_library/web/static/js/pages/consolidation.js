@@ -15,6 +15,11 @@ let _pollFailCount = 0;      // Issue #8: consecutive poll failures
 let _lastPollSuccess = 0;    // Issue #9: timestamp of last successful poll
 let _healthTimer = null;
 let _lastHealth = null;
+let _ws = null;              // WebSocket connection
+let _wsReconnectDelay = 1000; // exponential backoff start
+let _wsTaskId = null;        // current task_id for WS
+let _failedFilesCache = null; // cached failed files report
+let _failedFilesExpanded = false;
 
 /**
  * Pick the most relevant job to display.
@@ -107,6 +112,8 @@ const API_PHASE_MAP = {
 export async function render(container) {
   _container = container;
   stopPolling();
+  _failedFilesCache = null;
+  _failedFilesExpanded = false;
 
   container.innerHTML = `
     <div class="consolidation-page">
@@ -142,7 +149,7 @@ async function initWizard() {
     renderPhaseContent(data, active);
 
     if (active && (active.status === "running" || active.status === "paused" || active.status === "created")) {
-      startPolling();
+      startPolling(active.task_id);
     } else {
       // Still start health polling even when no active job
       if (!_healthTimer) {
@@ -533,6 +540,17 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
         ${currentFile ? `<div class="wiz-current-file"><span>Aktuální:</span> <code>${escapeHtml(currentFile)}</code></div>` : ""}
       </div>
 
+      ${failed > 0 ? `
+      <div class="wiz-failed-panel">
+        <button type="button" class="wiz-failed-toggle" id="btn-failed-toggle">
+          <span class="wiz-failed-toggle-icon">${_failedFilesExpanded ? "\u25BC" : "\u25B6"}</span>
+          <span>\u274C Selhané soubory (${failed.toLocaleString("cs-CZ")})</span>
+        </button>
+        <div class="wiz-failed-detail" id="wiz-failed-detail" style="display:${_failedFilesExpanded ? "block" : "none"}">
+          <div class="wiz-failed-loading" id="wiz-failed-loading">Na\u010D\u00EDt\u00E1m...</div>
+        </div>
+      </div>` : ""}
+
       ${isCompleted ? `
       <div class="wiz-completed-summary" style="margin:16px 0;padding:16px;background:var(--color-success-bg, #f0fff4);border:1px solid var(--color-success, #38a169);border-radius:var(--radius-sm);">
         \u2705 <strong>Přenos dokončen úspěšně.</strong> ${checkpointProg.skipped > 0 ? ` ${checkpointProg.skipped.toLocaleString("cs-CZ")} souborů přeskočeno (neexistující cache).` : ""}
@@ -559,6 +577,12 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
   } else {
     bindButton("#btn-wiz-pause", doPause);
     bindButton("#btn-wiz-resume", doResume);
+  }
+
+  // Failed files toggle
+  bindButton("#btn-failed-toggle", _toggleFailedFiles);
+  if (_failedFilesExpanded && _failedFilesCache) {
+    _renderFailedFilesContent();
   }
 }
 
@@ -920,7 +944,7 @@ async function doStart() {
     showToast(`${t("consolidation.started")} (${result.task_id || result.job_id || ""})`, "success");
     _transferActive = true;
     _lastActivity = Date.now();
-    startPolling();
+    startPolling(result.task_id);
     setTimeout(() => reloadPhase(), 500);
   } catch (e) {
     showToast(t("general.error", { message: e.message }), "error");
@@ -933,7 +957,8 @@ async function doStart() {
 
 async function doPause() {
   const btn = $("#btn-wiz-pause");
-  if (btn) btn.disabled = true;
+  const origText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="wiz-btn-spinner"></span> Pozastavuji...`; }
 
   try {
     const result = await apiPost("/consolidation/pause");
@@ -946,7 +971,7 @@ async function doPause() {
     await reloadPhase();
   } catch (e) {
     showToast(t("general.error", { message: e.message }), "error");
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
 }
 
@@ -954,7 +979,7 @@ async function doResume() {
   const btn = $("#btn-wiz-resume");
   if (btn) {
     btn.disabled = true;
-    btn.textContent = `\u23F3 ${t("consolidation.resuming")}`;
+    btn.innerHTML = `<span class="wiz-btn-spinner"></span> ${t("consolidation.resuming")}`;
   }
 
   try {
@@ -962,7 +987,7 @@ async function doResume() {
     showToast(`${t("consolidation.resumed")} (${result.task_id || ""})`, "success");
     _transferActive = true;
     _lastActivity = Date.now();
-    startPolling();
+    startPolling(result.task_id);
     await reloadPhase();
   } catch (e) {
     showToast(t("general.error", { message: e.message }), "error");
@@ -1015,11 +1040,16 @@ async function doSync() {
 // Polling
 // ---------------------------------------------------------------------------
 
-function startPolling() {
+function startPolling(taskId) {
   stopPolling();
   _pollFailCount = 0;
   _lastPollSuccess = Date.now();
-  _pollTimer = setInterval(pollStatus, 2000);
+  // Use slower polling (5s) when WS is available, fast (2s) as fallback
+  _pollTimer = setInterval(pollStatus, 5000);
+  // Try to connect WebSocket for real-time updates
+  if (taskId) {
+    _connectWebSocket(taskId);
+  }
   // Start health polling (every 10s)
   if (!_healthTimer) {
     _pollHealth();
@@ -1036,6 +1066,7 @@ function stopPolling() {
     clearInterval(_healthTimer);
     _healthTimer = null;
   }
+  _closeWebSocket();
 }
 
 async function _pollHealth() {
@@ -1233,6 +1264,177 @@ function _renderStagingIndicator(activeJob) {
     <span class="wiz-staging-icon">\uD83D\uDCE6</span>
     <span><strong>${staging.toLocaleString("cs-CZ")}</strong> souborů čeká na přesun ze staging na finální cesty</span>
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Failed files panel
+// ---------------------------------------------------------------------------
+
+async function _toggleFailedFiles() {
+  _failedFilesExpanded = !_failedFilesExpanded;
+  const detail = document.getElementById("wiz-failed-detail");
+  const icon = document.querySelector(".wiz-failed-toggle-icon");
+  if (!detail) return;
+  detail.style.display = _failedFilesExpanded ? "block" : "none";
+  if (icon) icon.textContent = _failedFilesExpanded ? "\u25BC" : "\u25B6";
+
+  if (_failedFilesExpanded && !_failedFilesCache) {
+    try {
+      const data = await api("/consolidation/failed");
+      _failedFilesCache = data.failed_files || [];
+      _renderFailedFilesContent();
+    } catch (e) {
+      const el = document.getElementById("wiz-failed-loading");
+      if (el) el.innerHTML = `<span style="color:var(--color-error)">\u274C ${escapeHtml(e.message)}</span>`;
+    }
+  } else if (_failedFilesExpanded && _failedFilesCache) {
+    _renderFailedFilesContent();
+  }
+}
+
+function _renderFailedFilesContent() {
+  const detail = document.getElementById("wiz-failed-detail");
+  if (!detail || !_failedFilesCache) return;
+
+  if (_failedFilesCache.length === 0) {
+    detail.innerHTML = `<div class="wiz-failed-empty">\u2705 \u017D\u00E1dn\u00E9 selhan\u00E9 soubory</div>`;
+    return;
+  }
+
+  // Group by error message
+  const groups = {};
+  for (const f of _failedFilesCache) {
+    const key = f.error || "Nezn\u00E1m\u00E1 chyba";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(f);
+  }
+
+  const sortedKeys = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
+
+  detail.innerHTML = `
+    <div class="wiz-failed-groups">
+      ${sortedKeys.map(key => `
+        <div class="wiz-failed-group">
+          <div class="wiz-failed-group-header">
+            <span class="wiz-failed-group-error">${escapeHtml(key)}</span>
+            <span class="wiz-failed-group-count">${groups[key].length}x</span>
+          </div>
+          <div class="wiz-failed-group-files">
+            ${groups[key].slice(0, 5).map(f => `
+              <div class="wiz-failed-file">
+                <code>${escapeHtml(f.source || f.file_hash || "?")}</code>
+                <span class="wiz-failed-attempts">${f.attempts || 0} pokus\u016F</span>
+              </div>
+            `).join("")}
+            ${groups[key].length > 5 ? `<div class="wiz-failed-more">... a dal\u0161\u00EDch ${groups[key].length - 5}</div>` : ""}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+    <button type="button" class="wiz-btn-secondary wiz-btn-sm wiz-mt-sm" id="btn-retry-failed">\uD83D\uDD04 Opakovat selhan\u00E9</button>
+  `;
+
+  bindButton("#btn-retry-failed", async () => {
+    const btn = document.getElementById("btn-retry-failed");
+    if (btn) { btn.disabled = true; btn.textContent = "\u23F3 Obnovuji..."; }
+    try {
+      await apiPost("/consolidation/resume");
+      showToast("Obnovuji p\u0159enos v\u010Detn\u011B selhan\u00FDch soubor\u016F", "success");
+      _failedFilesCache = null;
+      _transferActive = true;
+      _lastActivity = Date.now();
+      startPolling();
+      setTimeout(() => reloadPhase(), 500);
+    } catch (e) {
+      showToast(e.message, "error");
+      if (btn) { btn.disabled = false; btn.textContent = "\uD83D\uDD04 Opakovat selhan\u00E9"; }
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket real-time updates
+// ---------------------------------------------------------------------------
+
+function _connectWebSocket(taskId) {
+  if (_ws && _ws.readyState <= 1) {
+    // Already connected or connecting
+    if (_wsTaskId === taskId) return;
+    _ws.close();
+  }
+  _wsTaskId = taskId;
+  if (!taskId) return;
+
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  let url = `${proto}//${location.host}/ws/tasks/${taskId}`;
+  // Add token if present in localStorage
+  const token = localStorage.getItem("gml_api_token");
+  if (token) url += `?token=${encodeURIComponent(token)}`;
+
+  try {
+    _ws = new WebSocket(url);
+  } catch { return; }
+
+  _ws.onopen = () => {
+    _wsReconnectDelay = 1000;
+    _hideDisconnectWarning();
+  };
+
+  _ws.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      if (msg.error) return;
+      _lastPollSuccess = Date.now();
+      _pollFailCount = 0;
+      // Update active job display from WS data
+      if (msg.progress) {
+        _onWsProgress(msg);
+      }
+    } catch { /* ignore malformed */ }
+  };
+
+  _ws.onclose = () => {
+    _ws = null;
+    // Reconnect with exponential backoff if still active
+    if (_transferActive && _wsTaskId === taskId) {
+      setTimeout(() => {
+        if (_transferActive) _connectWebSocket(taskId);
+      }, _wsReconnectDelay);
+      _wsReconnectDelay = Math.min(_wsReconnectDelay * 2, 30000);
+    }
+  };
+
+  _ws.onerror = () => {
+    // onclose will handle reconnect
+  };
+}
+
+function _closeWebSocket() {
+  if (_ws) {
+    _wsTaskId = null;
+    _ws.close();
+    _ws = null;
+  }
+}
+
+function _onWsProgress(msg) {
+  // WS sends task-level progress; merge into poll cycle
+  // Instead of full re-render, update key metrics inline for smoothness
+  const prog = msg.progress || {};
+
+  // Update speed/ETA/current file inline if elements exist
+  const speedEl = document.querySelector(".wiz-metric-value[data-metric='speed']");
+  if (speedEl && prog.transfer_speed_bps !== undefined) {
+    speedEl.textContent = prog.transfer_speed_bps > 0
+      ? formatBytes(prog.transfer_speed_bps) + "/s" : "\u2014";
+  }
+
+  if (prog.transfer_speed_bps > 0 || prog.files_transferred > 0) {
+    _lastActivity = Date.now();
+  }
+
+  // Still do a full re-render periodically via polling
+  // WS just keeps the "last update" timestamp fresh
 }
 
 function escapeHtml(str) {
