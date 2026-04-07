@@ -13,6 +13,8 @@ let _lastActivity = 0;
 let _localRoots = [];
 let _pollFailCount = 0;      // Issue #8: consecutive poll failures
 let _lastPollSuccess = 0;    // Issue #9: timestamp of last successful poll
+let _healthTimer = null;
+let _lastHealth = null;
 
 /**
  * Pick the most relevant job to display.
@@ -139,8 +141,14 @@ async function initWizard() {
     renderStepIndicator();
     renderPhaseContent(data, active);
 
-    if (active && (active.status === "running" || active.status === "paused")) {
+    if (active && (active.status === "running" || active.status === "paused" || active.status === "created")) {
       startPolling();
+    } else {
+      // Still start health polling even when no active job
+      if (!_healthTimer) {
+        _pollHealth();
+        _healthTimer = setInterval(_pollHealth, 10000);
+      }
     }
   } catch (e) {
     const el = $("#wizard-content");
@@ -440,6 +448,10 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
 
       ${failedReason ? `<div class="wiz-error-msg" style="margin:12px 0;padding:12px 16px;background:${isFailed ? "var(--color-danger-bg, #fff5f5)" : "var(--color-warning-bg, #fffaf0)"};border:1px solid ${isFailed ? "var(--color-danger, #e53e3e)" : "var(--color-warning, #dd6b20)"};border-radius:var(--radius-sm);font-size:0.9em;">
         ${isFailed ? "\u274C" : "\u23F8\uFE0F"} <strong>${isFailed ? "Důvod selhání" : "Důvod pozastavení"}:</strong> ${escapeHtml(failedReason)}
+        ${_getActionGuidance(failedReason, activeJob)}
+      </div>` : ""}
+      ${!failedReason && isPaused && activeJob?.disk_connected === false ? `<div class="wiz-error-msg" style="margin:12px 0;padding:12px 16px;background:var(--color-warning-bg, #fffaf0);border:1px solid var(--color-warning, #dd6b20);border-radius:var(--radius-sm);font-size:0.9em;">
+        \uD83D\uDCBE <strong>Disk odpojen.</strong> Připojte zdrojový disk a klikněte Pokračovat.
       </div>` : ""}
       ${stalled ? `<div class="wiz-watchdog-bar">\u26A0\uFE0F Přenos se zastavil — zkontrolujte připojení</div>` : ""}
       ${googleLimit ? `<div class="wiz-warning-bar">\uD83D\uDEAB Denní limit Google uploadu (750 GB) — pokračuje automaticky zítra</div>` : ""}
@@ -483,6 +495,9 @@ function renderPhaseATransfer(el, activeJob, progress, isPaused) {
             </div>`;
           }).join("")}
         </div>` : ""}
+
+      ${_renderRemoteBreakdown(activeJob)}
+      ${_renderStagingIndicator(activeJob)}
 
       <div class="wiz-transfer-stats">
         <div class="wiz-progress-text-main">
@@ -1005,6 +1020,11 @@ function startPolling() {
   _pollFailCount = 0;
   _lastPollSuccess = Date.now();
   _pollTimer = setInterval(pollStatus, 2000);
+  // Start health polling (every 10s)
+  if (!_healthTimer) {
+    _pollHealth();
+    _healthTimer = setInterval(_pollHealth, 10000);
+  }
 }
 
 function stopPolling() {
@@ -1012,6 +1032,62 @@ function stopPolling() {
     clearInterval(_pollTimer);
     _pollTimer = null;
   }
+  if (_healthTimer) {
+    clearInterval(_healthTimer);
+    _healthTimer = null;
+  }
+}
+
+async function _pollHealth() {
+  try {
+    _lastHealth = await api("/consolidation/health");
+    _renderHealthBar();
+  } catch (_) {
+    _lastHealth = { ok: false, server_down: true };
+    _renderHealthBar();
+  }
+}
+
+function _renderHealthBar() {
+  let bar = document.getElementById("wiz-health-bar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "wiz-health-bar";
+    bar.className = "wiz-health-bar";
+    const container = _container || document.getElementById("wizard-content");
+    if (container) container.parentNode.insertBefore(bar, container);
+    else return;
+  }
+  const h = _lastHealth || {};
+  const serverOk = h.ok !== false && !h.server_down;
+  const diskOk = h.disk_connected;
+  const rcloneOk = h.rclone_running;
+  const disks = h.disks || {};
+  const diskNames = Object.keys(disks);
+
+  const items = [];
+  // Server
+  items.push(`<span class="wiz-health-item ${serverOk ? 'wiz-health-ok' : 'wiz-health-err'}">
+    <span class="wiz-health-dot"></span> Server ${serverOk ? 'OK' : 'nedostupný'}
+  </span>`);
+  // Disk
+  if (diskNames.length > 0) {
+    for (const dn of diskNames) {
+      const d = disks[dn];
+      const label = dn.split("/").pop() || dn;
+      items.push(`<span class="wiz-health-item ${d.connected ? 'wiz-health-ok' : 'wiz-health-err'}">
+        <span class="wiz-health-dot"></span> ${escapeHtml(label)} ${d.connected ? (d.free_gb != null ? `(${d.free_gb} GB volných)` : 'připojen') : 'odpojen'}
+      </span>`);
+    }
+  }
+  // rclone
+  if (rcloneOk != null) {
+    items.push(`<span class="wiz-health-item ${rcloneOk ? 'wiz-health-ok' : 'wiz-health-warn'}">
+      <span class="wiz-health-dot"></span> rclone ${rcloneOk ? `(${(h.rclone_pids || []).length} procesů)` : 'neběží'}
+    </span>`);
+  }
+
+  bar.innerHTML = items.join("");
 }
 
 async function pollStatus() {
@@ -1111,6 +1187,52 @@ function _formatSecondsAgo(ts) {
   if (sec < 60) return `${sec}s`;
   const min = Math.floor(sec / 60);
   return `${min}min`;
+}
+
+function _renderRemoteBreakdown(activeJob) {
+  const breakdown = activeJob?.remote_breakdown || [];
+  if (breakdown.length === 0) return "";
+
+  const STATUS_ICON = { done: "\u2705", active: "\uD83D\uDD04", pending: "\u23F3" };
+
+  return `<div class="wiz-remote-section">
+    <label class="wiz-section-label">Přenos podle zdroje</label>
+    ${breakdown.map(r => {
+      const pct = r.total > 0 ? Math.min((r.completed / r.total) * 100, 100) : 0;
+      const icon = STATUS_ICON[r.status_label] || "\u26AA";
+      return `<div class="wiz-remote-row">
+        <span class="wiz-remote-icon">${icon}</span>
+        <span class="wiz-remote-name">${escapeHtml(r.remote)}</span>
+        <div class="wiz-progress-track wiz-progress-sm"><div class="wiz-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        <span class="wiz-remote-count">${r.completed.toLocaleString("cs-CZ")} / ${r.total.toLocaleString("cs-CZ")}</span>
+        <span class="wiz-remote-bytes">${formatBytes(r.bytes || 0)}</span>
+        ${r.failed > 0 ? `<span class="wiz-remote-failed">${r.failed} selh.</span>` : ""}
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function _getActionGuidance(reason, job) {
+  if (!reason) return "";
+  const r = reason.toLowerCase();
+  if (r.includes("rate limit") || r.includes("quota") || r.includes("750"))
+    return `<div style="margin-top:8px;font-size:0.85em;opacity:0.85">\uD83D\uDCA1 Google upload limit (750 GB/den). Přenos se automaticky obnoví zítra.</div>`;
+  if (r.includes("restart") || r.includes("server"))
+    return `<div style="margin-top:8px;font-size:0.85em;opacity:0.85">\uD83D\uDCA1 Server byl restartován. Klikněte <strong>Pokračovat</strong> pro obnovení přenosu.</div>`;
+  if (r.includes("disk") || r.includes("volume") || r.includes("ultrastar"))
+    return `<div style="margin-top:8px;font-size:0.85em;opacity:0.85">\uD83D\uDCA1 Připojte zdrojový disk a klikněte <strong>Pokračovat</strong>.</div>`;
+  if (r.includes("unreachable") || r.includes("nedostupn") || r.includes("timeout") || r.includes("connection"))
+    return `<div style="margin-top:8px;font-size:0.85em;opacity:0.85">\uD83D\uDCA1 Zkontrolujte internetové připojení. Přenos se obnoví automaticky.</div>`;
+  return "";
+}
+
+function _renderStagingIndicator(activeJob) {
+  const staging = activeJob?.staging_count || 0;
+  if (staging === 0) return "";
+  return `<div class="wiz-staging-info">
+    <span class="wiz-staging-icon">\uD83D\uDCE6</span>
+    <span><strong>${staging.toLocaleString("cs-CZ")}</strong> souborů čeká na přesun ze staging na finální cesty</span>
+  </div>`;
 }
 
 function escapeHtml(str) {

@@ -192,6 +192,53 @@ def consolidation_status(request: Request):
     return status
 
 
+@router.get("/consolidation/health")
+def consolidation_health(request: Request):
+    """Lightweight health check — no DB queries, polled every 10s by FE."""
+    import time
+
+    health: dict = {"ok": True, "timestamp": time.time()}
+
+    # Disk connectivity for configured local roots
+    try:
+        catalog_path = str(request.app.state.catalog_path)
+        from ...consolidation import get_consolidation_status
+        # Avoid full status — just check if we have an active job config
+        from ...consolidation import ckpt, Catalog, JobStatus
+        cat = Catalog(catalog_path)
+        cat.open()
+        try:
+            jobs = ckpt.list_jobs(cat)
+            active = [j for j in jobs if j.status in ("created", "running", "paused")]
+            if active:
+                cfg = active[0].config or {}
+                local_roots = cfg.get("local_roots", [])
+                disks = {}
+                for lr in local_roots:
+                    p = Path(lr)
+                    disks[lr] = {
+                        "connected": p.exists(),
+                        "free_gb": round(shutil.disk_usage(lr).free / (1024**3), 1) if p.exists() else None,
+                    }
+                health["disks"] = disks
+                health["disk_connected"] = all(d["connected"] for d in disks.values()) if disks else None
+        finally:
+            cat.close()
+    except Exception:
+        pass
+
+    # Check rclone process
+    try:
+        import subprocess as sp
+        result = sp.run(["pgrep", "-f", "rclone"], capture_output=True, text=True, timeout=3)
+        health["rclone_running"] = result.returncode == 0
+        health["rclone_pids"] = [int(p) for p in result.stdout.strip().split("\n") if p.strip()] if result.returncode == 0 else []
+    except Exception:
+        health["rclone_running"] = None
+
+    return health
+
+
 @router.post("/consolidation/preview")
 def consolidation_preview(body: ConsolidationStartRequest, request: Request, background_tasks: BackgroundTasks):
     """Dry-run: scan all sources, count files, estimate transfer — NO actual transfers.

@@ -2528,6 +2528,55 @@ def get_consolidation_status(catalog_path: str | Path) -> dict[str, Any]:
 
         for j in consolidation_jobs[:10]:
             progress = ckpt.get_job_progress(cat, j.job_id)
+
+            # Per-remote breakdown for active jobs
+            remote_breakdown: list[dict[str, Any]] = []
+            staging_count = 0
+            if j.status in (JobStatus.CREATED, JobStatus.RUNNING, JobStatus.PAUSED):
+                try:
+                    conn = cat.conn
+                    cur = conn.cursor()
+                    cur.row_factory = sqlite3.Row
+                    cur.execute(
+                        """SELECT
+                             CASE WHEN INSTR(source_location, ':') > 0
+                                  THEN SUBSTR(source_location, 1, INSTR(source_location, ':') - 1)
+                                  ELSE 'unknown' END as remote,
+                             status, COUNT(*) as cnt, SUM(bytes_transferred) as bytes
+                           FROM consolidation_file_state
+                           WHERE job_id = ?
+                           GROUP BY remote, status""",
+                        (j.job_id,),
+                    )
+                    remote_data: dict[str, dict[str, int]] = {}
+                    for r in cur.fetchall():
+                        rname = r["remote"]
+                        if rname not in remote_data:
+                            remote_data[rname] = {"completed": 0, "pending": 0, "failed": 0, "in_progress": 0, "total": 0, "bytes": 0}
+                        remote_data[rname][r["status"]] = r["cnt"]
+                        remote_data[rname]["total"] += r["cnt"]
+                        remote_data[rname]["bytes"] += r["bytes"] or 0
+                    for rname, rd in sorted(remote_data.items(), key=lambda x: -x[1]["total"]):
+                        status_label = "done" if rd["pending"] == 0 and rd["failed"] == 0 else "active" if rd["in_progress"] > 0 else "pending"
+                        remote_breakdown.append({"remote": rname, **rd, "status_label": status_label})
+
+                    # Staging file count
+                    cur.execute(
+                        """SELECT COUNT(*) as cnt FROM consolidation_file_state
+                           WHERE job_id = ? AND status = 'completed' AND dest_location LIKE '%/.staging/%'""",
+                        (j.job_id,),
+                    )
+                    staging_count = cur.fetchone()["cnt"]
+                except Exception:
+                    pass  # best-effort
+
+            # Disk connectivity
+            disk_connected = None
+            cfg = j.config or {}
+            local_roots = cfg.get("local_roots", [])
+            if local_roots:
+                disk_connected = all(Path(lr).exists() for lr in local_roots)
+
             result["jobs"].append(
                 {
                     "job_id": j.job_id,
@@ -2539,6 +2588,9 @@ def get_consolidation_status(catalog_path: str | Path) -> dict[str, Any]:
                     "error": j.error,
                     "progress": progress,
                     "config": j.config,
+                    "remote_breakdown": remote_breakdown,
+                    "staging_count": staging_count,
+                    "disk_connected": disk_connected,
                 }
             )
 
