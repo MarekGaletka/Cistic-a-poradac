@@ -1585,7 +1585,13 @@ class Catalog:
     # ── Person CRUD ──
 
     def upsert_person(self, name: str, sample_face_id: int | None = None) -> int:
-        """Create a new named person. Returns person id."""
+        """Find existing person by name (case-insensitive) or create new. Returns person id."""
+        # Check for existing person with same name
+        row = self.conn.execute(
+            "SELECT id FROM persons WHERE LOWER(name) = LOWER(?)", (name,)
+        ).fetchone()
+        if row:
+            return row[0]
         now = utc_stamp()
         cur = self.conn.execute(
             "INSERT INTO persons (name, sample_face_id, face_count, created_at, updated_at) VALUES (?, ?, 0, ?, ?)",
