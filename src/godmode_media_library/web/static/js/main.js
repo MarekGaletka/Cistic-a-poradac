@@ -81,7 +81,6 @@ export function navigate(page) {
 
 // ── Settings panel ──────────────────────────────────
 
-let _settingsRendered = false;
 let _activeSettingsTab = "pipeline";
 
 const _settingsTabs = [
@@ -100,14 +99,17 @@ function openSettingsPanel() {
   }
   if (overlay) overlay.classList.remove("hidden");
 
-  if (!_settingsRendered) {
-    renderSettingsTabs();
-    switchSettingsTab(_activeSettingsTab);
-    _settingsRendered = true;
-  }
+  renderSettingsTabs();
+  switchSettingsTab(_activeSettingsTab);
+}
+
+function _cleanupSettingsTab() {
+  if (_activeSettingsTab === "pipeline" && typeof pipeline.cleanup === "function") pipeline.cleanup();
+  if (_activeSettingsTab === "system" && typeof doctor.cleanup === "function") doctor.cleanup();
 }
 
 function closeSettingsPanel() {
+  _cleanupSettingsTab();
   const panel = $("#settings-panel");
   const overlay = $("#settings-overlay");
   if (panel) {
@@ -131,6 +133,7 @@ function renderSettingsTabs() {
 }
 
 async function switchSettingsTab(tabId) {
+  _cleanupSettingsTab();
   _activeSettingsTab = tabId;
   const container = $("#settings-panel-content");
   if (!container) return;

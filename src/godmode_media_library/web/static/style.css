@@ -3166,6 +3166,435 @@ button.danger:hover {
   margin: 4px 0;
 }
 
+/* ── Pipeline: Scan Control Center ────────────────────── */
+
+.pipeline-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.pipeline-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  text-align: center;
+}
+
+.pipeline-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pipeline-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.pipeline-source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.pipeline-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.pipeline-source-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pipeline-source-dot.source-dot-online { background: var(--green); }
+.pipeline-source-dot.source-dot-offline { background: var(--red); }
+
+.pipeline-source-date {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.pipeline-roots-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pipeline-actions-section {
+  margin: 16px 0;
+}
+
+.pipeline-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pipeline-action-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  text-align: center;
+  color: var(--text);
+}
+
+.pipeline-action-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+.pipeline-action-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pipeline-action-icon { font-size: 22px; }
+.pipeline-action-label { font-size: 12px; font-weight: 600; }
+.pipeline-action-desc { font-size: 10px; color: var(--text-muted); line-height: 1.3; }
+
+.pipeline-config-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pipeline-workers-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+.pipeline-stepper-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.pipeline-stepper-btn:hover { background: var(--surface-hover); }
+
+.pipeline-exiftool-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.pipeline-progress-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin: 12px 0;
+}
+
+.pipeline-progress-section.hidden { display: none; }
+
+.pipeline-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.pipeline-progress-phase {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pipeline-cancel-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.pipeline-cancel-btn:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.pipeline-progress-bar { margin-bottom: 6px; }
+
+.pipeline-progress-stats {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pipeline-history-section {
+  margin-top: 16px;
+}
+
+.pipeline-history-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.pipeline-history-item:hover { border-color: var(--accent); }
+
+.pipeline-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.pipeline-history-dot { flex-shrink: 0; }
+.pipeline-history-cmd { font-weight: 600; flex: 1; min-width: 0; }
+.pipeline-history-time { color: var(--text-muted); white-space: nowrap; }
+.pipeline-history-duration { color: var(--text-muted); white-space: nowrap; min-width: 50px; text-align: right; }
+
+.pipeline-history-detail {
+  padding: 6px 12px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+.pipeline-history-error { color: var(--red); }
+
+/* ── Doctor: System Health Dashboard ──────────────────── */
+
+.doctor-health-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+
+.doctor-health-ring-wrap {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  flex-shrink: 0;
+}
+
+.doctor-health-ring {
+  transform: rotate(-90deg);
+  width: 100%;
+  height: 100%;
+}
+
+.doctor-health-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.doctor-health-grade { font-size: 24px; font-weight: 700; }
+.doctor-health-pct { font-size: 11px; color: var(--text-muted); }
+
+.doctor-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  flex: 1;
+}
+
+.doctor-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.doctor-stat-value { font-size: 16px; font-weight: 700; }
+.doctor-stat-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+.doctor-sys-section { margin-bottom: 16px; }
+
+.doctor-sys-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.doctor-refresh-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.doctor-refresh-btn:hover { background: var(--surface-hover); }
+
+.doctor-sys-table {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.doctor-sys-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.doctor-sys-row:last-child { border-bottom: none; }
+.doctor-sys-icon { font-size: 16px; width: 24px; text-align: center; flex-shrink: 0; }
+.doctor-sys-label { color: var(--text-muted); min-width: 130px; }
+.doctor-sys-value { font-weight: 500; word-break: break-all; }
+
+.doctor-deps-section { margin-bottom: 16px; }
+
+.doctor-deps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.doctor-badge {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.doctor-badge-ok { background: var(--green); }
+.doctor-badge-warn { background: var(--red); }
+
+.doctor-dep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.doctor-dep-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.doctor-dep-card.doctor-dep-missing { border-left: 3px solid var(--red); }
+.doctor-dep-card.doctor-dep-ok { border-left: 3px solid var(--green); }
+
+.doctor-dep-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.doctor-dep-icon { font-size: 14px; font-weight: 700; }
+.doctor-dep-ok .doctor-dep-icon { color: var(--green); }
+.doctor-dep-missing .doctor-dep-icon { color: var(--red); }
+
+.doctor-dep-name { font-size: 13px; }
+.doctor-dep-ver { font-size: 11px; color: var(--text-muted); }
+
+.doctor-dep-status { font-size: 11px; }
+.doctor-dep-ok .doctor-dep-status { color: var(--green); }
+.doctor-dep-missing .doctor-dep-status { color: var(--red); }
+
+.doctor-install-box {
+  margin-top: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doctor-install-box code {
+  font-size: 11px;
+  flex: 1;
+  word-break: break-all;
+  font-family: var(--mono);
+}
+
+.doctor-install-box .btn-copy-cmd {
+  padding: 3px 8px;
+  font-size: 11px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.doctor-install-box .btn-copy-cmd:hover { opacity: 0.85; }
+
+.doctor-tasks-section { margin-bottom: 16px; }
+
+.doctor-task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+}
+
+.doctor-task-dot { flex-shrink: 0; }
+.doctor-task-cmd { font-weight: 600; flex: 1; }
+.doctor-task-time { color: var(--text-muted); white-space: nowrap; }
+.doctor-task-bar { flex: 0 0 80px; }
+
 /* ── Skeleton loading ──────────────────────────────── */
 
 .skeleton {

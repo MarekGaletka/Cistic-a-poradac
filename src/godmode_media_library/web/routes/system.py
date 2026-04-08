@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
+import shutil
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -133,6 +134,15 @@ def get_system_info(request: Request) -> dict:
         cat_size = cat_path.stat().st_size if cat_path.exists() else 0
         quarantine_path = Path.home() / ".config" / "gml" / "quarantine"
         quarantine_size = sum(f.stat().st_size for f in quarantine_path.rglob("*") if f.is_file()) if quarantine_path.exists() else 0
+        # Disk free space for the catalog volume
+        try:
+            disk = shutil.disk_usage(cat_path.parent)
+            disk_free = disk.free
+            disk_total = disk.total
+        except OSError:
+            disk_free = 0
+            disk_total = 0
+
         return {
             "python_version": sys.version,
             "platform": platform.platform(),
@@ -142,6 +152,8 @@ def get_system_info(request: Request) -> dict:
             "total_size": stats.get("total_size_bytes", 0),
             "quarantine_size": quarantine_size,
             "last_scan_root": stats.get("last_scan_root", ""),
+            "disk_free": disk_free,
+            "disk_total": disk_total,
         }
     finally:
         cat.close()
