@@ -101,19 +101,20 @@ export async function render(container) {
     <div class="category-tabs" id="category-tabs"></div>
     <div class="filters-panel ${_filtersVisible ? '' : 'hidden'}" id="filters-panel">
       <div class="filters" role="search" aria-label="${t("files.title")}">
-        <input type="text" id="f-ext" placeholder="${t("files.ext_placeholder")}" size="10" aria-label="${t("files.ext_placeholder")}">
-        <input type="text" id="f-camera" placeholder="${t("files.camera_placeholder")}" size="15" aria-label="${t("files.camera_placeholder")}">
         <input type="text" id="f-path" placeholder="${t("files.path_placeholder")}" size="20" aria-label="${t("files.path_placeholder")}">
-        <button id="btn-files-search" class="primary" aria-label="${t("files.search")}">${t("files.search")}</button>
-      </div>
-      <div class="filters filters-advanced">
         <div class="filter-group"><label for="f-date-from">${t("files.date_from")}</label><input type="date" id="f-date-from"></div>
         <div class="filter-group"><label for="f-date-to">${t("files.date_to")}</label><input type="date" id="f-date-to"></div>
+        <label class="filter-checkbox"><input type="checkbox" id="f-favorites-only"> ${t("files.favorites")}</label>
+        <button id="btn-files-search" class="primary" aria-label="${t("files.search")}">${t("files.search")}</button>
+        <button id="btn-filters-advanced-toggle" class="btn-icon" title="${t("files.advanced_filters")}">\u22EF</button>
+      </div>
+      <div class="filters filters-advanced hidden" id="filters-advanced">
+        <input type="text" id="f-ext" placeholder="${t("files.ext_placeholder")}" size="10" aria-label="${t("files.ext_placeholder")}">
+        <input type="text" id="f-camera" placeholder="${t("files.camera_placeholder")}" size="15" aria-label="${t("files.camera_placeholder")}">
         <div class="filter-group"><label for="f-min-size">${t("files.min_size")}</label><input type="number" id="f-min-size" min="0" style="width:80px"></div>
         <div class="filter-group"><label for="f-max-size">${t("files.max_size")}</label><input type="number" id="f-max-size" min="0" style="width:80px"></div>
         <label class="filter-checkbox"><input type="checkbox" id="f-has-gps"> ${t("files.has_gps")}</label>
         <label class="filter-checkbox"><input type="checkbox" id="f-has-phash"> ${t("files.has_phash")}</label>
-        <label class="filter-checkbox"><input type="checkbox" id="f-favorites-only"> ${t("files.favorites")}</label>
         <div class="filter-group"><label for="f-tag">${t("tags.filter_by")}</label><select id="f-tag"><option value="">${t("tags.title")}</option></select></div>
         <div class="filter-group"><label for="f-min-rating">${t("files.min_rating")}</label><select id="f-min-rating"><option value="">${t("files.rating")}</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option><option value="5">5</option></select></div>
         <label class="filter-checkbox"><input type="checkbox" id="f-has-notes"> ${t("smart.with_notes")}</label>
@@ -181,6 +182,11 @@ export async function render(container) {
     _filtersVisible = !_filtersVisible;
     const panel = container.querySelector("#filters-panel");
     if (panel) panel.classList.toggle("hidden", !_filtersVisible);
+  });
+
+  container.querySelector("#btn-filters-advanced-toggle")?.addEventListener("click", () => {
+    const adv = container.querySelector("#filters-advanced");
+    if (adv) adv.classList.toggle("hidden");
   });
 
   container.querySelector("#btn-selection-mode").addEventListener("click", () => {

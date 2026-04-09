@@ -148,36 +148,18 @@ function _renderRoots() {
 function _renderActions() {
   const disabled = _running || _roots.length === 0 ? "disabled" : "";
 
-  const actions = [
-    { id: "pipeline", icon: "\u{1F680}", label: t("pipeline.start_pipeline"), desc: t("pipeline.action_pipeline_desc") },
-    { id: "scan", icon: "\u{1F50D}", label: t("pipeline.scan_only"), desc: t("pipeline.action_scan_desc") },
-    { id: "verify", icon: "\u2705", label: t("pipeline.verify"), desc: t("pipeline.action_verify_desc") },
-    { id: "quality", icon: "\u{1F3A8}", label: t("pipeline.quality"), desc: t("pipeline.action_quality_desc") },
-    { id: "backfill", icon: "\u{1F4DD}", label: t("pipeline.backfill"), desc: t("pipeline.action_backfill_desc") },
-  ];
-
-  const cardsHtml = actions.map(a => `
-    <button class="pipeline-action-card" id="btn-action-${a.id}" ${disabled}>
-      <span class="pipeline-action-icon">${a.icon}</span>
-      <span class="pipeline-action-label">${a.label}</span>
-      <span class="pipeline-action-desc">${a.desc}</span>
-    </button>
-  `).join("");
-
   return `<div class="pipeline-actions-section">
-    <label class="form-label">${t("pipeline.actions")}</label>
-    <div class="pipeline-actions-grid">${cardsHtml}</div>
-    <div class="pipeline-config-row">
-      <label class="pipeline-workers-stepper">
-        <span>${t("pipeline.workers")}:</span>
-        <button class="pipeline-stepper-btn" id="btn-workers-dec">&minus;</button>
-        <span id="pipeline-workers-val">4</span>
-        <button class="pipeline-stepper-btn" id="btn-workers-inc">+</button>
-      </label>
-      <label class="pipeline-exiftool-toggle">
-        <input type="checkbox" id="pipeline-exiftool" checked>
-        <span>${t("pipeline.exiftool")}</span>
-      </label>
+    <div class="pipeline-actions-grid">
+      <button class="pipeline-action-card pipeline-action-primary" id="btn-action-pipeline" ${disabled}>
+        <span class="pipeline-action-icon">\u{1F680}</span>
+        <span class="pipeline-action-label">${t("pipeline.start_pipeline")}</span>
+        <span class="pipeline-action-desc">${t("pipeline.action_pipeline_desc")}</span>
+      </button>
+      <button class="pipeline-action-card" id="btn-action-scan" ${disabled}>
+        <span class="pipeline-action-icon">\u{1F50D}</span>
+        <span class="pipeline-action-label">${t("pipeline.scan_only")}</span>
+        <span class="pipeline-action-desc">${t("pipeline.action_scan_desc")}</span>
+      </button>
     </div>
   </div>`;
 }
@@ -279,23 +261,9 @@ function _bindEvents() {
     });
   });
 
-  // Action cards
+  // Action buttons
   _container.querySelector("#btn-action-pipeline")?.addEventListener("click", () => _startAction("/pipeline", "pipeline"));
   _container.querySelector("#btn-action-scan")?.addEventListener("click", () => _startAction("/scan", "scan"));
-  _container.querySelector("#btn-action-verify")?.addEventListener("click", () => _startAction("/verify", "verify"));
-  _container.querySelector("#btn-action-quality")?.addEventListener("click", () => _startAction("/quality/analyze", "quality"));
-  _container.querySelector("#btn-action-backfill")?.addEventListener("click", _startBackfill);
-
-  // Workers stepper
-  const workersVal = _container.querySelector("#pipeline-workers-val");
-  _container.querySelector("#btn-workers-dec")?.addEventListener("click", () => {
-    let v = parseInt(workersVal.textContent, 10);
-    if (v > 1) workersVal.textContent = --v;
-  });
-  _container.querySelector("#btn-workers-inc")?.addEventListener("click", () => {
-    let v = parseInt(workersVal.textContent, 10);
-    if (v < 8) workersVal.textContent = ++v;
-  });
 
   // Cancel
   _container.querySelector("#btn-cancel-task")?.addEventListener("click", _cancelTask);
@@ -313,9 +281,9 @@ function _bindEvents() {
 // ── Actions ─────────────────────────────────────────────
 
 function _getScanConfig() {
-  const workers = parseInt(_container?.querySelector("#pipeline-workers-val")?.textContent || "4", 10);
-  const exiftool = _container?.querySelector("#pipeline-exiftool")?.checked ?? true;
-  return { roots: _roots, workers, extract_exiftool: exiftool };
+  // Auto: use logical CPU count (capped at 4), always extract ExifTool
+  const workers = Math.min(navigator.hardwareConcurrency || 4, 4);
+  return { roots: _roots, workers, extract_exiftool: true };
 }
 
 async function _startAction(endpoint, label) {
@@ -327,21 +295,6 @@ async function _startAction(endpoint, label) {
     showToast(t("pipeline.started"), "info");
     showGlobalProgress(data.task_id);
     _connectWs(data.task_id);
-    _renderAll();
-  } catch (e) {
-    _running = false;
-    showToast(t("pipeline.start_failed", { message: e.message }), "error");
-    _renderAll();
-  }
-}
-
-async function _startBackfill() {
-  try {
-    _running = true;
-    _renderAll();
-    const result = await apiPost("/backfill-metadata", _getScanConfig());
-    showToast(t("pipeline.backfill_done"), "success");
-    _running = false;
     _renderAll();
   } catch (e) {
     _running = false;

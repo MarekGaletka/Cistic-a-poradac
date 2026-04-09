@@ -1,6 +1,6 @@
 /* GOD MODE Media Library — Duplicates page (redesigned) */
 
-import { api, apiPost } from "../api.js";
+import { api, apiPost, apiPut } from "../api.js";
 import { $, content, formatBytes, escapeHtml, fileName, showToast, IMAGE_EXTS } from "../utils.js";
 import { t } from "../i18n.js";
 import { showVisualDiff } from "../modal.js";
@@ -37,10 +37,14 @@ export async function render(container) {
     let html = `
       <div class="page-header">
         <h2>${t("duplicates.title")} <span class="header-count">${t("duplicates.groups", { count: data.total_groups })}</span></h2>
-        <button class="primary" id="btn-resolve-all" title="${t("duplicates.resolve_tooltip")}">
-          &#9889; ${t("duplicates.resolve_all")}
-        </button>
-      </div>`;
+        <div class="page-header-actions">
+          <button class="btn-icon" id="btn-dedup-settings" title="${t("dedup.rules_title")}">\u2699</button>
+          <button class="primary" id="btn-resolve-all" title="${t("duplicates.resolve_tooltip")}">
+            &#9889; ${t("duplicates.resolve_all")}
+          </button>
+        </div>
+      </div>
+      <div id="dedup-rules-inline" class="dedup-rules-inline hidden"></div>`;
 
     // Summary bar
     html += `<div class="dup-summary">
@@ -73,6 +77,18 @@ export async function render(container) {
     if (resolveAllBtn) {
       resolveAllBtn.addEventListener("click", () => resolveAll(container));
     }
+
+    // Bind dedup settings toggle
+    container.querySelector("#btn-dedup-settings")?.addEventListener("click", () => {
+      const panel = container.querySelector("#dedup-rules-inline");
+      if (panel) {
+        const wasHidden = panel.classList.toggle("hidden");
+        if (!wasHidden && !panel.dataset.loaded) {
+          renderDedupRules(panel);
+          panel.dataset.loaded = "1";
+        }
+      }
+    });
   } catch (e) {
     container.innerHTML = `<div class="page-header"><h2>${t("duplicates.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
   }
@@ -275,4 +291,108 @@ function updateGroupsCount() {
   const countEl = $("#dup-groups-count");
   const remaining = document.querySelectorAll(".dup-group-card:not(.dup-resolved)").length;
   if (countEl) countEl.textContent = remaining;
+}
+
+async function renderDedupRules(container) {
+  try {
+    const rules = await api("/config/dedup-rules");
+
+    const strategies = [
+      { value: "richness", label: t("dedup.strategy_richness"), hint: t("dedup.strategy_hint_richness") },
+      { value: "newest", label: t("dedup.strategy_newest"), hint: t("dedup.strategy_hint_newest") },
+      { value: "largest", label: t("dedup.strategy_largest"), hint: t("dedup.strategy_hint_largest") },
+      { value: "manual", label: t("dedup.strategy_manual"), hint: t("dedup.strategy_hint_manual") },
+    ];
+
+    let strategyOptions = "";
+    for (const s of strategies) {
+      const checked = rules.strategy === s.value ? "checked" : "";
+      strategyOptions += `
+        <label class="dedup-strategy-option ${checked ? "active" : ""}" data-value="${s.value}">
+          <input type="radio" name="dedup-strategy" value="${s.value}" ${checked}>
+          <div class="dedup-strategy-content">
+            <span class="dedup-strategy-label">${s.label}</span>
+            <span class="dedup-strategy-hint">${s.hint}</span>
+          </div>
+        </label>`;
+    }
+
+    container.innerHTML = `
+      <div class="dedup-rules-form">
+        <div class="dedup-field">
+          <label class="dedup-field-label">${t("dedup.strategy")}</label>
+          <div class="dedup-strategy-grid">${strategyOptions}</div>
+        </div>
+        <div class="dedup-field">
+          <label class="dedup-field-label">${t("dedup.similarity_threshold")}</label>
+          <div class="dedup-slider-row">
+            <input type="range" id="dedup-threshold" min="1" max="64" value="${rules.similarity_threshold}" class="dedup-slider">
+            <span class="dedup-slider-value" id="dedup-threshold-val">${rules.similarity_threshold}</span>
+          </div>
+          <span class="dedup-field-hint">${t("dedup.similarity_hint")}</span>
+        </div>
+        <div class="dedup-field dedup-toggle-row">
+          <label class="dedup-toggle-label">
+            <input type="checkbox" id="dedup-auto-resolve" ${rules.auto_resolve ? "checked" : ""}>
+            <span class="dedup-toggle-switch"></span>
+            <span>${t("dedup.auto_resolve")}</span>
+          </label>
+        </div>
+        <div class="dedup-field dedup-toggle-row">
+          <label class="dedup-toggle-label">
+            <input type="checkbox" id="dedup-merge-metadata" ${rules.merge_metadata ? "checked" : ""}>
+            <span class="dedup-toggle-switch"></span>
+            <span>${t("dedup.merge_metadata")}</span>
+          </label>
+        </div>
+        <button class="primary dedup-save-btn" id="btn-dedup-save">${t("general.save")}</button>
+      </div>`;
+
+    // Slider
+    const slider = container.querySelector("#dedup-threshold");
+    const sliderVal = container.querySelector("#dedup-threshold-val");
+    if (slider && sliderVal) {
+      slider.addEventListener("input", () => { sliderVal.textContent = slider.value; });
+    }
+
+    // Strategy highlight
+    container.querySelectorAll(".dedup-strategy-option").forEach(opt => {
+      opt.addEventListener("click", () => {
+        container.querySelectorAll(".dedup-strategy-option").forEach(o => o.classList.remove("active"));
+        opt.classList.add("active");
+        opt.querySelector("input").checked = true;
+      });
+    });
+
+    // Save
+    container.querySelector("#btn-dedup-save").addEventListener("click", async () => {
+      const btn = container.querySelector("#btn-dedup-save");
+      btn.disabled = true;
+      btn.textContent = "...";
+
+      const strategy = container.querySelector('input[name="dedup-strategy"]:checked')?.value || "richness";
+      const body = {
+        strategy,
+        similarity_threshold: parseInt(container.querySelector("#dedup-threshold").value, 10),
+        auto_resolve: container.querySelector("#dedup-auto-resolve").checked,
+        merge_metadata: container.querySelector("#dedup-merge-metadata").checked,
+        quarantine_path: rules.quarantine_path || "",
+        exclude_extensions: rules.exclude_extensions || [],
+        exclude_paths: rules.exclude_paths || [],
+        min_file_size_kb: rules.min_file_size_kb || 0,
+      };
+
+      try {
+        await apiPut("/config/dedup-rules", body);
+        showToast(t("dedup.save_success"), "success");
+      } catch (e) {
+        showToast(t("dedup.save_error", { message: e.message }), "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = t("general.save");
+      }
+    });
+  } catch (e) {
+    container.innerHTML = `<div class="empty" style="padding:12px">${t("general.error", { message: e.message })}</div>`;
+  }
 }

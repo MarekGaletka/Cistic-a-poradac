@@ -95,6 +95,7 @@ const translations = {
     "files.selection_mode": "Režim výběru",
     "files.exit_selection": "Zrušit výběr",
     "files.filters_toggle": "Filtry",
+    "files.advanced_filters": "Rozšířené filtry",
 
     // File detail
     "detail.title": "Detail souboru",

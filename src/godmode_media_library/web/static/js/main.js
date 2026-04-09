@@ -7,7 +7,6 @@ import { closeLightbox } from "./lightbox.js";
 import { cleanupTasks } from "./tasks.js";
 import { cleanup as cleanupMap } from "./pages/map.js";
 import { initGlobalProgress } from "./tasks.js";
-import { init as initCommandPalette } from "./command-palette.js";
 
 // Page modules
 import * as dashboard from "./pages/dashboard.js";
@@ -18,13 +17,8 @@ import * as timeline from "./pages/timeline.js";
 import * as map from "./pages/map.js";
 import * as pipeline from "./pages/pipeline.js";
 import * as doctor from "./pages/doctor.js";
-import * as recovery from "./pages/recovery.js";
-import * as scenarios from "./pages/scenarios.js";
-import * as reorganize from "./pages/reorganize.js";
 import * as gallery from "./pages/gallery.js";
 import * as people from "./pages/people.js";
-import * as cloud from "./pages/cloud.js";
-import * as backup from "./pages/backup.js";
 import * as consolidation from "./pages/consolidation.js";
 
 // ── Router ──────────────────────────────────────────
@@ -37,13 +31,10 @@ const pages = {
   timeline,
   map,
   gallery,
-  recovery,
-  scenarios,
-  reorganize,
   people,
-  cloud,
-  backup,
   consolidation,
+  pipeline,
+  doctor,
 };
 
 let _currentPage = null;
@@ -51,7 +42,6 @@ let _currentPage = null;
 function cleanupCurrentPage() {
   cleanupTasks();
   if (_currentPage === "map") cleanupMap();
-  // Call page-level cleanup if the page module exports one
   if (_currentPage && pages[_currentPage] && typeof pages[_currentPage].cleanup === "function") {
     pages[_currentPage].cleanup();
   }
@@ -73,21 +63,19 @@ export function navigate(page) {
   const c = content();
   c.innerHTML = `<div class="loading"><div class="spinner" role="status" aria-label="${t("general.loading")}"></div>${t("general.loading")}</div>`;
   c.classList.remove("page-enter");
-  // Force reflow to restart animation
   void c.offsetWidth;
   c.classList.add("page-enter");
   pages[page].render(c);
 }
 
 // ── Settings panel ──────────────────────────────────
+// Simplified: only pipeline + doctor tabs (dedup moved to duplicates page)
 
 let _activeSettingsTab = "pipeline";
 
 const _settingsTabs = [
   { id: "pipeline", icon: "\u{1F527}", label: t("settings.pipeline_section") },
-  { id: "dedup", icon: "\u{1F4CB}", label: t("dedup.rules_title") },
   { id: "system", icon: "\u{1F4BB}", label: t("settings.doctor_section") },
-  { id: "about", icon: "\u2139\uFE0F", label: t("settings.about_section") },
 ];
 
 function openSettingsPanel() {
@@ -138,14 +126,12 @@ async function switchSettingsTab(tabId) {
   const container = $("#settings-panel-content");
   if (!container) return;
 
-  // Update tab styles
   $$(".settings-tab").forEach(btn => {
     const isActive = btn.dataset.tab === tabId;
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-selected", isActive);
   });
 
-  // Render tab content
   container.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
 
   switch (tabId) {
@@ -153,167 +139,10 @@ async function switchSettingsTab(tabId) {
       container.innerHTML = '<div id="settings-pipeline"></div>';
       pipeline.render($("#settings-pipeline"));
       break;
-    case "dedup":
-      container.innerHTML = '<div id="settings-dedup-rules"></div>';
-      renderDedupRules($("#settings-dedup-rules"));
-      break;
     case "system":
       container.innerHTML = '<div id="settings-doctor"></div>';
       doctor.render($("#settings-doctor"));
       break;
-    case "about":
-      container.innerHTML = `
-        <div class="settings-about">
-          <div class="settings-about-logo">GOD MODE</div>
-          <p class="settings-about-subtitle">Media Library</p>
-          <p class="settings-about-version">v0.1.0</p>
-          <p class="settings-about-desc">${t("settings.about_text")}</p>
-          <div class="settings-about-links">
-            <span class="settings-about-link">\u{1F4E6} Python + FastAPI</span>
-            <span class="settings-about-link">\u{1F3A8} Vanilla JS</span>
-            <span class="settings-about-link">\u{1F5C3}\uFE0F SQLite</span>
-          </div>
-        </div>`;
-      break;
-  }
-}
-
-async function renderDedupRules(container) {
-  const { api, apiPut } = await import("./api.js");
-
-  try {
-    const rules = await api("/config/dedup-rules");
-
-    const strategies = [
-      { value: "richness", label: t("dedup.strategy_richness"), hint: t("dedup.strategy_hint_richness") },
-      { value: "newest", label: t("dedup.strategy_newest"), hint: t("dedup.strategy_hint_newest") },
-      { value: "largest", label: t("dedup.strategy_largest"), hint: t("dedup.strategy_hint_largest") },
-      { value: "manual", label: t("dedup.strategy_manual"), hint: t("dedup.strategy_hint_manual") },
-    ];
-
-    let strategyOptions = "";
-    for (const s of strategies) {
-      const checked = rules.strategy === s.value ? "checked" : "";
-      strategyOptions += `
-        <label class="dedup-strategy-option ${checked ? "active" : ""}" data-value="${s.value}">
-          <input type="radio" name="dedup-strategy" value="${s.value}" ${checked}>
-          <div class="dedup-strategy-content">
-            <span class="dedup-strategy-label">${s.label}</span>
-            <span class="dedup-strategy-hint">${s.hint}</span>
-          </div>
-        </label>`;
-    }
-
-    container.innerHTML = `
-      <div class="dedup-rules-form">
-        <div class="dedup-field">
-          <label class="dedup-field-label">${t("dedup.strategy")}</label>
-          <div class="dedup-strategy-grid">${strategyOptions}</div>
-        </div>
-
-        <div class="dedup-field">
-          <label class="dedup-field-label">${t("dedup.similarity_threshold")}</label>
-          <div class="dedup-slider-row">
-            <input type="range" id="dedup-threshold" min="1" max="64" value="${rules.similarity_threshold}" class="dedup-slider">
-            <span class="dedup-slider-value" id="dedup-threshold-val">${rules.similarity_threshold}</span>
-          </div>
-          <span class="dedup-field-hint">${t("dedup.similarity_hint")}</span>
-        </div>
-
-        <div class="dedup-field dedup-toggle-row">
-          <label class="dedup-toggle-label">
-            <input type="checkbox" id="dedup-auto-resolve" ${rules.auto_resolve ? "checked" : ""}>
-            <span class="dedup-toggle-switch"></span>
-            <span>${t("dedup.auto_resolve")}</span>
-          </label>
-          <span class="dedup-field-hint">${t("dedup.auto_resolve_hint")}</span>
-        </div>
-
-        <div class="dedup-field dedup-toggle-row">
-          <label class="dedup-toggle-label">
-            <input type="checkbox" id="dedup-merge-metadata" ${rules.merge_metadata ? "checked" : ""}>
-            <span class="dedup-toggle-switch"></span>
-            <span>${t("dedup.merge_metadata")}</span>
-          </label>
-          <span class="dedup-field-hint">${t("dedup.merge_metadata_hint")}</span>
-        </div>
-
-        <div class="dedup-field">
-          <label class="dedup-field-label" for="dedup-quarantine">${t("dedup.quarantine_path")}</label>
-          <input type="text" id="dedup-quarantine" class="dedup-input" value="${rules.quarantine_path || ""}" placeholder="~/.config/gml/quarantine">
-          <span class="dedup-field-hint">${t("dedup.quarantine_hint")}</span>
-        </div>
-
-        <div class="dedup-field">
-          <label class="dedup-field-label" for="dedup-exclude-ext">${t("dedup.exclude_extensions")}</label>
-          <input type="text" id="dedup-exclude-ext" class="dedup-input" value="${(rules.exclude_extensions || []).join(", ")}" placeholder="tmp, log, ds_store">
-          <span class="dedup-field-hint">${t("dedup.exclude_extensions_hint")}</span>
-        </div>
-
-        <div class="dedup-field">
-          <label class="dedup-field-label" for="dedup-exclude-paths">${t("dedup.exclude_paths")}</label>
-          <input type="text" id="dedup-exclude-paths" class="dedup-input" value="${(rules.exclude_paths || []).join(", ")}" placeholder="node_modules, .git, __pycache__">
-          <span class="dedup-field-hint">${t("dedup.exclude_paths_hint")}</span>
-        </div>
-
-        <div class="dedup-field">
-          <label class="dedup-field-label" for="dedup-min-size">${t("dedup.min_file_size")}</label>
-          <input type="number" id="dedup-min-size" class="dedup-input dedup-input-small" value="${rules.min_file_size_kb}" min="0" step="1">
-          <span class="dedup-field-hint">${t("dedup.min_file_size_hint")}</span>
-        </div>
-
-        <button class="primary dedup-save-btn" id="btn-dedup-save">${t("general.save")}</button>
-      </div>`;
-
-    // Slider live update
-    const slider = container.querySelector("#dedup-threshold");
-    const sliderVal = container.querySelector("#dedup-threshold-val");
-    if (slider && sliderVal) {
-      slider.addEventListener("input", () => { sliderVal.textContent = slider.value; });
-    }
-
-    // Strategy radio highlight
-    container.querySelectorAll(".dedup-strategy-option").forEach(opt => {
-      opt.addEventListener("click", () => {
-        container.querySelectorAll(".dedup-strategy-option").forEach(o => o.classList.remove("active"));
-        opt.classList.add("active");
-        opt.querySelector("input").checked = true;
-      });
-    });
-
-    // Save button
-    container.querySelector("#btn-dedup-save").addEventListener("click", async () => {
-      const btn = container.querySelector("#btn-dedup-save");
-      btn.disabled = true;
-      btn.textContent = "...";
-
-      const strategy = container.querySelector('input[name="dedup-strategy"]:checked')?.value || "richness";
-      const excludeExtStr = container.querySelector("#dedup-exclude-ext").value;
-      const excludePathStr = container.querySelector("#dedup-exclude-paths").value;
-
-      const body = {
-        strategy,
-        similarity_threshold: parseInt(container.querySelector("#dedup-threshold").value, 10),
-        auto_resolve: container.querySelector("#dedup-auto-resolve").checked,
-        merge_metadata: container.querySelector("#dedup-merge-metadata").checked,
-        quarantine_path: container.querySelector("#dedup-quarantine").value.trim(),
-        exclude_extensions: excludeExtStr ? excludeExtStr.split(",").map(s => s.trim()).filter(Boolean) : [],
-        exclude_paths: excludePathStr ? excludePathStr.split(",").map(s => s.trim()).filter(Boolean) : [],
-        min_file_size_kb: parseInt(container.querySelector("#dedup-min-size").value, 10) || 0,
-      };
-
-      try {
-        await apiPut("/config/dedup-rules", body);
-        showToast(t("dedup.save_success"), "success");
-      } catch (e) {
-        showToast(t("dedup.save_error", { message: e.message }), "error");
-      } finally {
-        btn.disabled = false;
-        btn.textContent = t("general.save");
-      }
-    });
-  } catch (e) {
-    container.innerHTML = `<div class="empty" style="padding:12px">${t("general.error", { message: e.message })}</div>`;
   }
 }
 
@@ -345,7 +174,6 @@ async function updateNavBadges() {
       api("/similar?threshold=10&limit=1").catch(() => null),
     ]);
 
-    // Files badge
     const filesBadge = $("#files-badge");
     if (filesBadge && stats && stats.total_files > 0) {
       filesBadge.textContent = stats.total_files > 999
@@ -354,7 +182,6 @@ async function updateNavBadges() {
       filesBadge.classList.remove("hidden");
     }
 
-    // Similar badge
     const similarBadge = $("#similar-badge");
     if (similarBadge && similar && similar.total_pairs > 0) {
       similarBadge.textContent = similar.total_pairs;
@@ -419,9 +246,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Init global progress bar
   initGlobalProgress();
 
-  // Init command palette (Cmd+K)
-  initCommandPalette();
-
   // Hash-based routing
   window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "dashboard"));
   navigate(location.hash.slice(1) || "dashboard");
@@ -453,11 +277,9 @@ document.addEventListener("drop", async (e) => {
       const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
       const file = item.getAsFile();
       if (entry && entry.isDirectory) {
-        // Directory entry — use the path from file if available
         if (file && file.path) folderPaths.push(file.path);
         else folderPaths.push("/" + entry.fullPath.replace(/^\//, ""));
       } else if (file && file.path) {
-        // Single file — extract parent directory
         const dir = file.path.replace(/\/[^/]+$/, "");
         if (dir && !folderPaths.includes(dir)) folderPaths.push(dir);
       }
@@ -491,7 +313,6 @@ function showShortcutsModal() {
     <h4 style="margin:12px 0 6px;opacity:0.7;font-size:12px;text-transform:uppercase">${t("shortcuts.section_general")}</h4>
     <div class="shortcuts-row"><span>${t("shortcuts.navigate")}</span><span class="shortcuts-key">1-6</span></div>
     <div class="shortcuts-row"><span>${t("shortcuts.search")}</span><span class="shortcuts-key">/</span></div>
-    <div class="shortcuts-row"><span>${t("shortcuts.command_palette")}</span><span class="shortcuts-key">\u2318K</span></div>
     <div class="shortcuts-row"><span>${t("shortcuts.close")}</span><span class="shortcuts-key">Esc</span></div>
     <div class="shortcuts-row"><span>${t("shortcuts.confirm_modal")}</span><span class="shortcuts-key">Enter</span></div>
     <div class="shortcuts-row"><span>${t("shortcuts.help")}</span><span class="shortcuts-key">?</span></div>
@@ -512,7 +333,6 @@ function showShortcutsModal() {
 }
 
 document.addEventListener("keydown", e => {
-  // Close shortcuts modal on Escape
   const shortcutsOverlay = $(".shortcuts-overlay");
   if (e.key === "Escape") {
     if (shortcutsOverlay) { shortcutsOverlay.remove(); return; }
@@ -524,7 +344,6 @@ document.addEventListener("keydown", e => {
   if (e.target.matches("input, textarea, select")) return;
   if (e.defaultPrevented) return;
 
-  // Number keys 1-6 navigate to pages (skip if lightbox is open or event already handled)
   const lightboxOverlay = document.getElementById("lightbox-overlay");
   if (_pageKeys[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (lightboxOverlay && !lightboxOverlay.classList.contains("hidden")) return;
@@ -535,7 +354,6 @@ document.addEventListener("keydown", e => {
     return;
   }
 
-  // ? shows shortcuts help
   if (e.key === "?" && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     if (shortcutsOverlay) shortcutsOverlay.remove();
@@ -556,7 +374,6 @@ document.addEventListener("keydown", e => {
     return;
   }
 
-  // Enter → confirm/submit primary button in open modal
   if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
     const modal = $(".modal-overlay");
     if (modal) {
