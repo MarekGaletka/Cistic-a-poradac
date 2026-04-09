@@ -1713,6 +1713,8 @@ class Catalog:
         ext: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        exif_date_from: str | None = None,
+        exif_date_to: str | None = None,
         min_size: int | None = None,
         max_size: int | None = None,
         path_contains: str | None = None,
@@ -1747,6 +1749,17 @@ class Catalog:
         if date_to is not None:
             conditions.append("birthtime <= ?")
             params.append(_date_to_timestamp(date_to) + 86400)  # end of day
+        if exif_date_from is not None:
+            # Compare against date_original in EXIF format (YYYY:MM:DD)
+            # Convert ISO date (2006-10-01) to EXIF prefix (2006:10:01)
+            exif_from = exif_date_from.replace("-", ":")
+            conditions.append("date_original >= ?")
+            params.append(exif_from)
+        if exif_date_to is not None:
+            exif_to = exif_date_to.replace("-", ":")
+            # Add end-of-day to include the whole last day
+            conditions.append("date_original <= ?")
+            params.append(exif_to + " 23:59:59")
         if min_size is not None:
             conditions.append("size >= ?")
             params.append(min_size)

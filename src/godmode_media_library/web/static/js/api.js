@@ -1,5 +1,16 @@
 /* GOD MODE Media Library — API helpers */
 
+function _getToken() {
+  const meta = document.querySelector('meta[name="gml-api-token"]');
+  return meta ? meta.content : "";
+}
+
+function _authHeaders() {
+  const token = _getToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
 async function _parseErrorBody(res) {
   try {
     const data = await res.json();
@@ -10,7 +21,7 @@ async function _parseErrorBody(res) {
 }
 
 export async function api(path) {
-  const res = await fetch(`/api${path}`);
+  const res = await fetch(`/api${path}`, { headers: _authHeaders() });
   if (!res.ok) {
     const detail = await _parseErrorBody(res);
     throw new Error(`API error ${res.status}: ${detail}`);
@@ -20,9 +31,9 @@ export async function api(path) {
 }
 
 export async function apiPost(path, body = null) {
-  const opts = { method: "POST" };
+  const opts = { method: "POST", headers: { ..._authHeaders() } };
   if (body) {
-    opts.headers = { "Content-Type": "application/json" };
+    opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(`/api${path}`, opts);
@@ -35,9 +46,9 @@ export async function apiPost(path, body = null) {
 }
 
 export async function apiPut(path, body = null) {
-  const opts = { method: "PUT" };
+  const opts = { method: "PUT", headers: { ..._authHeaders() } };
   if (body) {
-    opts.headers = { "Content-Type": "application/json" };
+    opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(`/api${path}`, opts);
@@ -50,9 +61,9 @@ export async function apiPut(path, body = null) {
 }
 
 export async function apiDelete(path, body = null) {
-  const opts = { method: "DELETE" };
+  const opts = { method: "DELETE", headers: { ..._authHeaders() } };
   if (body) {
-    opts.headers = { "Content-Type": "application/json" };
+    opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(`/api${path}`, opts);
@@ -62,4 +73,9 @@ export async function apiDelete(path, body = null) {
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+/** Get the API token for WebSocket connections */
+export function getWsToken() {
+  return _getToken();
 }

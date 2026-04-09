@@ -357,8 +357,10 @@ def get_task(task_id: str) -> dict:
 async def ws_task(websocket: WebSocket, task_id: str):
     # Explicit token authentication for WebSocket connections.
     # WebSocket upgrade requests may bypass HTTP middleware, so we check here.
+    # Localhost is trusted (same as HTTP auth middleware).
     api_token = os.environ.get("GML_API_TOKEN", "")
-    if api_token:
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    if api_token and client_ip not in ("127.0.0.1", "::1", "localhost"):
         import hmac as _hmac
 
         token_param = websocket.query_params.get("token", "")
@@ -520,6 +522,40 @@ def get_timeline_gaps(request: Request) -> dict:
         total_months = len(all_months)
         covered_months = sum(1 for e in all_months if e["count"] > 0)
         coverage_pct = round(covered_months / total_months * 100, 1) if total_months else 0
+
+        # Fetch sample thumbnails per month (up to 4 image paths per month)
+        _IMG_EXTS = (
+            "jpg", "jpeg", "heic", "png", "webp", "tiff", "tif", "bmp", "gif",
+        )
+        # ext column may or may not have a leading dot
+        ext_vals = []
+        for e in _IMG_EXTS:
+            ext_vals.append(e)
+            ext_vals.append(f".{e}")
+        ext_placeholders = ",".join(f"'{v}'" for v in ext_vals)
+        thumb_cur = cat.conn.execute(
+            f"SELECT SUBSTR(date_original, 1, 4) AS y, "
+            f"       SUBSTR(date_original, 6, 2) AS m, "
+            f"       path "
+            f"FROM files "
+            f"WHERE date_original IS NOT NULL "
+            f"  AND LENGTH(date_original) >= 10 "
+            f"  AND SUBSTR(date_original, 1, 4) > '0000' "
+            f"  AND LOWER(ext) IN ({ext_placeholders}) "
+            f"ORDER BY date_original DESC"
+        )
+        month_thumbs: dict[tuple[str, str], list[str]] = {}
+        for row in thumb_cur:
+            key = (row[0], row[1])
+            if key not in month_thumbs:
+                month_thumbs[key] = []
+            if len(month_thumbs[key]) < 4:
+                month_thumbs[key].append(row[2])
+
+        # Add thumbs to month entries
+        for entry in all_months:
+            key = (str(entry["year"]).zfill(4), str(entry["month"]).zfill(2))
+            entry["thumbs"] = month_thumbs.get(key, [])
 
         return {
             "months": all_months,

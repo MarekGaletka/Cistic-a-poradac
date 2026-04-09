@@ -1367,8 +1367,7 @@ function _connectWebSocket(taskId) {
 
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   let url = `${proto}//${location.host}/ws/tasks/${taskId}`;
-  // Add token if present in localStorage
-  const token = localStorage.getItem("gml_api_token");
+  const token = document.querySelector('meta[name="gml-api-token"]')?.content;
   if (token) url += `?token=${encodeURIComponent(token)}`;
 
   try {

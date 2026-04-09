@@ -129,6 +129,9 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             return await call_next(request)
 
     # Token-based API authentication (when GML_API_TOKEN is set)
+    # Localhost IPs are trusted — token auth only enforced for remote clients
+    _LOCALHOST_IPS = {"127.0.0.1", "::1", "localhost"}
+
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         if not api_token:
@@ -143,6 +146,10 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
+
+        # Trust localhost — no token needed for local desktop use
+        if client_ip in _LOCALHOST_IPS:
+            return await call_next(request)
 
         # Periodically evict stale entries to bound memory
         _prune_rate_dict(_auth_failures, _AUTH_FAILURE_WINDOW, _AUTH_FAILURE_MAX_IPS)
@@ -393,9 +400,31 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
     app.include_router(api_router, prefix="/api")
 
-    # Serve static frontend files
+    # Serve static frontend files — inject API token into index.html
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        index_html = static_dir / "index.html"
+
+        @app.get("/{full_path:path}")
+        async def serve_spa(request: Request, full_path: str):
+            # Serve specific static files directly
+            file_path = static_dir / full_path
+            if full_path and file_path.exists() and file_path.is_file():
+                content_type, _ = mimetypes.guess_type(str(file_path))
+                return Response(
+                    content=file_path.read_bytes(),
+                    media_type=content_type or "application/octet-stream",
+                )
+            # SPA fallback — serve index.html with injected token
+            if index_html.exists():
+                html = index_html.read_text(encoding="utf-8")
+                if api_token:
+                    # Inject token meta tag so frontend can authenticate API calls
+                    html = html.replace(
+                        "</head>",
+                        f'  <meta name="gml-api-token" content="{api_token}">\n</head>',
+                    )
+                return Response(content=html, media_type="text/html")
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     return app

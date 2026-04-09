@@ -121,7 +121,9 @@ export function pollTask(taskId) {
 
   // Try WebSocket first
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${proto}//${location.host}/api/ws/tasks/${encodeURIComponent(taskId)}`;
+  let wsUrl = `${proto}//${location.host}/api/ws/tasks/${encodeURIComponent(taskId)}`;
+  const _token = document.querySelector('meta[name="gml-api-token"]')?.content;
+  if (_token) wsUrl += `?token=${encodeURIComponent(_token)}`;
   let ws;
   try {
     ws = new WebSocket(wsUrl);

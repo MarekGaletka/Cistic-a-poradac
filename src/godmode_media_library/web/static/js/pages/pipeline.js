@@ -316,7 +316,9 @@ function _cancelTask() {
 function _connectWs(taskId) {
   _disconnectWs();
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}/api/ws/tasks/${encodeURIComponent(taskId)}`;
+  let url = `${proto}//${location.host}/api/ws/tasks/${encodeURIComponent(taskId)}`;
+  const _token = document.querySelector('meta[name="gml-api-token"]')?.content;
+  if (_token) url += `?token=${encodeURIComponent(_token)}`;
 
   try {
     _ws = new WebSocket(url);

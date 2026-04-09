@@ -8,10 +8,13 @@ import { openLightbox } from "../lightbox.js";
 
 let _leafletMap = null;
 let _clusterGroup = null;
+let _cancelled = false;
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v"]);
+const PAGE_SIZE = 10000;
 
 export function cleanup() {
+  _cancelled = true;
   if (_leafletMap) {
     _leafletMap.remove();
     _leafletMap = null;
@@ -51,7 +54,6 @@ function _clusterIcon(cluster) {
   const children = cluster.getAllChildMarkers();
   const count = children.length;
 
-  // Find first image child for a preview thumbnail
   let thumbHtml = "";
   for (const m of children) {
     const f = m._gmlFile;
@@ -74,14 +76,93 @@ function _clusterIcon(cluster) {
   });
 }
 
+/** Fetch all GPS files via pagination */
+async function _fetchAllGpsFiles() {
+  const allFiles = [];
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore && !_cancelled) {
+    const data = await api(`/files?has_gps=true&limit=${PAGE_SIZE}&offset=${offset}`);
+    const batch = (data.files || []).filter(f => f.gps_latitude && f.gps_longitude);
+    allFiles.push(...batch);
+    hasMore = data.has_more === true;
+    offset += PAGE_SIZE;
+  }
+
+  return allFiles;
+}
+
+function _addMarkersToMap(files) {
+  const lightboxPaths = files.filter(f => {
+    const ext = (f.ext || "").toLowerCase();
+    return IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
+  }).map(f => f.path);
+
+  const useCluster = typeof L.markerClusterGroup === "function";
+  if (useCluster) {
+    _clusterGroup = L.markerClusterGroup({
+      iconCreateFunction: _clusterIcon,
+      maxClusterRadius: 50,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+      disableClusteringAtZoom: 18,
+    });
+  }
+
+  const bounds = [];
+  for (const f of files) {
+    const lat = f.gps_latitude;
+    const lng = f.gps_longitude;
+    bounds.push([lat, lng]);
+
+    const icon = _thumbIcon(f);
+    const marker = L.marker([lat, lng], { icon });
+    marker._gmlFile = f;
+
+    marker.on("click", () => {
+      const ext = (f.ext || "").toLowerCase();
+      const isMedia = IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
+      if (isMedia) {
+        const idx = lightboxPaths.indexOf(f.path);
+        if (idx >= 0) {
+          openLightbox(lightboxPaths, idx);
+        } else {
+          showFileDetail(f.path);
+        }
+      } else {
+        showFileDetail(f.path);
+      }
+    });
+
+    if (useCluster) {
+      _clusterGroup.addLayer(marker);
+    } else {
+      marker.addTo(_leafletMap);
+    }
+  }
+
+  if (useCluster) {
+    _leafletMap.addLayer(_clusterGroup);
+  }
+
+  if (bounds.length) {
+    _leafletMap.fitBounds(bounds, { padding: [30, 30] });
+  }
+}
+
 export async function render(container) {
+  _cancelled = false;
+
   container.innerHTML = `
     <div class="page-header"><h2>${t("map.title")}</h2></div>
     <div class="loading"><div class="spinner"></div>${t("general.loading")}</div>`;
 
   try {
-    const data = await api("/files?has_gps=true&limit=10000");
-    const files = data.files.filter(f => f.gps_latitude && f.gps_longitude);
+    const files = await _fetchAllGpsFiles();
+
+    if (_cancelled) return;
 
     if (!files.length) {
       container.innerHTML = `
@@ -98,8 +179,8 @@ export async function render(container) {
           </div>
         </div>`;
 
-      // Initialize map in background so it's ready when files appear
       cleanup();
+      _cancelled = false;
       if (typeof L !== "undefined") {
         _leafletMap = L.map("map-container").setView([49.8, 15.5], 7);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -109,7 +190,6 @@ export async function render(container) {
         setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
       }
 
-      // Navigate to settings/pipeline
       document.getElementById("btn-map-pipeline")?.addEventListener("click", () => {
         location.hash = "#settings";
       });
@@ -121,6 +201,7 @@ export async function render(container) {
       <div id="map-container"></div>`;
 
     cleanup();
+    _cancelled = false;
 
     if (typeof L === "undefined") {
       container.innerHTML = `<div class="page-header"><h2>${t("map.title")}</h2></div><div class="empty">${t("map.leaflet_error")}</div>`;
@@ -133,67 +214,12 @@ export async function render(container) {
       maxZoom: 19,
     }).addTo(_leafletMap);
 
-    // Collect all lightbox-eligible paths for navigation
-    const lightboxPaths = files.filter(f => {
-      const ext = (f.ext || "").toLowerCase();
-      return IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
-    }).map(f => f.path);
-
-    const useCluster = typeof L.markerClusterGroup === "function";
-    if (useCluster) {
-      _clusterGroup = L.markerClusterGroup({
-        iconCreateFunction: _clusterIcon,
-        maxClusterRadius: 50,
-        spiderfyOnMaxZoom: true,
-        showCoverageOnHover: false,
-        zoomToBoundsOnClick: true,
-        disableClusteringAtZoom: 18,
-      });
-    }
-
-    const bounds = [];
-    for (const f of files) {
-      const lat = f.gps_latitude;
-      const lng = f.gps_longitude;
-      bounds.push([lat, lng]);
-
-      const icon = _thumbIcon(f);
-      const marker = L.marker([lat, lng], { icon });
-      marker._gmlFile = f; // store reference for cluster icon
-
-      // Click marker → open lightbox directly (like Apple Photos)
-      marker.on("click", () => {
-        const ext = (f.ext || "").toLowerCase();
-        const isMedia = IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
-        if (isMedia) {
-          const idx = lightboxPaths.indexOf(f.path);
-          if (idx >= 0) {
-            openLightbox(lightboxPaths, idx);
-          } else {
-            showFileDetail(f.path);
-          }
-        } else {
-          showFileDetail(f.path);
-        }
-      });
-
-      if (useCluster) {
-        _clusterGroup.addLayer(marker);
-      } else {
-        marker.addTo(_leafletMap);
-      }
-    }
-
-    if (useCluster) {
-      _leafletMap.addLayer(_clusterGroup);
-    }
-
-    if (bounds.length) {
-      _leafletMap.fitBounds(bounds, { padding: [30, 30] });
-    }
+    _addMarkersToMap(files);
 
     setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
   } catch (e) {
-    container.innerHTML = `<div class="page-header"><h2>${t("map.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
+    if (!_cancelled) {
+      container.innerHTML = `<div class="page-header"><h2>${t("map.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
+    }
   }
 }
