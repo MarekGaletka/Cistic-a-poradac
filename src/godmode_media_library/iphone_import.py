@@ -110,11 +110,25 @@ def cancel_import():
 
 # ── iPhone connection helpers ────────────────────────────────────────
 
+def _run_async(coro):
+    """Run an async coroutine from sync context, handling nested event loops."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        # Already inside an event loop (e.g. FastAPI) — run in a new thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result(timeout=10)
+    return asyncio.run(coro)
+
+
 def _check_iphone_connected() -> bool:
     """Check if an iPhone is connected via USB."""
     try:
         from pymobiledevice3.usbmux import list_devices
-        devices = list_devices()
+        devices = _run_async(list_devices())
         return len(devices) > 0
     except Exception:
         return False
@@ -518,7 +532,7 @@ def get_iphone_status(catalog_path: str) -> dict:
     if connected:
         try:
             from pymobiledevice3.usbmux import list_devices
-            devices = list_devices()
+            devices = _run_async(list_devices())
             if devices:
                 result["device_name"] = getattr(devices[0], "name", "iPhone")
         except Exception:
