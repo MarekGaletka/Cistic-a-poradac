@@ -16,7 +16,6 @@ from urllib.parse import quote as _url_quote
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 
 from .api import router as api_router
 

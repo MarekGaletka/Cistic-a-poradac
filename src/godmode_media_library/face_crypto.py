@@ -13,6 +13,7 @@ If the database is copied without the keystore, face encodings are unreadable.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -116,10 +117,8 @@ def _write_keystore(keystore: dict[str, Any]) -> None:
         if fd >= 0:
             os.close(fd)
         # Clean up temp file on failure
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise
 
 

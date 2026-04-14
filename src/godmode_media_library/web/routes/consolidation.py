@@ -177,7 +177,8 @@ def consolidation_status(request: Request):
     if status.get("has_active_job") and status.get("jobs"):
         active = status["jobs"][0]
         try:
-            from ..shared import _tasks as tasks_dict, _tasks_lock
+            from ..shared import _tasks as tasks_dict
+            from ..shared import _tasks_lock
             with _tasks_lock:
                 snapshot = list(tasks_dict.values())
             for t in snapshot:
@@ -203,9 +204,8 @@ def consolidation_health(request: Request):
     # Disk connectivity for configured local roots
     try:
         catalog_path = str(request.app.state.catalog_path)
-        from ...consolidation import get_consolidation_status
         # Avoid full status — just check if we have an active job config
-        from ...consolidation import ckpt, Catalog, JobStatus
+        from ...consolidation import Catalog, ckpt
         cat = Catalog(catalog_path)
         cat.open()
         try:

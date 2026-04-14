@@ -8,7 +8,6 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .asset_sets import build_asset_membership
 from .catalog import Catalog, CatalogFileRow, ScanStats
 from .exif_reader import ExifMeta, can_read_exif, read_exif
 from .media_probe import MediaMeta, is_media_ext, probe_file

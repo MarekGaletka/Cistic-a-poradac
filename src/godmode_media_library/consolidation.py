@@ -64,7 +64,6 @@ from typing import Any
 from . import checkpoint as ckpt
 from .catalog import Catalog
 from .cloud import (
-    RcloneTransferError,
     _dynamic_timeout,
     _rclone_bin,
     check_rclone,
@@ -80,15 +79,12 @@ from .cloud import (
     rclone_is_reachable,
     rclone_ls_paginated,
     rclone_server_side_move,
-    rclone_verify_transfer,
-    retry_with_backoff,
     wait_for_connectivity,
 )
 from .consolidation_types import (
     ARCHIVE_COMPOUND_SUFFIXES,
     ARCHIVE_EXTENSIONS,
     BUNDLE_EXTENSIONS,
-    CATALOG_COMMIT_INTERVAL,
     CONSOLIDATION_JOB_TYPES,
     DAILY_LIMIT_PAUSE_SECONDS,
     DEDUP_TIMEOUT,
@@ -107,11 +103,9 @@ from .consolidation_types import (
     QUOTA_ERRORS,
     RETRY_CONNECTIVITY_WAIT,
     SOFTWARE_EXTENSIONS,
-    SOURCE_CONNECTIVITY_WAIT,
     STREAM_BATCH_SIZE,
     VERIFY_FAIL_THRESHOLD_PCT,
     VERIFY_REPORT_INTERVAL,
-    WATCHDOG_STALL_SECONDS,
     WINDOWS_SOFTWARE_EXTENSIONS,
     DedupStrategy,
     FileStatus,
@@ -591,8 +585,7 @@ def _rclone_lsjson_recursive_stream(remote: str, timeout: int = 1800) -> Iterato
 
     try:
         # ijson streams JSON array items one by one — constant memory
-        for item in ijson.items(proc.stdout, "item"):  # type: ignore[arg-type]
-            yield item
+        yield from ijson.items(proc.stdout, "item")  # type: ignore[arg-type]
     except Exception:
         # Fallback: if ijson is not installed, read full output
         pass
@@ -1094,7 +1087,6 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 break
 
         source_failures: dict[str, int] = {}
-        PARALLEL_TRANSFERS = 8
 
         # --- Prepare batch: build transfer tasks sequentially ---
         transfer_tasks: list[tuple] = []  # (fs, src_remote, src_path, dest_path, file_size)
@@ -1124,11 +1116,10 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             src_remote = parts[0]
             src_path = parts[1] if len(parts) > 1 else parts[0]
 
-            if src_remote == "local":
-                if not os.path.exists(src_path):
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                                   Phase.STREAM, FileStatus.FAILED, error="Lokální soubor nenalezen")
-                    continue
+            if src_remote == "local" and not os.path.exists(src_path):
+                ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
+                               Phase.STREAM, FileStatus.FAILED, error="Lokální soubor nenalezen")
+                continue
 
             if src_remote != "local" and source_failures.get(src_remote, 0) >= MAX_SOURCE_FAILURES:
                 continue
@@ -1197,22 +1188,23 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 # Same pattern as cloud bulk: copy to staging, then server-side move
                 staging_base = f"{ctx.config.dest_path}/.staging/local"
                 src_paths = [t[2] for t in tasks]  # absolute local paths
-                task_map = {t[2]: t for t in tasks}
 
                 ctx.report(Phase.STREAM, f"Bulk upload: local ({len(tasks)} souborů)...", 5,
                            files_transferred=_wal_counter, bytes_transferred=total_stream_bytes)
 
-                def _bulk_local_progress(files_done, bytes_done, speed_bps):
-                    ctx.progress.current_file = f"local: {files_done}/{len(tasks)}"
+                def _bulk_local_progress(files_done, bytes_done, speed_bps,
+                                        _tasks=tasks, _wal_counter=_wal_counter,
+                                        _total_stream_bytes=total_stream_bytes):
+                    ctx.progress.current_file = f"local: {files_done}/{len(_tasks)}"
                     ctx.last_transfer_time = time.monotonic()
                     mb_done = bytes_done / (1024 * 1024)
                     speed_mbs = speed_bps / (1024 * 1024) if speed_bps else 0
-                    label = f"local: {files_done}/{len(tasks)} ({mb_done:.0f} MB)"
+                    label = f"local: {files_done}/{len(_tasks)} ({mb_done:.0f} MB)"
                     if speed_mbs:
                         label += f" [{speed_mbs:.1f} MB/s]"
                     ctx.report(Phase.STREAM, label, 5,
                                files_transferred=_wal_counter + files_done,
-                               bytes_transferred=total_stream_bytes + bytes_done,
+                               bytes_transferred=_total_stream_bytes + bytes_done,
                                transfer_speed_bps=speed_bps)
 
                 bulk_result = rclone_bulk_copy(
@@ -1256,9 +1248,9 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 ctx.report(Phase.STREAM, f"Přesouvám {len(tasks)} souborů na finální cesty...", 5,
                            bytes_transferred=total_stream_bytes)
 
-                def _do_local_move(task_args):
+                def _do_local_move(task_args, _staging_base=staging_base):
                     t_fs, _, t_src_path, t_dest_path, t_file_size = task_args
-                    t_staging = f"{staging_base}/{t_src_path.lstrip('/')}"
+                    t_staging = f"{_staging_base}/{t_src_path.lstrip('/')}"
                     moved = rclone_server_side_move(ctx.config.dest_remote, t_staging, t_dest_path)
                     return (t_fs, t_dest_path, t_staging, t_file_size, moved)
 
@@ -1278,23 +1270,25 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             # Phase A: Bulk copy all files from this remote to staging area
             staging_base = f"{ctx.config.dest_path}/.staging/{src_remote}"
             src_paths = [t[2] for t in tasks]  # extract src_path from each task
-            task_map = {t[2]: t for t in tasks}  # src_path → task tuple
 
             ctx.report(Phase.STREAM, f"Bulk transfer: {src_remote} ({len(tasks)} souborů)...", 5,
                        files_transferred=_wal_counter, bytes_transferred=total_stream_bytes)
 
-            def _bulk_progress(files_done, bytes_done, speed_bps):
-                ctx.progress.current_file = f"{src_remote}: {files_done}/{len(tasks)}"
+            def _bulk_progress(files_done, bytes_done, speed_bps,
+                               _tasks=tasks, _wal_counter=_wal_counter,
+                               _total_stream_bytes=total_stream_bytes,
+                               _src_remote=src_remote):
+                ctx.progress.current_file = f"{_src_remote}: {files_done}/{len(_tasks)}"
                 ctx.last_transfer_time = time.monotonic()
                 mb_done = bytes_done / (1024 * 1024)
                 speed_mbs = speed_bps / (1024 * 1024) if speed_bps else 0
                 speed_str = f"{speed_mbs:.1f} MB/s" if speed_mbs else ""
-                label = f"{src_remote}: {files_done}/{len(tasks)} ({mb_done:.0f} MB)"
+                label = f"{_src_remote}: {files_done}/{len(_tasks)} ({mb_done:.0f} MB)"
                 if speed_str:
                     label += f" [{speed_str}]"
                 ctx.report(Phase.STREAM, label, 5,
                            files_transferred=_wal_counter + files_done,
-                           bytes_transferred=total_stream_bytes + bytes_done,
+                           bytes_transferred=_total_stream_bytes + bytes_done,
                            transfer_speed_bps=speed_bps)
 
             bulk_result = rclone_bulk_copy(
@@ -1345,9 +1339,9 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
             move_counter = 0
 
-            def _do_move(task_args):
+            def _do_move(task_args, _staging_base=staging_base):
                 t_fs, _, t_src_path, t_dest_path, t_file_size = task_args
-                t_staging = f"{staging_base}/{t_src_path}"
+                t_staging = f"{_staging_base}/{t_src_path}"
                 moved = rclone_server_side_move(ctx.config.dest_remote, t_staging, t_dest_path)
                 return (t_fs, t_dest_path, t_staging, t_file_size, moved)
 
@@ -2557,7 +2551,12 @@ def get_consolidation_status(catalog_path: str | Path) -> dict[str, Any]:
                         remote_data[rname]["total"] += r["cnt"]
                         remote_data[rname]["bytes"] += r["bytes"] or 0
                     for rname, rd in sorted(remote_data.items(), key=lambda x: -x[1]["total"]):
-                        status_label = "done" if rd["pending"] == 0 and rd["failed"] == 0 else "active" if rd["in_progress"] > 0 else "pending"
+                        if rd["pending"] == 0 and rd["failed"] == 0:
+                            status_label = "done"
+                        elif rd["in_progress"] > 0:
+                            status_label = "active"
+                        else:
+                            status_label = "pending"
                         remote_breakdown.append({"remote": rname, **rd, "status_label": status_label})
 
                     # Staging file count
