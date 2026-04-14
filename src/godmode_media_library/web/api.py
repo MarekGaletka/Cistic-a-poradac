@@ -12,6 +12,7 @@ from .routes.backup import router as backup_router
 from .routes.cloud import _remotes_cache  # noqa: F401 — re-export for tests
 from .routes.cloud import router as cloud_router
 from .routes.consolidation import router as consolidation_router
+from .routes.iphone import router as iphone_router
 from .routes.duplicates import router as duplicates_router
 from .routes.faces import router as faces_router
 from .routes.files import router as files_router
@@ -97,3 +98,4 @@ router.include_router(backup_router)
 router.include_router(cloud_router)
 router.include_router(faces_router)
 router.include_router(consolidation_router)
+router.include_router(iphone_router)

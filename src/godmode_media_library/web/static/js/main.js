@@ -20,6 +20,7 @@ import * as doctor from "./pages/doctor.js";
 import * as gallery from "./pages/gallery.js";
 import * as people from "./pages/people.js";
 import * as consolidation from "./pages/consolidation.js";
+import * as iphone from "./pages/iphone.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -33,6 +34,7 @@ const pages = {
   gallery,
   people,
   consolidation,
+  iphone,
   pipeline,
   doctor,
 };
