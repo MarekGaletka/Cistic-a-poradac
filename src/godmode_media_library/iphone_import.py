@@ -33,8 +33,9 @@ TEMP_PREFIX = "gml-iphone-"
 MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB minimum free space
 
 
-MAX_UPLOAD_WORKERS = 3  # concurrent rclone uploads
-MAX_PREFETCH = 5  # max files downloaded ahead of uploads
+MAX_UPLOAD_WORKERS = 4  # concurrent rclone uploads
+MAX_PREFETCH = 6  # max files downloaded ahead of uploads
+PHASH_SIZE_LIMIT = 500 * 1024 * 1024  # skip perceptual hash for files > 500 MB
 
 
 @dataclass
@@ -186,13 +187,16 @@ async def list_iphone_files() -> list[IPhoneFile]:
 
 
 async def _download_file(afc_path: str, dest: Path) -> bool:
-    """Download a single file from iPhone via AFC."""
+    """Download a single file from iPhone via AFC.
+
+    Uses pull() for streaming download (no full-file RAM buffering).
+    """
     create_using_usbmux, AfcService = _get_afc_service()
     ld = await create_using_usbmux()
+    dest.parent.mkdir(parents=True, exist_ok=True)
     async with AfcService(ld) as afc:
-        data = await afc.get_file_contents(afc_path)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        # pull() streams file to disk — handles multi-GB files without RAM issues
+        await afc.pull(afc_path, str(dest), progress_bar=False)
     return True
 
 
@@ -527,13 +531,15 @@ def run_import(
                     except Exception:
                         pass
 
-                    # Perceptual hash
+                    # Perceptual hash (skip for huge files — too slow)
                     phash = None
                     try:
                         from .perceptual_hash import dhash, is_image_ext
                         from .video_hash import video_dhash
                         ext = local_temp.suffix.lower().lstrip(".")
-                        if is_image_ext(ext):
+                        if ifile.size > PHASH_SIZE_LIMIT:
+                            pass  # Skip phash for files > 500 MB
+                        elif is_image_ext(ext):
                             phash = dhash(local_temp)
                         elif ext in ("mp4", "mov", "m4v", "avi", "mkv"):
                             phash = video_dhash(local_temp)

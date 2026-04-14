@@ -1502,7 +1502,7 @@ def rclone_copyto(
         "--stats-one-line",
         "-v",
         "--multi-thread-streams", "4",
-        "--drive-chunk-size", "64M",
+        "--drive-chunk-size", "8M",
         "--server-side-across-configs",
     ]
     if bwlimit:
