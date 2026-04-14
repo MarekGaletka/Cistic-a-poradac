@@ -33,6 +33,10 @@ TEMP_PREFIX = "gml-iphone-"
 MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB minimum free space
 
 
+MAX_UPLOAD_WORKERS = 3  # concurrent rclone uploads
+MAX_PREFETCH = 5  # max files downloaded ahead of uploads
+
+
 @dataclass
 class IPhoneImportConfig:
     dest_remote: str = "gws-backup"
@@ -41,6 +45,7 @@ class IPhoneImportConfig:
     structure_pattern: str = "year_month"  # year_month, flat, original
     bwlimit: str | None = None
     media_only: bool = True
+    upload_workers: int = MAX_UPLOAD_WORKERS
 
 
 @dataclass
@@ -331,143 +336,48 @@ def run_import(
             )
             logger.info("Resuming: %d files already completed", len(completed_sources))
 
-        # 4. Process each file
+        # 4. Process files with parallel pipeline:
+        #    - Download from iPhone + hash/EXIF/phash (sequential, fast ~31 MB/s)
+        #    - Upload via rclone (concurrent pool, bottleneck ~1 MB/s each)
+        import concurrent.futures
+        from .utils import utc_stamp
+
         start_time = time.monotonic()
         bytes_done = _progress.bytes_transferred
+        upload_semaphore = threading.Semaphore(MAX_PREFETCH)
+        catalog_lock = threading.Lock()  # Serialize catalog writes
+        abort = False
 
-        for i, ifile in enumerate(iphone_files):
-            # Check pause/cancel
-            while _pause_event.is_set() and not _cancel_event.is_set():
-                _report(phase="paused")
-                time.sleep(1)
-            if _cancel_event.is_set():
-                _report(phase="paused")
-                ckpt.update_job(cat, job.job_id, status="paused")
-                break
-
-            # Skip already completed
-            if ifile.afc_path in completed_sources:
-                continue
-
-            _report(
-                current_file=ifile.filename,
-                phase="transferring",
-            )
-
-            # Check disk space
-            disk = shutil.disk_usage(str(temp_dir))
-            if disk.free < max(MIN_FREE_BYTES, ifile.size * 2):
-                _report(phase="error", error=f"Nedostatek místa na disku ({_fmt_bytes(disk.free)} volných)")
-                ckpt.update_job(cat, job.job_id, status="paused", error="Nedostatek místa")
-                break
-
-            # Check iPhone still connected
-            if not _check_iphone_connected():
-                _report(phase="paused", iphone_connected=False,
-                        error="iPhone odpojen — připojte jej a pokračujte")
-                ckpt.update_job(cat, job.job_id, status="paused", error="iPhone disconnected")
-                # Wait for reconnect
-                while not _check_iphone_connected() and not _cancel_event.is_set():
-                    time.sleep(5)
-                if _cancel_event.is_set():
-                    break
-                _report(phase="transferring", iphone_connected=True, error=None)
-                ckpt.update_job(cat, job.job_id, status="running")
-
-            # a) Download to temp
-            local_temp = temp_dir / ifile.filename
+        def _upload_one(prepared):
+            """Upload a prepared file to Google Drive + catalog. Runs in thread pool."""
+            nonlocal bytes_done
+            ifile, local_temp, file_hash, exif, probe, phash, dest_p = prepared
             try:
-                ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                               STEP_TRANSFER, "in_progress")
-                asyncio.run(_download_file(ifile.afc_path, local_temp))
-            except Exception as e:
-                logger.warning("Download failed %s: %s", ifile.filename, e)
-                ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                               STEP_TRANSFER, "failed", error=str(e))
-                with _progress_lock:
-                    _progress.failed_files += 1
-                _cleanup_temp(local_temp)
-                continue
-
-            try:
-                # b) SHA-256 hash
-                file_hash = sha256_file(local_temp)
-
-                # c) Check dedup — skip if already in catalog
-                existing = cat.get_file_by_hash(file_hash) if hasattr(cat, "get_file_by_hash") else None
-                if existing:
-                    logger.info("Dedup skip: %s (hash %s already in catalog)", ifile.filename, file_hash[:12])
-                    ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                                   STEP_TRANSFER, "skipped", dest="dedup")
-                    with _progress_lock:
-                        _progress.skipped_files += 1
-                        _progress.completed_files += 1
-                    _cleanup_temp(local_temp)
-                    continue
-
-                # d) Extract EXIF metadata
-                exif = None
-                if can_read_exif(local_temp.suffix.lstrip(".")):
-                    try:
-                        exif = read_exif(local_temp)
-                    except Exception:
-                        pass
-
-                # e) Media probe (dimensions, duration, bitrate)
-                probe = None
-                try:
-                    probe = probe_file(local_temp)
-                except Exception:
-                    pass
-
-                # f) Compute perceptual hash
-                phash = None
-                try:
-                    from .perceptual_hash import dhash, is_image_ext
-                    from .video_hash import video_dhash
-                    ext = local_temp.suffix.lower().lstrip(".")
-                    if is_image_ext(ext):
-                        phash = dhash(local_temp)
-                    elif ext in ("mp4", "mov", "m4v", "avi", "mkv"):
-                        phash = video_dhash(local_temp)
-                except Exception:
-                    pass
-
-                # g) Determine destination path
-                dest_path = _determine_dest_path(config, exif, ifile.filename)
-
-                # h) Upload to Google Drive via rclone
                 rclone_result = rclone_copyto(
                     src_remote="",
                     src_path=str(local_temp),
                     dst_remote=config.dest_remote,
-                    dst_path=dest_path,
+                    dst_path=dest_p,
                     bwlimit=config.bwlimit,
+                    file_size=ifile.size,
                 )
                 if not rclone_result.get("success", False):
                     raise RuntimeError(rclone_result.get("error", "rclone upload failed"))
 
-                # i) Register in catalog
                 now_ts = time.time()
-                from .utils import utc_stamp
                 now_str = utc_stamp()
                 row = CatalogFileRow(
                     id=None,
-                    path=f"{config.dest_remote}:{dest_path}",
+                    path=f"{config.dest_remote}:{dest_p}",
                     size=ifile.size,
                     mtime=ifile.mtime or now_ts,
                     ctime=now_ts,
                     birthtime=ifile.mtime or now_ts,
                     ext=local_temp.suffix.lower().lstrip("."),
                     sha256=file_hash,
-                    inode=None,
-                    device=None,
-                    nlink=1,
-                    asset_key=None,
-                    asset_component=False,
-                    xattr_count=0,
-                    first_seen=now_str,
-                    last_scanned=now_str,
+                    inode=None, device=None, nlink=1,
+                    asset_key=None, asset_component=False, xattr_count=0,
+                    first_seen=now_str, last_scanned=now_str,
                     duration_seconds=probe.duration_seconds if probe else None,
                     width=probe.width if probe else None,
                     height=probe.height if probe else None,
@@ -481,13 +391,12 @@ def run_import(
                     gps_latitude=exif.gps_latitude if exif else None,
                     gps_longitude=exif.gps_longitude if exif else None,
                 )
-                cat.upsert_file(row)
-
-                # j) Mark completed in checkpoint
-                ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                               STEP_TRANSFER, "completed",
-                               dest=f"{config.dest_remote}:{dest_path}",
-                               bytes_transferred=ifile.size)
+                with catalog_lock:
+                    cat.upsert_file(row)
+                    ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
+                                   STEP_TRANSFER, "completed",
+                                   dest=f"{config.dest_remote}:{dest_p}",
+                                   bytes_transferred=ifile.size)
 
                 bytes_done += ifile.size
                 elapsed = time.monotonic() - start_time
@@ -502,17 +411,159 @@ def run_import(
                     progress_fn(get_progress())
 
                 logger.info("Transferred %s → %s:%s (%s)",
-                            ifile.filename, config.dest_remote, dest_path,
+                            ifile.filename, config.dest_remote, dest_p,
                             _fmt_bytes(ifile.size))
 
             except Exception as e:
-                logger.warning("Failed processing %s: %s", ifile.filename, e)
-                ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                               STEP_TRANSFER, "failed", error=str(e))
+                logger.warning("Upload failed %s: %s", ifile.filename, e)
+                with catalog_lock:
+                    ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
+                                   STEP_TRANSFER, "failed", error=str(e))
                 with _progress_lock:
                     _progress.failed_files += 1
             finally:
                 _cleanup_temp(local_temp)
+                upload_semaphore.release()
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=config.upload_workers, thread_name_prefix="iphone-upload"
+        ) as upload_pool:
+            futures: list[concurrent.futures.Future] = []
+
+            for i, ifile in enumerate(iphone_files):
+                if abort:
+                    break
+
+                # Check pause/cancel
+                while _pause_event.is_set() and not _cancel_event.is_set():
+                    _report(phase="paused")
+                    time.sleep(1)
+                if _cancel_event.is_set():
+                    _report(phase="paused")
+                    ckpt.update_job(cat, job.job_id, status="paused")
+                    abort = True
+                    break
+
+                # Skip already completed
+                if ifile.afc_path in completed_sources:
+                    continue
+
+                _report(current_file=ifile.filename, phase="transferring")
+
+                # Check disk space (account for prefetched files)
+                disk = shutil.disk_usage(str(temp_dir))
+                if disk.free < max(MIN_FREE_BYTES, ifile.size * 2):
+                    _report(phase="error",
+                            error=f"Nedostatek místa na disku ({_fmt_bytes(disk.free)} volných)")
+                    ckpt.update_job(cat, job.job_id, status="paused", error="Nedostatek místa")
+                    abort = True
+                    break
+
+                # Check iPhone still connected
+                if not _check_iphone_connected():
+                    _report(phase="paused", iphone_connected=False,
+                            error="iPhone odpojen — připojte jej a pokračujte")
+                    ckpt.update_job(cat, job.job_id, status="paused",
+                                    error="iPhone disconnected")
+                    while not _check_iphone_connected() and not _cancel_event.is_set():
+                        time.sleep(5)
+                    if _cancel_event.is_set():
+                        abort = True
+                        break
+                    _report(phase="transferring", iphone_connected=True, error=None)
+                    ckpt.update_job(cat, job.job_id, status="running")
+
+                # ── Stage 1: Download + prepare (sequential, fast) ──
+                # Semaphore limits prefetched files on disk (released after upload)
+                upload_semaphore.acquire()
+                local_temp = temp_dir / ifile.filename
+                try:
+                    with catalog_lock:
+                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
+                                       STEP_TRANSFER, "in_progress")
+                    asyncio.run(_download_file(ifile.afc_path, local_temp))
+                except Exception as e:
+                    logger.warning("Download failed %s: %s", ifile.filename, e)
+                    with catalog_lock:
+                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
+                                       STEP_TRANSFER, "failed", error=str(e))
+                    with _progress_lock:
+                        _progress.failed_files += 1
+                    _cleanup_temp(local_temp)
+                    upload_semaphore.release()
+                    continue
+
+                try:
+                    # SHA-256 hash
+                    file_hash = sha256_file(local_temp)
+
+                    # Dedup check
+                    with catalog_lock:
+                        existing = cat.get_file_by_hash(file_hash) if hasattr(cat, "get_file_by_hash") else None
+                    if existing:
+                        logger.info("Dedup skip: %s (hash %s)", ifile.filename, file_hash[:12])
+                        with catalog_lock:
+                            ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
+                                           STEP_TRANSFER, "skipped", dest="dedup")
+                        with _progress_lock:
+                            _progress.skipped_files += 1
+                            _progress.completed_files += 1
+                        _cleanup_temp(local_temp)
+                        upload_semaphore.release()
+                        continue
+
+                    # EXIF
+                    exif = None
+                    if can_read_exif(local_temp.suffix.lstrip(".")):
+                        try:
+                            exif = read_exif(local_temp)
+                        except Exception:
+                            pass
+
+                    # Media probe
+                    probe = None
+                    try:
+                        probe = probe_file(local_temp)
+                    except Exception:
+                        pass
+
+                    # Perceptual hash
+                    phash = None
+                    try:
+                        from .perceptual_hash import dhash, is_image_ext
+                        from .video_hash import video_dhash
+                        ext = local_temp.suffix.lower().lstrip(".")
+                        if is_image_ext(ext):
+                            phash = dhash(local_temp)
+                        elif ext in ("mp4", "mov", "m4v", "avi", "mkv"):
+                            phash = video_dhash(local_temp)
+                    except Exception:
+                        pass
+
+                    # Destination path
+                    dest_path = _determine_dest_path(config, exif, ifile.filename)
+
+                except Exception as e:
+                    logger.warning("Prepare failed %s: %s", ifile.filename, e)
+                    with catalog_lock:
+                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
+                                       STEP_TRANSFER, "failed", error=str(e))
+                    with _progress_lock:
+                        _progress.failed_files += 1
+                    _cleanup_temp(local_temp)
+                    upload_semaphore.release()
+                    continue
+
+                # ── Stage 2: Submit to upload pool (semaphore already held) ──
+                prepared = (ifile, local_temp, file_hash, exif, probe, phash, dest_path)
+                futures.append(upload_pool.submit(_upload_one, prepared))
+
+            # Wait for all uploads to finish
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    fut.result()
+                except Exception as e:
+                    logger.error("Upload future error: %s", e)
 
         # 5. Complete job
         if not _cancel_event.is_set():

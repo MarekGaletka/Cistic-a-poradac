@@ -330,7 +330,7 @@ class Catalog:
                 os.close(self._lock_fd)
                 self._lock_fd = None
                 raise
-        conn = sqlite3.connect(str(self._db_path))
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
