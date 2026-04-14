@@ -943,8 +943,8 @@ def get_sources(request: Request) -> dict:
 
 
 @router.get("/stream/{file_path:path}")
-def stream_file(request: Request, file_path: str) -> StreamingResponse:
-    """Stream a media file for preview."""
+def stream_file(request: Request, file_path: str):
+    """Stream a media file with HTTP Range request support for video scrubbing."""
     file_path = _sanitize_path(file_path, param_name="file_path")
     full_path = Path(f"/{file_path}").resolve()
     cat = _open_catalog(request)
@@ -985,9 +985,57 @@ def stream_file(request: Request, file_path: str) -> StreamingResponse:
     }
     ext = full_path.suffix.lower()
     media_type = media_types.get(ext, "application/octet-stream")
+    file_size = full_path.stat().st_size
+
+    range_header = request.headers.get("range")
+    if range_header:
+        # Parse Range: bytes=start-end
+        try:
+            range_spec = range_header.strip().removeprefix("bytes=")
+            parts = range_spec.split("-", 1)
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if parts[1] else file_size - 1
+        except (ValueError, IndexError) as exc:
+            raise HTTPException(status_code=416, detail="Invalid Range header") from exc
+
+        if start >= file_size or end >= file_size or start > end:
+            raise HTTPException(
+                status_code=416,
+                detail="Range Not Satisfiable",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
+        chunk_size = end - start + 1
+
+        def _range_streamer():
+            with open(full_path, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    read_size = min(remaining, 1024 * 1024)
+                    data = f.read(read_size)
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(
+            _range_streamer(),
+            status_code=206,
+            media_type=media_type,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Content-Length": str(chunk_size),
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=86400",
+            },
+        )
 
     return FileResponse(
         str(full_path),
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=86400",
+        },
     )

@@ -1,8 +1,12 @@
-"""Tests for recent improvements across cli, asset_sets, perceptual_hash, web/shared, and backup_monitor."""
+"""Tests for recent improvements across cli, asset_sets, perceptual_hash, web/shared, backup_monitor, and Range requests."""
 
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -157,3 +161,81 @@ class TestSendNotification:
         _send_notification("Alert", "Error!", "critical")
         env = mock_run.call_args[1]["env"]
         assert env["GML_NOTIFY_SOUND"] == "Basso"
+
+
+# ---------------------------------------------------------------------------
+# 6. Range request support for /stream/ endpoint
+# ---------------------------------------------------------------------------
+
+try:
+    from starlette.testclient import TestClient
+    from godmode_media_library.web.app import create_app
+    from godmode_media_library.catalog import Catalog
+    from godmode_media_library.scanner import incremental_scan
+    HAS_FASTAPI = True
+except ImportError:
+    HAS_FASTAPI = False
+
+
+@pytest.fixture
+def stream_client(tmp_path):
+    """Create a test client with a video file in the catalog."""
+    db_path = tmp_path / "test.db"
+    cat = Catalog(db_path)
+    cat.open()
+
+    media = tmp_path / "media"
+    media.mkdir()
+    video = media / "test_video.mp4"
+    # 10KB fake video content
+    video.write_bytes(b"V" * 10240)
+
+    with (
+        patch("godmode_media_library.scanner.probe_file", return_value=None),
+        patch("godmode_media_library.scanner.read_exif", return_value=None),
+        patch("godmode_media_library.scanner.dhash", return_value=None),
+        patch("godmode_media_library.scanner.video_dhash", return_value=None),
+    ):
+        incremental_scan(cat, [media])
+    cat.close()
+
+    env = {"GML_API_TOKEN": "", "GML_RATE_LIMIT": "0"}
+    with patch.dict(os.environ, env, clear=False):
+        app = create_app(catalog_path=db_path)
+    return TestClient(app, raise_server_exceptions=False), video
+
+
+@pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+class TestRangeRequests:
+    def test_full_request_returns_accept_ranges(self, stream_client):
+        client, video = stream_client
+        resp = client.get(f"/api/stream{video}")
+        assert resp.status_code == 200
+        assert resp.headers.get("accept-ranges") == "bytes"
+
+    def test_range_request_returns_206(self, stream_client):
+        client, video = stream_client
+        resp = client.get(f"/api/stream{video}", headers={"Range": "bytes=0-99"})
+        assert resp.status_code == 206
+        assert len(resp.content) == 100
+        assert resp.headers["content-range"] == f"bytes 0-99/10240"
+        assert resp.content == b"V" * 100
+
+    def test_range_request_middle_segment(self, stream_client):
+        client, video = stream_client
+        resp = client.get(f"/api/stream{video}", headers={"Range": "bytes=100-199"})
+        assert resp.status_code == 206
+        assert len(resp.content) == 100
+        assert resp.headers["content-range"] == "bytes 100-199/10240"
+
+    def test_range_request_to_end(self, stream_client):
+        client, video = stream_client
+        resp = client.get(f"/api/stream{video}", headers={"Range": "bytes=10200-"})
+        assert resp.status_code == 206
+        assert len(resp.content) == 40  # 10240 - 10200
+        assert resp.headers["content-range"] == "bytes 10200-10239/10240"
+
+    def test_invalid_range_returns_416(self, stream_client):
+        client, video = stream_client
+        resp = client.get(f"/api/stream{video}", headers={"Range": "bytes=99999-100000"})
+        assert resp.status_code == 416
