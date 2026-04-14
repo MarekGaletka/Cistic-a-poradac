@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import checkpoint as ckpt
-from .catalog import Catalog
+from .catalog import Catalog, CatalogFileRow
 from .cloud import rclone_copyto
 from .exif_reader import ExifMeta, can_read_exif, read_exif
 from .media_probe import probe_file
@@ -407,7 +407,7 @@ def run_import(
 
                 # d) Extract EXIF metadata
                 exif = None
-                if can_read_exif(local_temp):
+                if can_read_exif(local_temp.suffix.lstrip(".")):
                     try:
                         exif = read_exif(local_temp)
                     except Exception:
@@ -448,24 +448,40 @@ def run_import(
                     raise RuntimeError(rclone_result.get("error", "rclone upload failed"))
 
                 # i) Register in catalog
-                cat.upsert_file(
+                now_ts = time.time()
+                from .utils import utc_stamp
+                now_str = utc_stamp()
+                row = CatalogFileRow(
+                    id=None,
                     path=f"{config.dest_remote}:{dest_path}",
                     size=ifile.size,
-                    mtime=ifile.mtime or time.time(),
-                    sha256=file_hash,
+                    mtime=ifile.mtime or now_ts,
+                    ctime=now_ts,
+                    birthtime=ifile.mtime or now_ts,
                     ext=local_temp.suffix.lower().lstrip("."),
+                    sha256=file_hash,
+                    inode=None,
+                    device=None,
+                    nlink=1,
+                    asset_key=None,
+                    asset_component=False,
+                    xattr_count=0,
+                    first_seen=now_str,
+                    last_scanned=now_str,
+                    duration_seconds=probe.duration_seconds if probe else None,
+                    width=probe.width if probe else None,
+                    height=probe.height if probe else None,
+                    video_codec=probe.video_codec if probe else None,
+                    audio_codec=probe.audio_codec if probe else None,
+                    bitrate=probe.bitrate if probe else None,
+                    phash=str(phash) if phash else None,
                     date_original=exif.date_original if exif else None,
                     camera_make=exif.camera_make if exif else None,
                     camera_model=exif.camera_model if exif else None,
                     gps_latitude=exif.gps_latitude if exif else None,
                     gps_longitude=exif.gps_longitude if exif else None,
-                    width=probe.width if probe else None,
-                    height=probe.height if probe else None,
-                    duration_seconds=probe.duration if probe else None,
-                    bitrate=probe.bitrate if probe else None,
-                    phash=str(phash) if phash else None,
-                    source_remote="iphone",
                 )
+                cat.upsert_file(row)
 
                 # j) Mark completed in checkpoint
                 ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,

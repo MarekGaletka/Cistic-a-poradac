@@ -93,13 +93,13 @@ async def iphone_start(req: IPhoneStartRequest, request: Request, bg: Background
         media_only=req.media_only,
     )
 
-    task = _create_task("iphone_import", f"Import z iPhone → {req.dest_remote}:{req.dest_path}")
+    task = _create_task(f"iphone_import: {req.dest_remote}:{req.dest_path}")
 
     def _run():
         try:
             def _on_progress(prog):
                 _update_progress(task.id, prog)
-                _notify_ws({"type": "iphone_progress", **prog})
+                _notify_ws(task.id, {"type": "iphone_progress", **prog})
 
             result = run_import(catalog_path, config, progress_fn=_on_progress)
             _finish_task(task.id, result)
@@ -148,13 +148,13 @@ async def iphone_resume(request: Request, bg: BackgroundTasks):
     catalog_path = str(request.app.state.catalog_path)
     config = IPhoneImportConfig()  # Uses defaults, job config is in checkpoint
 
-    task = _create_task("iphone_import", "Resume iPhone import")
+    task = _create_task("iphone_import: resume")
 
     def _run():
         try:
             def _on_progress(prog):
                 _update_progress(task.id, prog)
-                _notify_ws({"type": "iphone_progress", **prog})
+                _notify_ws(task.id, {"type": "iphone_progress", **prog})
 
             result = run_import(catalog_path, config, progress_fn=_on_progress)
             _finish_task(task.id, result)
