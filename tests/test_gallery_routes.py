@@ -464,9 +464,14 @@ class TestGalleryFileScore:
         assert data["dimensions"]["resolution"] > 0.5
 
     def test_path_traversal_returns_not_found(self, client):
-        # Path traversal attempts get sanitized and then yield 404
-        resp = client.get("/api/gallery/score/../../etc/passwd")
+        # Path traversal with /../ is resolved by Starlette router and hits the
+        # SPA fallback (200) or a non-matching route — the traversal never
+        # reaches the API handler. Use an encoded traversal that stays within the route.
+        resp = client.get("/api/gallery/score/..%2F..%2Fetc%2Fpasswd")
         assert resp.status_code in (400, 404, 422)
+        # Also test a traversal that stays in the route path
+        resp2 = client.get("/api/gallery/score/media/../../etc/passwd")
+        assert resp2.status_code in (200, 400, 404, 422)  # Router may resolve this
 
     def test_empty_catalog_file_not_found(self, empty_client):
         resp = empty_client.get("/api/gallery/score/media/any_file.jpg")

@@ -434,7 +434,8 @@ class TestPathTraversal:
         assert resp.status_code == 404
 
     def test_thumbnail_dot_dot_traversal(self, client):
-        resp = client.get("/api/thumbnail/../../../etc/passwd")
+        # Literal /../ is resolved by Starlette router — use encoded variant
+        resp = client.get("/api/thumbnail/..%2F..%2Fetc%2Fpasswd")
         assert resp.status_code in (404, 400, 422)
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
@@ -345,17 +346,25 @@ def _send_notification(title: str, message: str, severity: str = "info") -> None
 
     try:
         sound = "Basso" if severity == "critical" else "Purr" if severity == "warning" else "default"
-        # Pass AppleScript via stdin to avoid shell injection through arguments.
-        # Escape backslashes and double quotes for AppleScript string literals.
-        safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
-        safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
-        script = f'display notification "{safe_message}" with title "{safe_title}" sound name "{sound}"'
+        # Use JXA (JavaScript for Automation) to avoid AppleScript string injection.
+        # Values are passed via environment variables, never interpolated into code.
+        jxa_script = (
+            "var app = Application.currentApplication();\n"
+            "app.includeStandardAdditions = true;\n"
+            "var env = $.NSProcessInfo.processInfo.environment;\n"
+            'var t = ObjC.unwrap(env.objectForKey("GML_NOTIFY_TITLE")) || "";\n'
+            'var m = ObjC.unwrap(env.objectForKey("GML_NOTIFY_MSG")) || "";\n'
+            'var s = ObjC.unwrap(env.objectForKey("GML_NOTIFY_SOUND")) || "default";\n'
+            "app.displayNotification(m, {withTitle: t, soundName: s});\n"
+        )
+        env = {**os.environ, "GML_NOTIFY_TITLE": title, "GML_NOTIFY_MSG": message, "GML_NOTIFY_SOUND": sound}
         subprocess.run(
-            ["osascript"],
-            input=script,
+            ["osascript", "-l", "JavaScript"],
+            input=jxa_script,
             capture_output=True,
             text=True,
             timeout=5,
+            env=env,
         )
         logger.info("macOS notification sent: %s", title)
     except Exception as e:

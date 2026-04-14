@@ -83,39 +83,41 @@ class TestPathTraversal:
     """Tests for path traversal attack prevention."""
 
     def test_dotdot_in_file_detail(self, client):
-        """GET /api/files/../../etc/passwd should not return file contents."""
-        resp = client.get("/api/files/../../etc/passwd")
-        assert resp.status_code in (403, 404, 422)
+        """Path traversal in file detail should be blocked.
+        Note: literal ../../ is resolved by Starlette router and hits SPA fallback (200).
+        Use URL-encoded variant to test the actual API handler."""
+        resp = client.get("/api/files/..%2F..%2Fetc%2Fpasswd")
+        assert resp.status_code in (400, 403, 404, 422)
 
     def test_dotdot_in_thumbnail(self, client):
         """Path traversal in thumbnail endpoint should be blocked."""
-        resp = client.get("/api/thumbnail/../../etc/passwd")
-        assert resp.status_code in (403, 404)
+        resp = client.get("/api/thumbnail/..%2F..%2Fetc%2Fpasswd")
+        assert resp.status_code in (400, 403, 404)
 
     def test_dotdot_in_preview(self, client):
         """Path traversal in preview endpoint should be blocked."""
-        resp = client.get("/api/preview/../../etc/passwd")
-        assert resp.status_code in (403, 404)
+        resp = client.get("/api/preview/..%2F..%2Fetc%2Fpasswd")
+        assert resp.status_code in (400, 403, 404)
 
     def test_dotdot_in_stream(self, client):
         """Path traversal in stream endpoint should be blocked."""
-        resp = client.get("/api/stream/../../etc/passwd")
-        assert resp.status_code in (403, 404)
+        resp = client.get("/api/stream/..%2F..%2Fetc%2Fpasswd")
+        assert resp.status_code in (400, 403, 404)
 
     def test_url_encoded_traversal_in_file_detail(self, client):
         """URL-encoded ../ (%2e%2e%2f) should be blocked."""
         resp = client.get("/api/files/%2e%2e/%2e%2e/etc/passwd")
-        assert resp.status_code in (403, 404, 422)
+        assert resp.status_code in (400, 403, 404, 422)
 
     def test_double_encoded_traversal(self, client):
         """Double-encoded path traversal (%252e%252e%252f) should be blocked."""
         resp = client.get("/api/files/%252e%252e%252f%252e%252e%252fetc/passwd")
-        assert resp.status_code in (403, 404, 422)
+        assert resp.status_code in (400, 403, 404, 422)
 
     def test_traversal_in_note_endpoint(self, client):
         """Path traversal in note endpoint should not access system files."""
-        resp = client.get("/api/files/../../etc/passwd/note")
-        assert resp.status_code in (403, 404, 422)
+        resp = client.get("/api/files/..%2F..%2Fetc%2Fpasswd/note")
+        assert resp.status_code in (400, 403, 404, 422)
 
     def test_traversal_in_rating_endpoint(self, client):
         """Path traversal in rating endpoint should be blocked."""
@@ -191,8 +193,8 @@ class TestPathTraversal:
     def test_traversal_in_browse(self, client):
         """Path traversal in browse endpoint should resolve safely."""
         resp = client.get("/api/browse", params={"path": "/tmp/../etc"})
-        # /tmp/../etc resolves to /etc which is blocked
-        assert resp.status_code in (403, 404)
+        # /tmp/../etc is rejected by _sanitize_path (400) or root check (403)
+        assert resp.status_code in (400, 403, 404)
 
 
 # ── 2. Blocked Prefix Enforcement ────────────────────────────────────
@@ -692,8 +694,9 @@ class TestBoundaryEdgeCases:
 
     def test_multiple_traversal_sequences(self, client):
         """Multiple chained traversal sequences should still be blocked."""
-        resp = client.get("/api/files/../../../../../../../etc/passwd")
-        assert resp.status_code in (403, 404)
+        # Literal /../ is resolved by Starlette router — use encoded variant
+        resp = client.get("/api/files/..%2F..%2F..%2F..%2Fetc%2Fpasswd")
+        assert resp.status_code in (400, 403, 404)
 
     def test_windows_style_traversal(self, client):
         """Windows-style backslash traversal should be handled."""

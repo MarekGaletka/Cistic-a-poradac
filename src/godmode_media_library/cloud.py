@@ -1338,9 +1338,7 @@ def rclone_bulk_copy(
         _validate_remote_name(src_remote)
     _validate_remote_name(dst_remote)
 
-    import re
     import tempfile
-    import time
 
     # Write file list to temp file
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="gml_bulk_") as f:
@@ -1417,10 +1415,8 @@ def rclone_bulk_copy(
         logger.warning("bulk_copy failed for %s: %s", src_remote, exc)
         return {"success": False, "files_transferred": 0, "bytes": 0, "error": str(exc)}
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(files_from_path)
-        except OSError:
-            pass
 
 
 def rclone_server_side_move(

@@ -10,6 +10,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from godmode_media_library.asset_sets import PILLOW_IMAGE_EXTS
+
 logger = logging.getLogger(__name__)
 
 _heif_registered = False
@@ -26,23 +28,7 @@ def _register_heif_once() -> None:
         pillow_heif.register_heif_opener()
     _heif_registered = True
 
-# Hashable image extensions — formats that Pillow can open natively
-# (or via pillow-heif for HEIC/HEIF).
-# NOTE: RAW camera formats (dng, cr2, cr3, nef, arw, raw) are listed in
-# asset_sets.IMAGE_EXTS but are intentionally excluded here because Pillow
-# cannot decode them without a third-party raw processor.
-_IMAGE_EXTS = {
-    "jpg",
-    "jpeg",
-    "png",
-    "bmp",
-    "tiff",
-    "tif",
-    "gif",
-    "webp",
-    "heic",
-    "heif",
-}
+_IMAGE_EXTS = PILLOW_IMAGE_EXTS
 
 # Hash size: 8 means 8x(8+1) = 72 pixel grid, producing 64-bit hash
 HASH_SIZE = 8

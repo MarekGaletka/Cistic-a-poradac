@@ -31,6 +31,23 @@ from .verify import verify_catalog
 logger = logging.getLogger(__name__)
 
 
+def _format_output(data: list[dict] | dict, fmt: str, headers: list[str] | None = None) -> str:
+    """Format data as JSON or TSV. *data* is a list of dicts (rows) or a single dict."""
+    if fmt == "json":
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+    if fmt == "tsv":
+        if isinstance(data, dict):
+            data = [data]
+        if not data:
+            return ""
+        keys = headers or list(data[0].keys())
+        lines = ["\t".join(keys)]
+        for row in data:
+            lines.append("\t".join(str(row.get(k, "")) for k in keys))
+        return "\n".join(lines)
+    return ""  # "text" is handled by the command itself
+
+
 def _confirm(message: str, *, yes: bool = False) -> bool:
     """Prompt user for confirmation. Returns True if confirmed or --yes was passed."""
     if yes:
@@ -691,13 +708,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     catalog = _get_catalog(args)
+    fmt = getattr(args, "output_format", "text")
     with catalog:
         if args.duplicates:
             groups = catalog.query_duplicates()
-            for group_id, files in groups:
-                for f in files:
-                    print(f"{group_id}\t{f.size}\t{f.path}")
-            print(f"\n# {len(groups)} duplicate groups")
+            if fmt != "text":
+                data = [{"group_id": gid, "size": f.size, "path": f.path} for gid, files in groups for f in files]
+                print(_format_output(data, fmt, ["group_id", "size", "path"]))
+            else:
+                for group_id, files in groups:
+                    for f in files:
+                        print(f"{group_id}\t{f.size}\t{f.path}")
+                print(f"\n# {len(groups)} duplicate groups")
             return 0
 
         rows = catalog.query_files(
@@ -714,22 +736,35 @@ def cmd_query(args: argparse.Namespace) -> int:
             has_gps=False if args.no_gps else None,
             limit=args.limit,
         )
-        for f in rows:
-            extra = ""
-            if f.camera_model:
-                extra += f"\t{f.camera_model}"
-            if f.duration_seconds:
-                extra += f"\t{f.duration_seconds:.1f}s"
-            print(f"{f.path}\t{f.size}\t{f.ext}\t{f.sha256 or ''}{extra}")
-        print(f"\n# {len(rows)} files")
+        if fmt != "text":
+            data = [
+                {"path": f.path, "size": f.size, "ext": f.ext, "sha256": f.sha256 or "",
+                 "camera": f.camera_model or "", "duration": f.duration_seconds or ""}
+                for f in rows
+            ]
+            print(_format_output(data, fmt, ["path", "size", "ext", "sha256", "camera", "duration"]))
+        else:
+            for f in rows:
+                extra = ""
+                if f.camera_model:
+                    extra += f"\t{f.camera_model}"
+                if f.duration_seconds:
+                    extra += f"\t{f.duration_seconds:.1f}s"
+                print(f"{f.path}\t{f.size}\t{f.ext}\t{f.sha256 or ''}{extra}")
+            print(f"\n# {len(rows)} files")
     return 0
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
     catalog = _get_catalog(args)
+    fmt = getattr(args, "output_format", "text")
     with catalog:
         s = catalog.stats()
-    print(json.dumps(s, indent=2, ensure_ascii=False))
+    if fmt == "tsv":
+        print(_format_output(s, "tsv"))
+    else:
+        # Both text and json use JSON for stats (it's the natural format)
+        print(json.dumps(s, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -954,6 +989,7 @@ def cmd_metadata_write(args: argparse.Namespace) -> int:
 
 def cmd_similar(args: argparse.Namespace) -> int:
     catalog = _get_catalog(args)
+    fmt = getattr(args, "output_format", "text")
     out_path = Path(args.out).expanduser().resolve() if args.out else None
     with catalog:
         hashes = catalog.get_all_phashes()
@@ -961,8 +997,13 @@ def cmd_similar(args: argparse.Namespace) -> int:
             print("No perceptual hashes in catalog. Run 'gml scan' first.")
             return 0
         pairs = find_similar(hashes, threshold=args.threshold)
-        for pair in pairs:
-            print(f"dist={pair.distance}\t{pair.path_a}\t{pair.path_b}")
+        if fmt != "text":
+            data = [{"distance": p.distance, "path_a": p.path_a, "path_b": p.path_b, "hash_a": p.hash_a, "hash_b": p.hash_b} for p in pairs]
+            print(_format_output(data, fmt, ["distance", "path_a", "path_b", "hash_a", "hash_b"]))
+        else:
+            for pair in pairs:
+                print(f"dist={pair.distance}\t{pair.path_a}\t{pair.path_b}")
+            print(f"\n# {len(pairs)} similar pairs (threshold={args.threshold})")
         if out_path:
             ensure_dir(out_path.parent)
             write_tsv(
@@ -971,7 +1012,6 @@ def cmd_similar(args: argparse.Namespace) -> int:
                 [(p.distance, p.path_a, p.path_b, p.hash_a, p.hash_b) for p in pairs],
             )
             print(f"out={out_path}")
-        print(f"\n# {len(pairs)} similar pairs (threshold={args.threshold})")
     return 0
 
 
@@ -1000,31 +1040,43 @@ def cmd_delete_apply(args: argparse.Namespace) -> int:
 
 def cmd_verify(args: argparse.Namespace) -> int:
     catalog = _get_catalog(args)
+    fmt = getattr(args, "output_format", "text")
     with catalog:
         result = verify_catalog(
             catalog,
             check_hashes=args.check_hashes,
             limit=args.limit,
         )
-    print(f"total_checked={result.total_checked}")
-    print(f"ok={result.ok}")
-    print(f"missing={len(result.missing_files)}")
-    print(f"size_mismatches={len(result.size_mismatches)}")
-    print(f"hash_mismatches={len(result.hash_mismatches)}")
-    if result.missing_files:
-        print("\n# Missing files:")
-        for p in result.missing_files[:20]:
-            print(f"  {p}")
-        if len(result.missing_files) > 20:
-            print(f"  ... and {len(result.missing_files) - 20} more")
-    if result.size_mismatches:
-        print("\n# Size mismatches:")
-        for p, cat_sz, act_sz in result.size_mismatches[:20]:
-            print(f"  {p}: catalog={cat_sz} actual={act_sz}")
-    if result.hash_mismatches:
-        print("\n# Hash mismatches:")
-        for p, cat_h, act_h in result.hash_mismatches[:20]:
-            print(f"  {p}: catalog={cat_h[:16]}... actual={act_h[:16]}...")
+    if fmt != "text":
+        data = {
+            "total_checked": result.total_checked,
+            "ok": result.ok,
+            "missing": result.missing_files,
+            "size_mismatches": [{"path": p, "catalog_size": cs, "actual_size": asz} for p, cs, asz in result.size_mismatches],
+            "hash_mismatches": [{"path": p, "catalog_hash": ch, "actual_hash": ah} for p, ch, ah in result.hash_mismatches],
+            "has_issues": result.has_issues,
+        }
+        print(_format_output(data, fmt) if fmt == "json" else _format_output([data], fmt))
+    else:
+        print(f"total_checked={result.total_checked}")
+        print(f"ok={result.ok}")
+        print(f"missing={len(result.missing_files)}")
+        print(f"size_mismatches={len(result.size_mismatches)}")
+        print(f"hash_mismatches={len(result.hash_mismatches)}")
+        if result.missing_files:
+            print("\n# Missing files:")
+            for p in result.missing_files[:20]:
+                print(f"  {p}")
+            if len(result.missing_files) > 20:
+                print(f"  ... and {len(result.missing_files) - 20} more")
+        if result.size_mismatches:
+            print("\n# Size mismatches:")
+            for p, cat_sz, act_sz in result.size_mismatches[:20]:
+                print(f"  {p}: catalog={cat_sz} actual={act_sz}")
+        if result.hash_mismatches:
+            print("\n# Hash mismatches:")
+            for p, cat_h, act_h in result.hash_mismatches[:20]:
+                print(f"  {p}: catalog={cat_h[:16]}... actual={act_h[:16]}...")
     return 1 if result.has_issues else 0
 
 
@@ -1149,6 +1201,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--logfile-max-mb", type=int, default=10, help="Max log file size in MB before rotation (default 10)")
     parser.add_argument("--logfile-backups", type=int, default=3, help="Number of rotated log backup files (default 3)")
     parser.add_argument("--lang", choices=["en", "cs"], default=None, help="Language (en/cs)")
+    parser.add_argument(
+        "--output-format", choices=["text", "json", "tsv"],
+        default="text", dest="output_format", help="Output format (default: text)",
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 

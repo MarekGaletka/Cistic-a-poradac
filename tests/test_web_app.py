@@ -196,7 +196,8 @@ class TestContentDisposition:
         cat = Catalog(db_path)
         cat.open()
         try:
-            token = cat.create_share(str(test_file), label="test")
+            share = cat.create_share(str(test_file), label="test")
+            token = share["token"]
         finally:
             cat.close()
 

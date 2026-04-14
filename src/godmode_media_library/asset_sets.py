@@ -4,7 +4,10 @@ from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
-IMAGE_EXTS = {"heic", "jpg", "jpeg", "png", "tif", "tiff", "dng", "cr2", "cr3", "nef", "arw", "raw"}
+IMAGE_EXTS = {"heic", "heif", "jpg", "jpeg", "png", "tif", "tiff", "bmp", "gif", "webp", "dng", "cr2", "cr3", "nef", "arw", "raw"}
+# Subset of IMAGE_EXTS that Pillow can decode natively (or via pillow-heif).
+# RAW camera formats (dng, cr2, cr3, nef, arw, raw) need a third-party raw processor.
+PILLOW_IMAGE_EXTS = {"jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif"}
 VIDEO_EXTS = {"mov", "mp4", "m4v", "avi", "mkv"}
 SIDECAR_EXTS = {"aae", "xmp", "lrv", "thm", "srt", "json"}
 ASSET_EXTS = IMAGE_EXTS | VIDEO_EXTS | SIDECAR_EXTS

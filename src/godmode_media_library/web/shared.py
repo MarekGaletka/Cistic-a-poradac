@@ -219,6 +219,9 @@ def _sanitize_path(path_str: str, *, param_name: str = "path") -> str:
     basename = stripped.rsplit("/", 1)[-1] if "/" in stripped else stripped
     if basename in (".", ".."):
         raise HTTPException(status_code=400, detail=f"Invalid {param_name}: relative-only path not allowed")
+    # Reject path traversal components anywhere in the path
+    if "/.." in stripped or stripped.startswith(".."):
+        raise HTTPException(status_code=400, detail=f"Invalid {param_name}: path traversal not allowed")
     return stripped
 
 

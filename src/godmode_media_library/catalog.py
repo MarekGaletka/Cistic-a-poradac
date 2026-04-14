@@ -314,8 +314,12 @@ class Catalog:
 
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except ImportError:
-                # fcntl not available on Windows — skip file locking
-                pass
+                try:
+                    import msvcrt
+
+                    msvcrt.locking(self._lock_fd, msvcrt.LK_NBLCK, 1)
+                except ImportError:
+                    pass  # Neither fcntl nor msvcrt available
             except OSError:
                 os.close(self._lock_fd)
                 self._lock_fd = None
@@ -668,7 +672,12 @@ class Catalog:
 
                 fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
             except ImportError:
-                pass  # fcntl not available on Windows
+                try:
+                    import msvcrt
+
+                    msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
+                except ImportError:
+                    pass  # Neither fcntl nor msvcrt available
             os.close(self._lock_fd)
             self._lock_fd = None
 
