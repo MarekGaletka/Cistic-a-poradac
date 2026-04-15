@@ -62,6 +62,7 @@ class MediaMeta:
     audio_channels: int | None = None
     audio_sample_rate: int | None = None
     frame_rate: float | None = None
+    creation_time: str | None = None  # ISO format from QuickTime/MP4 metadata
 
 
 def probe_file(path: Path, *, ffprobe_bin: str | None = None, timeout: float = 120.0) -> MediaMeta | None:
@@ -121,6 +122,19 @@ def _parse_ffprobe(data: dict) -> MediaMeta:
     if "bit_rate" in fmt:
         with contextlib.suppress(ValueError, TypeError):
             meta.bitrate = int(fmt["bit_rate"])
+
+    # Extract creation_time from format tags (QuickTime/MP4 metadata)
+    tags = fmt.get("tags", {})
+    ct = tags.get("creation_time") or tags.get("com.apple.quicktime.creationdate")
+    if not ct:
+        # Also check stream-level tags
+        for stream in data.get("streams", []):
+            st = stream.get("tags", {})
+            ct = st.get("creation_time") or st.get("com.apple.quicktime.creationdate")
+            if ct:
+                break
+    if ct:
+        meta.creation_time = ct
 
     streams = data.get("streams", [])
     for stream in streams:

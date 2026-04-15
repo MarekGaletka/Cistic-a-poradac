@@ -201,26 +201,49 @@ async def _download_file(afc_path: str, dest: Path) -> bool:
 
 
 def _determine_dest_path(config: IPhoneImportConfig, exif: ExifMeta | None,
-                         filename: str) -> str:
-    """Calculate destination path based on EXIF date or filename."""
+                         filename: str, probe: "MediaMeta | None" = None) -> str:
+    """Calculate destination path based on EXIF date, QuickTime creation_time, or filename.
+
+    Priority (oldest wins): EXIF DateTimeOriginal > QuickTime creation_time > filename date.
+    """
     import re
     from datetime import datetime
 
-    date = None
+    candidates: list[datetime] = []
+
+    # 1. EXIF DateTimeOriginal
     if exif and exif.date_original:
         try:
-            date = datetime.strptime(exif.date_original, "%Y:%m:%d %H:%M:%S")
+            candidates.append(datetime.strptime(exif.date_original, "%Y:%m:%d %H:%M:%S"))
         except (ValueError, TypeError):
             pass
 
-    if date is None:
-        # Try parsing from filename: IMG_20210315_...
-        m = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
-        if m:
+    # 2. QuickTime/MP4 creation_time from ffprobe
+    if probe and getattr(probe, "creation_time", None):
+        ct = probe.creation_time
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
+                    "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
             try:
-                date = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            except ValueError:
-                pass
+                dt = datetime.strptime(ct, fmt)
+                # Skip zero dates (some encoders write 1904-01-01)
+                if dt.year >= 1990:
+                    candidates.append(dt.replace(tzinfo=None))
+                break
+            except (ValueError, TypeError):
+                continue
+
+    # 3. Date from filename: IMG_20210315_... or 20210315_...
+    m = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
+    if m:
+        try:
+            dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            if 1990 <= dt.year <= 2100:
+                candidates.append(dt)
+        except ValueError:
+            pass
+
+    # Pick the oldest valid date
+    date = min(candidates) if candidates else None
 
     if config.structure_pattern == "flat":
         return f"{config.dest_path}/{filename}"
@@ -231,6 +254,154 @@ def _determine_dest_path(config: IPhoneImportConfig, exif: ExifMeta | None,
     if date:
         return f"{config.dest_path}/{date.year}/{date.year}-{date.month:02d}/{filename}"
     return f"{config.dest_path}/Unsorted/{filename}"
+
+
+def reorganize_unsorted(
+    catalog_path: str,
+    dest_remote: str = "gws-backup",
+    dest_path: str = "GML-Consolidated",
+    progress_fn: Callable[[dict], None] | None = None,
+) -> dict:
+    """Re-date and move Unsorted files to year/month folders using ffprobe metadata.
+
+    Downloads first 2 MB of each MOV/MP4 to extract QuickTime creation_time,
+    then uses rclone server-side moveto to reorganize without re-uploading.
+    """
+    import subprocess
+    import tempfile
+    from datetime import datetime
+
+    cat = Catalog(catalog_path)
+    cat.open()
+    try:
+        conn = cat.conn
+        conn.row_factory = __import__("sqlite3").Row
+        rows = conn.execute(
+            "SELECT id, path, ext, date_original FROM files WHERE path LIKE ? AND date_original IS NULL",
+            (f"{dest_remote}:{dest_path}/Unsorted/%",),
+        ).fetchall()
+
+        moved = 0
+        skipped = 0
+        failed = 0
+        total = len(rows)
+        logger.info("Reorganize: %d files in Unsorted without date", total)
+
+        for i, row in enumerate(rows):
+            full_path = row["path"]  # e.g. gws-backup:GML-Consolidated/Unsorted/IMG_8456.MOV
+            filename = full_path.rsplit("/", 1)[-1]
+            ext = (row["ext"] or "").lower()
+
+            if progress_fn and i % 5 == 0:
+                progress_fn({"phase": "reorganizing", "current": i, "total": total,
+                             "moved": moved, "skipped": skipped, "failed": failed,
+                             "current_file": filename})
+
+            # Only probe video files — images should already have EXIF
+            if ext not in ("mov", "mp4", "m4v", "3gp"):
+                # For AAE/other, try to match date from a sibling file with same IMG number
+                import re
+                m = re.match(r"(IMG_\d+)\.", filename)
+                if m:
+                    prefix = m.group(1)
+                    sibling = conn.execute(
+                        "SELECT date_original FROM files WHERE path LIKE ? AND date_original IS NOT NULL LIMIT 1",
+                        (f"%/{prefix}.%",),
+                    ).fetchone()
+                    if sibling and sibling["date_original"]:
+                        date_str = sibling["date_original"]
+                        try:
+                            dt = datetime.strptime(date_str[:19], "%Y:%m:%d %H:%M:%S") if ":" == date_str[4:5] else datetime.strptime(date_str[:19], "%Y-%m-%dT%H:%M:%S")
+                        except (ValueError, TypeError):
+                            skipped += 1
+                            continue
+                        new_folder = f"{dest_path}/{dt.year}/{dt.year}-{dt.month:02d}"
+                        new_path = f"{dest_remote}:{new_folder}/{filename}"
+                        try:
+                            subprocess.run(
+                                ["rclone", "moveto", full_path, new_path, "--server-side-across-configs"],
+                                capture_output=True, timeout=30, check=True,
+                            )
+                            conn.execute("UPDATE files SET path = ?, date_original = ? WHERE id = ?",
+                                         (new_path, date_str, row["id"]))
+                            conn.commit()
+                            moved += 1
+                        except Exception as e:
+                            logger.warning("Failed to move %s: %s", filename, e)
+                            failed += 1
+                        continue
+                skipped += 1
+                continue
+
+            # Download first 2 MB to get QuickTime header
+            creation_time = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=True) as tmp:
+                    tmp_path = tmp.name
+                subprocess.run(
+                    ["rclone", "cat", full_path, f"--count=2M"],
+                    stdout=open(tmp_path, "wb"), stderr=subprocess.DEVNULL,
+                    timeout=30, check=True,
+                )
+                result = subprocess.run(
+                    ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", tmp_path],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if result.returncode == 0:
+                    import json
+                    data = json.loads(result.stdout)
+                    tags = data.get("format", {}).get("tags", {})
+                    creation_time = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")
+                os.unlink(tmp_path)
+            except Exception as e:
+                logger.warning("Failed to probe %s: %s", filename, e)
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+            if not creation_time:
+                skipped += 1
+                continue
+
+            # Parse creation_time
+            dt = None
+            for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
+                        "%Y-%m-%d %H:%M:%S"):
+                try:
+                    dt = datetime.strptime(creation_time, fmt).replace(tzinfo=None)
+                    break
+                except (ValueError, TypeError):
+                    continue
+
+            if not dt or dt.year < 1990:
+                skipped += 1
+                continue
+
+            # Server-side move to correct year/month folder
+            new_folder = f"{dest_path}/{dt.year}/{dt.year}-{dt.month:02d}"
+            new_path = f"{dest_remote}:{new_folder}/{filename}"
+            date_original_str = dt.strftime("%Y:%m:%d %H:%M:%S")
+
+            try:
+                subprocess.run(
+                    ["rclone", "moveto", full_path, new_path, "--server-side-across-configs"],
+                    capture_output=True, timeout=60, check=True,
+                )
+                conn.execute("UPDATE files SET path = ?, date_original = ? WHERE id = ?",
+                             (new_path, date_original_str, row["id"]))
+                conn.commit()
+                moved += 1
+                logger.info("Moved %s → %s (%s)", filename, new_folder, date_original_str)
+            except Exception as e:
+                logger.warning("Failed to move %s: %s", filename, e)
+                failed += 1
+
+        result = {"moved": moved, "skipped": skipped, "failed": failed, "total": total}
+        logger.info("Reorganize done: %s", result)
+        return result
+    finally:
+        cat.close()
 
 
 def _fmt_bytes(b: int) -> str:
@@ -389,7 +560,9 @@ def run_import(
                     audio_codec=probe.audio_codec if probe else None,
                     bitrate=probe.bitrate if probe else None,
                     phash=str(phash) if phash else None,
-                    date_original=exif.date_original if exif else None,
+                    date_original=exif.date_original if exif and exif.date_original else (
+                        probe.creation_time if probe and getattr(probe, "creation_time", None) else None
+                    ),
                     camera_make=exif.camera_make if exif else None,
                     camera_model=exif.camera_model if exif else None,
                     gps_latitude=exif.gps_latitude if exif else None,
@@ -547,7 +720,7 @@ def run_import(
                         pass
 
                     # Destination path
-                    dest_path = _determine_dest_path(config, exif, ifile.filename)
+                    dest_path = _determine_dest_path(config, exif, ifile.filename, probe)
 
                 except Exception as e:
                     logger.warning("Prepare failed %s: %s", ifile.filename, e)

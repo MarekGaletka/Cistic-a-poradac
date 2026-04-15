@@ -173,3 +173,27 @@ async def iphone_progress():
     """Get real-time import progress."""
     from ...iphone_import import get_progress
     return get_progress()
+
+
+@router.post("/iphone/reorganize")
+async def iphone_reorganize(request: Request, bg: BackgroundTasks):
+    """Move Unsorted files to year/month folders using QuickTime creation_time."""
+    from ...iphone_import import reorganize_unsorted
+
+    catalog_path = str(request.app.state.catalog_path)
+    task = _create_task("iphone_reorganize: Unsorted → year/month")
+
+    def _run():
+        try:
+            def _on_progress(prog):
+                _update_progress(task.id, prog)
+                _notify_ws(task.id, {"type": "iphone_reorganize", **prog})
+
+            result = reorganize_unsorted(catalog_path, progress_fn=_on_progress)
+            _finish_task(task.id, result)
+        except Exception as e:
+            logger.exception("iPhone reorganize failed")
+            _finish_task(task.id, {"error": str(e)}, error=str(e))
+
+    bg.add_task(_run)
+    return {"task_id": task.id, "status": "started"}
