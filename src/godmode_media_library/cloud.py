@@ -1511,69 +1511,67 @@ def rclone_copyto(
     if checksum:
         cmd.append("--checksum")
 
-    # Use Popen with stuck-process watchdog: if the process has no TCP
-    # connections for STALL_CHECKS consecutive checks, kill it.
-    STALL_CHECK_INTERVAL = 60  # seconds between TCP checks
-    STALL_CHECKS_BEFORE_KILL = 3  # consecutive zero-TCP checks → kill
+    # Stuck-process watchdog: every STALL_CHECK_INTERVAL seconds, verify the
+    # rclone process still has TCP connections.  After STALL_CHECKS_BEFORE_KILL
+    # consecutive checks with zero TCP, kill it.
+    STALL_CHECK_INTERVAL = 60   # seconds between checks
+    STALL_CHECKS_BEFORE_KILL = 5  # consecutive zero-TCP checks → kill (5 min)
+    MAX_UPLOAD_TIME = min(effective_timeout, 1800)  # hard cap: 30 min per file
 
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         no_tcp_count = 0
-        deadline = start + effective_timeout
 
-        while True:
+        # Poll loop — check every STALL_CHECK_INTERVAL seconds
+        while proc.poll() is None:
+            elapsed = time.monotonic() - start
+            if elapsed >= MAX_UPLOAD_TIME:
+                proc.kill()
+                proc.wait()
+                logger.warning("rclone PID %d killed: exceeded %ds max upload time", proc.pid, MAX_UPLOAD_TIME)
+                fail = {"success": False, "bytes": 0, "elapsed": elapsed,
+                        "error": f"Exceeded max upload time {MAX_UPLOAD_TIME}s"}
+                if raise_on_failure:
+                    raise RcloneTransferError(fail) from None
+                return fail
+
             try:
-                stdout, stderr = proc.communicate(timeout=STALL_CHECK_INTERVAL)
-                # Process completed normally
-                elapsed = time.monotonic() - start
-                break
+                proc.wait(timeout=STALL_CHECK_INTERVAL)
+                break  # Process finished
             except subprocess.TimeoutExpired:
-                # Process still running — check for stall
-                elapsed = time.monotonic() - start
-                if elapsed >= effective_timeout:
+                pass  # Still running, check liveness
+
+            # Check TCP connections as liveness signal
+            try:
+                lsof_result = subprocess.run(
+                    ["lsof", "-p", str(proc.pid)],
+                    capture_output=True, text=True, timeout=5,
+                )
+                tcp_count = lsof_result.stdout.lower().count("tcp")
+            except Exception:
+                tcp_count = 1  # Assume OK if we can't check
+
+            if tcp_count == 0:
+                no_tcp_count += 1
+                logger.debug("rclone PID %d: no TCP (%d/%d), elapsed %.0fs",
+                             proc.pid, no_tcp_count, STALL_CHECKS_BEFORE_KILL, elapsed)
+                if no_tcp_count >= STALL_CHECKS_BEFORE_KILL:
                     proc.kill()
-                    proc.communicate()
-                    logger.warning("rclone copyto timed out after %.1fs: %s:%s -> %s:%s",
-                                   elapsed, src_remote, src_path, dst_remote, dst_path)
+                    proc.wait()
+                    logger.warning("rclone PID %d killed: stuck (no TCP for %ds)",
+                                   proc.pid, no_tcp_count * STALL_CHECK_INTERVAL)
                     fail = {"success": False, "bytes": 0, "elapsed": elapsed,
-                            "error": f"Timed out after {effective_timeout}s (file_size={file_size})"}
+                            "error": f"Stuck: no TCP for {no_tcp_count * STALL_CHECK_INTERVAL}s"}
                     if raise_on_failure:
                         raise RcloneTransferError(fail) from None
                     return fail
+            else:
+                no_tcp_count = 0
 
-                # Check TCP connections as liveness signal
-                try:
-                    import psutil
-                    p = psutil.Process(proc.pid)
-                    tcp_count = sum(1 for c in p.net_connections() if c.status == "ESTABLISHED")
-                except Exception:
-                    # psutil not available — fall back to lsof
-                    try:
-                        lsof = subprocess.run(
-                            ["lsof", "-p", str(proc.pid)],
-                            capture_output=True, text=True, timeout=5,
-                        )
-                        tcp_count = lsof.stdout.lower().count("tcp")
-                    except Exception:
-                        tcp_count = 1  # Assume OK if we can't check
-
-                if tcp_count == 0:
-                    no_tcp_count += 1
-                    logger.debug("rclone PID %d: no TCP (%d/%d), elapsed %.0fs",
-                                 proc.pid, no_tcp_count, STALL_CHECKS_BEFORE_KILL, elapsed)
-                    if no_tcp_count >= STALL_CHECKS_BEFORE_KILL:
-                        proc.kill()
-                        proc.communicate()
-                        logger.warning("rclone PID %d killed: stuck (no TCP for %ds)",
-                                       proc.pid, no_tcp_count * STALL_CHECK_INTERVAL)
-                        fail = {"success": False, "bytes": 0, "elapsed": elapsed,
-                                "error": f"Stuck: no TCP connections for {no_tcp_count * STALL_CHECK_INTERVAL}s"}
-                        if raise_on_failure:
-                            raise RcloneTransferError(fail) from None
-                        return fail
-                else:
-                    no_tcp_count = 0  # Reset — process is alive
-                continue
+        # Process finished — read output
+        elapsed = time.monotonic() - start
+        stdout_bytes, stderr_bytes = proc.stdout.read(), proc.stderr.read()
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
 
         if proc.returncode != 0:
             error_msg = stderr.strip().splitlines()[-1] if stderr.strip() else "copyto failed"
@@ -1585,7 +1583,7 @@ def rclone_copyto(
         # Parse bytes transferred from stderr stats line.
         bytes_transferred = 0
         size_multipliers = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
-        for line in (stderr or "").splitlines():
+        for line in stderr.splitlines():
             m = re.search(r"Transferred:\s+([\d.]+)\s*(\w+)", line)
             if m:
                 unit = m.group(2).lower()
