@@ -33,7 +33,7 @@ TEMP_PREFIX = "gml-iphone-"
 MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB minimum free space
 
 
-MAX_UPLOAD_WORKERS = 4  # concurrent rclone uploads
+MAX_UPLOAD_WORKERS = 1  # overnight: single upload to avoid Google throttling
 MAX_PREFETCH = 6  # max files downloaded ahead of uploads
 PHASH_SIZE_LIMIT = 500 * 1024 * 1024  # skip perceptual hash for files > 500 MB
 

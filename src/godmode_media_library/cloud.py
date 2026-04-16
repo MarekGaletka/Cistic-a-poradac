@@ -1515,8 +1515,8 @@ def rclone_copyto(
     # rclone process still has TCP connections.  After STALL_CHECKS_BEFORE_KILL
     # consecutive checks with zero TCP, kill it.
     STALL_CHECK_INTERVAL = 60   # seconds between checks
-    STALL_CHECKS_BEFORE_KILL = 5  # consecutive zero-TCP checks → kill (5 min)
-    MAX_UPLOAD_TIME = min(effective_timeout, 1800)  # hard cap: 30 min per file
+    STALL_CHECKS_BEFORE_KILL = 10  # consecutive zero-TCP checks → kill (10 min)
+    MAX_UPLOAD_TIME = min(effective_timeout, 7200)  # overnight: 2h per file
 
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
