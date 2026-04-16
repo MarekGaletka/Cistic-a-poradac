@@ -333,32 +333,58 @@ def reorganize_unsorted(
                 skipped += 1
                 continue
 
-            # Download first 2 MB to get QuickTime header
+            # Download full file for ffprobe — partial reads (first/last 2MB)
+            # rarely work because QuickTime moov atom can be anywhere.
+            # Timeout scales with file size: 120s base + 1s per MB.
             creation_time = None
+            tmp_path = None
             try:
-                with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=True) as tmp:
+                with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
                     tmp_path = tmp.name
+
+                # Get file size for timeout calculation
+                size_result = subprocess.run(
+                    ["rclone", "size", full_path, "--json"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                file_size_mb = 100  # default
+                if size_result.returncode == 0:
+                    import json as _json
+                    try:
+                        file_size_mb = _json.loads(size_result.stdout).get("bytes", 0) / 1e6
+                    except Exception:
+                        pass
+                dl_timeout = max(120, int(file_size_mb) + 120)
+
                 subprocess.run(
-                    ["rclone", "cat", full_path, f"--count=2M"],
-                    stdout=open(tmp_path, "wb"), stderr=subprocess.DEVNULL,
-                    timeout=30, check=True,
+                    ["rclone", "copyto", full_path, tmp_path],
+                    capture_output=True, timeout=dl_timeout, check=True,
                 )
                 result = subprocess.run(
-                    ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", tmp_path],
-                    capture_output=True, text=True, timeout=15,
+                    ["ffprobe", "-v", "quiet", "-print_format", "json",
+                     "-show_format", "-show_streams", tmp_path],
+                    capture_output=True, text=True, timeout=30,
                 )
                 if result.returncode == 0:
                     import json
                     data = json.loads(result.stdout)
                     tags = data.get("format", {}).get("tags", {})
                     creation_time = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")
+                    if not creation_time:
+                        for stream in data.get("streams", []):
+                            st = stream.get("tags", {})
+                            creation_time = st.get("com.apple.quicktime.creationdate") or st.get("creation_time")
+                            if creation_time:
+                                break
+
                 os.unlink(tmp_path)
             except Exception as e:
                 logger.warning("Failed to probe %s: %s", filename, e)
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
 
             if not creation_time:
                 skipped += 1
