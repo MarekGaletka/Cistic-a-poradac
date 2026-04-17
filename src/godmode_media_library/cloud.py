@@ -1717,6 +1717,156 @@ def rclone_hashsum(remote: str, path: str, hash_type: str = "sha256") -> str | N
         return None
 
 
+def rclone_lsjson_hashes(
+    remote: str,
+    path: str = "",
+    recursive: bool = True,
+) -> list[dict]:
+    """List remote files with hashes (MD5, SHA-256) without downloading.
+
+    Returns list of dicts: [{name, path, size, md5, sha256}, ...]
+    Google Drive provides MD5+SHA-1+SHA-256 natively.
+    """
+    if not check_rclone():
+        return []
+
+    cmd = [
+        _rclone_bin(), "lsjson",
+        f"{remote}:{path}",
+        "--hash",
+        "--no-modtime",
+        "--no-mimetype",
+        "--fast-list",
+    ]
+    if recursive:
+        cmd.append("-R")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            logger.warning("rclone lsjson --hash failed: %s", result.stderr.strip()[:200])
+            return []
+
+        entries = json.loads(result.stdout)
+        out = []
+        for entry in entries:
+            if entry.get("IsDir"):
+                continue
+            hashes = entry.get("Hashes", {})
+            out.append({
+                "name": entry["Name"],
+                "path": entry["Path"],
+                "size": entry["Size"],
+                "md5": hashes.get("md5"),
+                "sha256": hashes.get("sha256"),
+            })
+        return out
+
+    except subprocess.TimeoutExpired:
+        logger.warning("rclone lsjson --hash timed out for %s:%s", remote, path)
+        return []
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("rclone lsjson --hash error: %s", exc)
+        return []
+
+
+def enrich_catalog_hashes(
+    catalog_path: str,
+    remote: str = "gws-backup",
+    path: str = "GML-Consolidated",
+    progress_fn: Callable[[dict], None] | None = None,
+) -> dict:
+    """Enrich catalog with MD5+SHA-256 hashes from remote storage.
+
+    For each file on the remote, updates the catalog entry with hashes
+    obtained via rclone lsjson --hash (no download required).
+    Returns: {total, updated_sha256, updated_md5, not_in_catalog, errors}
+    """
+    from .catalog import Catalog
+
+    logger.info("Starting catalog hash enrichment for %s:%s", remote, path)
+
+    # Get hashes from remote
+    if progress_fn:
+        progress_fn({"phase": "listing", "message": "Fetching hashes from remote..."})
+
+    entries = rclone_lsjson_hashes(remote, path, recursive=True)
+    if not entries:
+        return {"total": 0, "error": "Failed to list remote files"}
+
+    logger.info("Got hashes for %d remote files", len(entries))
+
+    cat = Catalog(catalog_path)
+    cat.open()
+    try:
+        conn = cat.conn
+        updated_sha256 = 0
+        updated_md5 = 0
+        inserted = 0
+        skipped = 0
+
+        for i, entry in enumerate(entries):
+            full_path = f"{remote}:{path}/{entry['path']}"
+            sha = entry.get("sha256")
+            md5 = entry.get("md5")
+
+            if progress_fn and i % 500 == 0:
+                progress_fn({
+                    "phase": "enriching",
+                    "current": i,
+                    "total": len(entries),
+                    "updated_sha256": updated_sha256,
+                    "updated_md5": updated_md5,
+                    "inserted": inserted,
+                })
+
+            # Try to update existing entry
+            row = conn.execute("SELECT id, sha256, md5 FROM files WHERE path = ?", (full_path,)).fetchone()
+            if row:
+                file_id, existing_sha, existing_md5 = row
+                updates = []
+                params = []
+                if sha and not existing_sha:
+                    updates.append("sha256 = ?")
+                    params.append(sha)
+                    updated_sha256 += 1
+                if md5 and not existing_md5:
+                    updates.append("md5 = ?")
+                    params.append(md5)
+                    updated_md5 += 1
+                if updates:
+                    params.append(file_id)
+                    conn.execute(f"UPDATE files SET {', '.join(updates)} WHERE id = ?", params)  # noqa: S608
+                else:
+                    skipped += 1
+            else:
+                # File not in catalog — insert basic entry
+                from .utils import utc_stamp
+                now = utc_stamp()
+                ext = os.path.splitext(entry["name"])[1].lower()
+                conn.execute(
+                    "INSERT OR IGNORE INTO files (path, size, mtime, ctime, ext, sha256, md5, first_seen, last_scanned, source_remote) "
+                    "VALUES (?, ?, 0, 0, ?, ?, ?, ?, ?, ?)",
+                    (full_path, entry["size"], ext, sha, md5, now, now, remote),
+                )
+                inserted += 1
+
+        conn.commit()
+        result = {
+            "total": len(entries),
+            "updated_sha256": updated_sha256,
+            "updated_md5": updated_md5,
+            "inserted": inserted,
+            "skipped": skipped,
+        }
+        logger.info("Catalog enrichment done: %s", result)
+        if progress_fn:
+            progress_fn({"phase": "done", **result})
+        return result
+    finally:
+        cat.close()
+
+
 def rclone_verify_transfer(
     remote: str,
     path: str,

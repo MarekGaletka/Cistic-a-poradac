@@ -528,6 +528,27 @@ def consolidation_sync_disk(body: SyncDiskRequest, request: Request, background_
     }
 
 
+@router.post("/consolidation/enrich-hashes")
+async def consolidation_enrich_hashes(request: Request, bg: BackgroundTasks):
+    """Enrich catalog with MD5+SHA-256 hashes from GDrive (no download)."""
+    from ...cloud import enrich_catalog_hashes
+
+    cat = _open_catalog(request)
+    task = _create_task("enrich_hashes")
+
+    def _run():
+        try:
+            result = enrich_catalog_hashes(cat.db_path, progress_fn=lambda p: None)
+            task.status = "completed"
+            task.result = result
+        except Exception as exc:
+            task.status = "failed"
+            task.error = str(exc)
+
+    bg.add_task(_run)
+    return {"task_id": task.id, "status": "started"}
+
+
 @router.get("/consolidation/available-disks")
 def consolidation_available_disks():
     """List mounted external volumes for disk sync target selection."""

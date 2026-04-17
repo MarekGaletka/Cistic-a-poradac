@@ -13,7 +13,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS files (
     quality_blur REAL,
     quality_brightness REAL,
     quality_category TEXT,
-    source_remote TEXT
+    source_remote TEXT,
+    md5 TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_sha256    ON files(sha256);
@@ -66,6 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_files_richness  ON files(metadata_richness);
 CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
 CREATE INDEX IF NOT EXISTS idx_files_birthtime ON files(birthtime);
 CREATE INDEX IF NOT EXISTS idx_files_date_orig ON files(date_original);
+-- idx_files_md5 created by migration v13 (column may not exist on older schemas)
 
 CREATE TABLE IF NOT EXISTS file_metadata (
     file_id      INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
@@ -662,6 +664,19 @@ class Catalog:
             except sqlite3.Error:
                 logger.exception("Migration v12 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v12")
+                raise
+
+        if from_version < 13:
+            logger.info("Migrating catalog schema v%d -> v13: adding md5 column for GDrive hash enrichment", from_version)
+            self._conn.execute("SAVEPOINT migrate_v13")
+            try:
+                with contextlib.suppress(sqlite3.OperationalError):
+                    self._conn.execute("ALTER TABLE files ADD COLUMN md5 TEXT")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_files_md5 ON files(md5)")
+                self._conn.execute("RELEASE SAVEPOINT migrate_v13")
+            except sqlite3.Error:
+                logger.exception("Migration v13 failed")
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v13")
                 raise
 
     def _release_lock(self) -> None:
