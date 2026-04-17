@@ -898,12 +898,17 @@ function renderPhaseF(el, data, activeJob) {
 
       <div class="wiz-nav">
         <button class="wiz-btn-secondary" data-prev>\u2190 ${t("consolidation.phase_e")}</button>
-        <button id="btn-wiz-sync" class="wiz-btn-primary">\uD83D\uDD04 ${t("consolidation.sync_start")}</button>
+        <div class="wiz-btn-group">
+          <button id="btn-wiz-sync" class="wiz-btn-primary">\uD83D\uDD04 ${t("consolidation.sync_start")}</button>
+          <button id="btn-wiz-next-g" class="wiz-btn-secondary">\uD83D\uDEE0\uFE0F Operace \u2192</button>
+        </div>
       </div>
     </div>`;
 
   bindButton("#btn-wiz-sync", doSync);
   el.querySelector("[data-prev]")?.addEventListener("click", () => { _currentPhase = 4; renderStepIndicator(); reloadPhase(); });
+
+  bindButton("#btn-wiz-next-g", () => advancePhase(6));
 }
 
 // ---------------------------------------------------------------------------
