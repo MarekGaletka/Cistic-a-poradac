@@ -281,11 +281,44 @@ def reorganize_unsorted(
             (f"{dest_remote}:{dest_path}/Unsorted/%",),
         ).fetchall()
 
+        # Pre-validate: list actual files on remote to filter out stale catalog entries
+        actual_files: set[str] = set()
+        stale_ids: list[int] = []
+        try:
+            lsf_result = subprocess.run(
+                ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/", "--files-only"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if lsf_result.returncode == 0:
+                actual_files = {line.strip() for line in lsf_result.stdout.splitlines() if line.strip()}
+                logger.info("Reorganize: %d actual files in Unsorted/ on remote", len(actual_files))
+        except Exception as e:
+            logger.warning("Failed to list Unsorted/ on remote: %s — proceeding without filter", e)
+
+        if actual_files:
+            valid_rows = []
+            for row in rows:
+                filename = row["path"].rsplit("/", 1)[-1]
+                if filename in actual_files:
+                    valid_rows.append(row)
+                else:
+                    stale_ids.append(row["id"])
+            if stale_ids:
+                logger.info("Reorganize: %d stale catalog entries (files already moved), cleaning up", len(stale_ids))
+                # Update stale entries: remove Unsorted from path since file was already moved
+                # We don't delete them — they may have been moved by a previous run
+                for stale_id in stale_ids:
+                    conn.execute("DELETE FROM files WHERE id = ?", (stale_id,))
+                conn.commit()
+                logger.info("Reorganize: cleaned %d stale catalog entries", len(stale_ids))
+            rows = valid_rows
+
         moved = 0
         skipped = 0
         failed = 0
+        stale_cleaned = len(stale_ids)
         total = len(rows)
-        logger.info("Reorganize: %d files in Unsorted without date", total)
+        logger.info("Reorganize: %d valid files in Unsorted to process (cleaned %d stale)", total, stale_cleaned)
 
         for i, row in enumerate(rows):
             full_path = row["path"]  # e.g. gws-backup:GML-Consolidated/Unsorted/IMG_8456.MOV
@@ -379,12 +412,14 @@ def reorganize_unsorted(
 
                 os.unlink(tmp_path)
             except Exception as e:
-                logger.warning("Failed to probe %s: %s", filename, e)
+                logger.warning("Failed to download/probe %s: %s", filename, e)
                 if tmp_path:
                     try:
                         os.unlink(tmp_path)
                     except Exception:
                         pass
+                failed += 1
+                continue
 
             if not creation_time:
                 skipped += 1
@@ -423,7 +458,7 @@ def reorganize_unsorted(
                 logger.warning("Failed to move %s: %s", filename, e)
                 failed += 1
 
-        result = {"moved": moved, "skipped": skipped, "failed": failed, "total": total}
+        result = {"moved": moved, "skipped": skipped, "failed": failed, "total": total, "stale_cleaned": stale_cleaned}
         logger.info("Reorganize done: %s", result)
         return result
     finally:

@@ -1978,16 +1978,22 @@ def rclone_dedupe(
             if len(output_lines) > 200:
                 output_lines = output_lines[-100:]
 
-            if "Duplicate" in line and "files" in line:
+            line_lower = line.lower()
+            # rclone dedupe outputs ": Deleted" (case-insensitive) for each removed file
+            if ": deleted" in line_lower:
                 duplicates_removed += 1
-            if "Deleted:" in line:
-                m = re.search(r"Deleted:\s+(\d+)", line)
-                if m:
-                    duplicates_removed = max(duplicates_removed, int(m.group(1)))
-            if "Freed:" in line:
-                m = re.search(r"Freed:\s+(\d+)", line)
-                if m:
-                    bytes_freed = int(m.group(1))
+                # Try to extract size from lines like "... (123 Bytes)" or "... (1.2 MiB)"
+                size_m = re.search(r"\((\d+(?:\.\d+)?)\s*(Bytes?|[KMG]i?B)\)", line, re.IGNORECASE)
+                if size_m:
+                    val = float(size_m.group(1))
+                    unit = size_m.group(2).lower()
+                    multipliers = {"byte": 1, "bytes": 1, "kb": 1000, "kib": 1024,
+                                   "mb": 1_000_000, "mib": 1_048_576,
+                                   "gb": 1_000_000_000, "gib": 1_073_741_824}
+                    bytes_freed += int(val * multipliers.get(unit, 1))
+            # Also detect duplicate group headers for progress reporting
+            if "duplicate" in line_lower and "files" in line_lower:
+                pass  # group header, actual count comes from ": Deleted" lines
 
             if progress_fn:
                 progress_fn({"duplicates_removed": duplicates_removed, "bytes_freed": bytes_freed})
