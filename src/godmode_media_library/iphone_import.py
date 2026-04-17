@@ -33,7 +33,7 @@ TEMP_PREFIX = "gml-iphone-"
 MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB minimum free space
 
 
-MAX_UPLOAD_WORKERS = 1  # overnight: single upload to avoid Google throttling
+MAX_UPLOAD_WORKERS = 4  # concurrent uploads (reduced to 1 for overnight mode)
 MAX_PREFETCH = 6  # max files downloaded ahead of uploads
 PHASH_SIZE_LIMIT = 500 * 1024 * 1024  # skip perceptual hash for files > 500 MB
 
@@ -521,21 +521,33 @@ def run_import(
         _report(job_id=job.job_id)
 
         # 3. Get already completed files (for resume)
+        # Check ALL iPhone import jobs, not just current — avoids redundant re-transfers
         progress = ckpt.get_job_progress(cat, job.job_id, STEP_TRANSFER)
         completed_sources = set()
-        if progress.get("completed", 0) > 0:
-            cur = cat.conn.cursor()
-            cur.execute(
-                "SELECT source_location FROM consolidation_file_state WHERE job_id = ? AND step_name = ? AND status = 'completed'",
-                (job.job_id, STEP_TRANSFER),
-            )
-            completed_sources = {row[0] for row in cur.fetchall()}
+        cur = cat.conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT source_location FROM consolidation_file_state "
+            "WHERE step_name = ? AND status IN ('completed', 'skipped') "
+            "AND job_id IN (SELECT job_id FROM consolidation_jobs WHERE job_id = ? "
+            "  OR job_id IN (SELECT job_id FROM consolidation_file_state WHERE source_location LIKE '/DCIM/%' LIMIT 1))",
+            (STEP_TRANSFER, job.job_id),
+        )
+        completed_sources = {row[0] for row in cur.fetchall()}
+        # Simpler: just get all completed DCIM sources across any job
+        cur.execute(
+            "SELECT DISTINCT source_location FROM consolidation_file_state "
+            "WHERE step_name = ? AND status IN ('completed', 'skipped') "
+            "AND source_location LIKE '/DCIM/%'",
+            (STEP_TRANSFER,),
+        )
+        completed_sources = {row[0] for row in cur.fetchall()}
+        if completed_sources:
             _report(
                 completed_files=len(completed_sources),
                 skipped_files=len(completed_sources),
                 bytes_transferred=progress.get("total_bytes", 0),
             )
-            logger.info("Resuming: %d files already completed", len(completed_sources))
+            logger.info("Resuming: %d DCIM files already completed (all jobs)", len(completed_sources))
 
         # 4. Process files with parallel pipeline:
         #    - Download from iPhone + hash/EXIF/phash (sequential, fast ~31 MB/s)
