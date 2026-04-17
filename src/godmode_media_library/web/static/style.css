@@ -11288,6 +11288,64 @@ select.cons-input {
   50% { opacity: 0.4; box-shadow: 0 0 8px rgba(88, 166, 255, 0.6); }
 }
 
+/* ── Operations Coverage Stats ───────────────────────── */
+
+.ops-coverage-section {
+  margin-bottom: 16px;
+}
+
+.ops-coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.ops-coverage-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  text-align: center;
+}
+
+.ops-coverage-value {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.ops-coverage-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+.ops-coverage-bar {
+  height: 4px;
+  background: var(--surface-hover);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.ops-coverage-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.ops-coverage-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 4px;
+}
+
 /* Wizard responsive */
 @media (max-width: 768px) {
   .wizard-steps { padding-bottom: 16px; }

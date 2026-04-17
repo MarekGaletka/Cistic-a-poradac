@@ -929,11 +929,19 @@ async function renderPhaseG(el) {
   } catch (_) { /* ignore */ }
 
   // Fetch catalog stats for metadata coverage
-  let metaStats = { total: 0, with_date: 0, with_quality: 0 };
+  let statsInfo = null;
   try {
-    const stats = await api("/consolidation/catalog-stats");
-    metaStats.total = stats.total_files || 0;
+    const stats = await api("/stats");
+    statsInfo = stats;
   } catch (_) { /* ignore */ }
+
+  const coverageCards = statsInfo ? [
+    { label: "Soubor\u016F celkem", value: (statsInfo.total_files || 0).toLocaleString("cs-CZ"), pct: 100 },
+    { label: "S datem po\u0159\u00EDzen\u00ED", value: (statsInfo.date_original_count || 0).toLocaleString("cs-CZ"), pct: statsInfo.total_files > 0 ? Math.round(100 * (statsInfo.date_original_count || 0) / statsInfo.total_files) : 0 },
+    { label: "S SHA-256 hashem", value: (statsInfo.hashed_files || 0).toLocaleString("cs-CZ"), pct: statsInfo.total_files > 0 ? Math.round(100 * (statsInfo.hashed_files || 0) / statsInfo.total_files) : 0 },
+    { label: "S GPS sou\u0159adnicemi", value: (statsInfo.gps_files || 0).toLocaleString("cs-CZ"), pct: statsInfo.total_files > 0 ? Math.round(100 * (statsInfo.gps_files || 0) / statsInfo.total_files) : 0 },
+    { label: "Skupin duplik\u00E1t\u016F", value: (statsInfo.duplicate_groups || 0).toLocaleString("cs-CZ"), pct: null },
+  ] : [];
 
   el.innerHTML = `
     <div class="wiz-phase-card">
@@ -941,6 +949,20 @@ async function renderPhaseG(el) {
         <h3>\uD83D\uDEE0\uFE0F Centrum operac\u00ED</h3>
         <p class="wiz-phase-desc">Spr\u00E1va, \u00FA\u0159aba a optimalizace va\u0161\u00ED knihovny m\u00E9di\u00ED.</p>
       </div>
+
+      ${coverageCards.length > 0 ? `
+        <div class="ops-coverage-section">
+          <label class="wiz-section-label">Pokryt\u00ED metadat</label>
+          <div class="ops-coverage-grid">
+            ${coverageCards.map(c => `
+              <div class="ops-coverage-card">
+                <div class="ops-coverage-value">${c.value}</div>
+                <div class="ops-coverage-label">${c.label}</div>
+                ${c.pct !== null ? `<div class="ops-coverage-bar"><div class="ops-coverage-fill" style="width:${c.pct}%"></div></div><div class="ops-coverage-pct">${c.pct}%</div>` : ""}
+              </div>
+            `).join("")}
+          </div>
+        </div>` : ""}
 
       ${runningOps.length > 0 ? `
         <div class="ops-running-banner">

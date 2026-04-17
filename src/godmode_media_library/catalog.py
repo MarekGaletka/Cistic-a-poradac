@@ -1877,6 +1877,8 @@ class Catalog:
         phashed_files = conn.execute("SELECT COUNT(*) FROM files WHERE phash IS NOT NULL").fetchone()[0]
         media_probed = conn.execute("SELECT COUNT(*) FROM files WHERE duration_seconds IS NOT NULL OR width IS NOT NULL").fetchone()[0]
         gps_files = conn.execute("SELECT COUNT(*) FROM files WHERE gps_latitude IS NOT NULL").fetchone()[0]
+        date_original_count = conn.execute("SELECT COUNT(*) FROM files WHERE date_original IS NOT NULL").fetchone()[0]
+        quality_count = conn.execute("SELECT COUNT(*) FROM files WHERE quality_category IS NOT NULL").fetchone()[0]
 
         ext_counts = []
         for row in conn.execute("SELECT ext, COUNT(*) as cnt FROM files GROUP BY ext ORDER BY cnt DESC LIMIT 20"):
@@ -1919,6 +1921,8 @@ class Catalog:
             "top_cameras": camera_counts,
             "total_faces": total_faces,
             "total_persons": total_persons,
+            "date_original_count": date_original_count,
+            "quality_count": quality_count,
         }
 
     def all_paths(self) -> set[str]:
