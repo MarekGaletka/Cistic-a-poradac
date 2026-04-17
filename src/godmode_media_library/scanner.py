@@ -597,6 +597,10 @@ def _backfill_dates_from_filesystem(catalog: Catalog) -> int:
     for row_id, birthtime, mtime in rows:
         ts = birthtime if birthtime else mtime
         if ts:
+            try:
+                ts = float(ts)
+            except (ValueError, TypeError):
+                continue
             dt = datetime.fromtimestamp(ts, tz=timezone.utc)
             date_str = dt.strftime("%Y:%m:%d %H:%M:%S")
             catalog.conn.execute(

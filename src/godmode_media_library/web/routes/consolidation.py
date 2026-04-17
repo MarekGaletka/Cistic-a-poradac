@@ -85,6 +85,21 @@ class SyncDiskRequest(BaseModel):
         return v
 
 
+class DedupRequest(BaseModel):
+    dest_remote: str = "gws-backup"
+    dest_path: str = "GML-Consolidated"
+    mode: str = "largest"
+    dry_run: bool = False
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        allowed = {"newest", "oldest", "largest", "smallest", "rename", "first"}
+        if v not in allowed:
+            raise ValueError(f"mode must be one of {allowed}")
+        return v
+
+
 # ── Local helpers ─────────────────────────────────────────────────────
 
 def _consolidation_progress_dict(p) -> dict:
@@ -544,6 +559,80 @@ async def consolidation_enrich_hashes(request: Request, bg: BackgroundTasks):
         except Exception as exc:
             task.status = "failed"
             task.error = str(exc)
+
+    bg.add_task(_run)
+    return {"task_id": task.id, "status": "started"}
+
+
+@router.post("/consolidation/run-dedup")
+async def consolidation_run_dedup(body: DedupRequest, request: Request, bg: BackgroundTasks):
+    """Run rclone dedupe on the consolidated GDrive destination."""
+    from ...cloud import rclone_dedupe
+
+    task = _create_task("consolidation:dedup")
+
+    def _run():
+        try:
+            result = rclone_dedupe(
+                remote=body.dest_remote,
+                path=body.dest_path,
+                mode=body.mode,
+                dry_run=body.dry_run,
+                timeout=7200,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as exc:
+            logger.exception("GDrive dedup failed")
+            _finish_task(task.id, error=str(exc))
+
+    bg.add_task(_run)
+    return {"task_id": task.id, "status": "started", "mode": body.mode, "dry_run": body.dry_run}
+
+
+@router.post("/consolidation/run-metadata-enrichment")
+async def consolidation_run_metadata_enrichment(request: Request, bg: BackgroundTasks):
+    """Run metadata backfill (dates from EXIF/filesystem) and quality analysis."""
+    task = _create_task("consolidation:metadata-enrichment")
+
+    catalog_path = str(request.app.state.catalog_path)
+
+    def _run():
+        try:
+            from ...catalog import Catalog
+            from ...scanner import _backfill_dates_from_filesystem, backfill_metadata_from_stored
+            from ...quality import batch_analyze
+
+            cat = Catalog(catalog_path)
+            cat.open()
+            try:
+                # Phase 1: Backfill from stored ExifTool data
+                _update_progress(task.id, {"phase": "backfill_exiftool", "phase_label": "Doplňuji metadata z ExifTool"})
+                backfill_result = backfill_metadata_from_stored(cat)
+
+                # Phase 2: Backfill from filesystem dates
+                _update_progress(task.id, {"phase": "backfill_filesystem", "phase_label": "Doplňuji data ze souborového systému"})
+                fs_dates = _backfill_dates_from_filesystem(cat)
+
+                # Phase 3: Quality analysis
+                _update_progress(task.id, {"phase": "quality_analysis", "phase_label": "Analyzuji kvalitu obrázků"})
+                quality_stats = batch_analyze(cat, progress_fn=lambda done, total: _update_progress(task.id, {
+                    "phase": "quality_analysis",
+                    "phase_label": f"Analyzuji kvalitu obrázků ({done}/{total})",
+                    "analyzed": done,
+                    "total": total,
+                }))
+
+                _finish_task(task.id, result={
+                    "backfill": backfill_result,
+                    "fs_dates_filled": fs_dates,
+                    "quality": quality_stats,
+                })
+            finally:
+                cat.close()
+        except Exception as exc:
+            logger.exception("Metadata enrichment failed")
+            _finish_task(task.id, error=str(exc))
 
     bg.add_task(_run)
     return {"task_id": task.id, "status": "started"}

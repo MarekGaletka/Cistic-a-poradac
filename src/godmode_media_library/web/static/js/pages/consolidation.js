@@ -87,6 +87,7 @@ const WIZARD_PHASES = [
   { key: "D", icon: "\u270D\uFE0F",  label: () => t("consolidation.phase_d") },
   { key: "E", icon: "\uD83D\uDCE5", label: () => t("consolidation.phase_e") },
   { key: "F", icon: "\uD83D\uDD04", label: () => t("consolidation.phase_f") },
+  { key: "G", icon: "\uD83D\uDEE0\uFE0F", label: () => "Operace" },
 ];
 
 // Phase key mapping from API status
@@ -236,6 +237,7 @@ function renderPhaseContent(data, activeJob) {
     case 3: renderPhaseD(el, data, activeJob); break;
     case 4: renderPhaseE(el, data, activeJob); break;
     case 5: renderPhaseF(el, data, activeJob); break;
+    case 6: renderPhaseG(el, data, activeJob); break;
   }
 }
 
@@ -902,6 +904,231 @@ function renderPhaseF(el, data, activeJob) {
 
   bindButton("#btn-wiz-sync", doSync);
   el.querySelector("[data-prev]")?.addEventListener("click", () => { _currentPhase = 4; renderStepIndicator(); reloadPhase(); });
+}
+
+// ---------------------------------------------------------------------------
+// PHASE G - Operations Center
+// ---------------------------------------------------------------------------
+
+let _opsPollingTasks = {};  // { taskId: intervalId }
+
+async function renderPhaseG(el) {
+  // Fetch current tasks to show running operations
+  let runningOps = [];
+  try {
+    const tasksData = await api("/tasks");
+    runningOps = (tasksData.tasks || []).filter(t =>
+      ["consolidation:dedup", "consolidation:metadata-enrichment", "iphone_reorganize"].some(c => t.command?.includes(c))
+      && (t.status === "running" || t.status === "pending")
+    );
+  } catch (_) { /* ignore */ }
+
+  // Fetch catalog stats for metadata coverage
+  let metaStats = { total: 0, with_date: 0, with_quality: 0 };
+  try {
+    const stats = await api("/consolidation/catalog-stats");
+    metaStats.total = stats.total_files || 0;
+  } catch (_) { /* ignore */ }
+
+  el.innerHTML = `
+    <div class="wiz-phase-card">
+      <div class="wiz-phase-header">
+        <h3>\uD83D\uDEE0\uFE0F Centrum operac\u00ED</h3>
+        <p class="wiz-phase-desc">Spr\u00E1va, \u00FA\u0159aba a optimalizace va\u0161\u00ED knihovny m\u00E9di\u00ED.</p>
+      </div>
+
+      ${runningOps.length > 0 ? `
+        <div class="ops-running-banner">
+          <span class="ops-running-dot"></span>
+          <span>${runningOps.length} operac${runningOps.length === 1 ? "e" : runningOps.length < 5 ? "e" : "\u00ED"} pr\u00E1v\u011B b\u011B\u017E\u00ED</span>
+        </div>` : ""}
+
+      <div class="ops-grid">
+        <div class="ops-card" id="ops-card-unsorted">
+          <div class="ops-card-icon">\uD83D\uDCC2</div>
+          <div class="ops-card-body">
+            <h4>Reorganizace Unsorted</h4>
+            <p>P\u0159esune neorganizovan\u00E9 soubory z Unsorted do rok/m\u011Bs\u00EDc slo\u017Eek podle data po\u0159\u00EDzen\u00ED (ffprobe + EXIF).</p>
+          </div>
+          <div class="ops-card-footer">
+            <div class="ops-card-status" id="ops-status-unsorted"></div>
+            <button class="wiz-btn-primary wiz-btn-sm" id="btn-ops-unsorted">\u25B6 Spustit</button>
+          </div>
+        </div>
+
+        <div class="ops-card" id="ops-card-dedup">
+          <div class="ops-card-icon">\uD83D\uDD0D</div>
+          <div class="ops-card-body">
+            <h4>Deduplikace GDrive</h4>
+            <p>Najde a odstra\u0148\u00ED duplicitn\u00ED soubory na Google Drive (mode: largest \u2014 zachov\u00E1 nejv\u011Bt\u0161\u00ED kopii).</p>
+          </div>
+          <div class="ops-card-footer">
+            <div class="ops-card-status" id="ops-status-dedup"></div>
+            <div class="ops-card-actions">
+              <label class="ops-dry-run-toggle">
+                <input type="checkbox" id="ops-dedup-dry-run"> Dry run
+              </label>
+              <button class="wiz-btn-primary wiz-btn-sm" id="btn-ops-dedup">\u25B6 Spustit</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ops-card" id="ops-card-metadata">
+          <div class="ops-card-icon">\uD83D\uDCCA</div>
+          <div class="ops-card-body">
+            <h4>Obohacen\u00ED metadat</h4>
+            <p>Dopln\u00ED chyb\u011Bj\u00EDc\u00ED data (date_original, GPS) z ExifTool + souborov\u00E9ho syst\u00E9mu. Analyzuje kvalitu obr\u00E1zk\u016F.</p>
+          </div>
+          <div class="ops-card-footer">
+            <div class="ops-card-status" id="ops-status-metadata"></div>
+            <button class="wiz-btn-primary wiz-btn-sm" id="btn-ops-metadata">\u25B6 Spustit</button>
+          </div>
+        </div>
+
+        <div class="ops-card" id="ops-card-hashes">
+          <div class="ops-card-icon">\uD83D\uDD12</div>
+          <div class="ops-card-body">
+            <h4>Obohacen\u00ED hash\u016F</h4>
+            <p>Sta\u017Eenje MD5 + SHA-256 hash\u016F z Google Drive do katalogu (bez stahov\u00E1n\u00ED soubor\u016F).</p>
+          </div>
+          <div class="ops-card-footer">
+            <div class="ops-card-status" id="ops-status-hashes"></div>
+            <button class="wiz-btn-primary wiz-btn-sm" id="btn-ops-hashes">\u25B6 Spustit</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="wiz-nav">
+        <button class="wiz-btn-secondary" data-prev>\u2190 ${t("consolidation.phase_f")}</button>
+        <div></div>
+      </div>
+    </div>`;
+
+  // Bind operation buttons
+  bindButton("#btn-ops-unsorted", _doOpsUnsorted);
+  bindButton("#btn-ops-dedup", _doOpsDedup);
+  bindButton("#btn-ops-metadata", _doOpsMetadata);
+  bindButton("#btn-ops-hashes", _doOpsHashes);
+  el.querySelector("[data-prev]")?.addEventListener("click", () => { _currentPhase = 5; renderStepIndicator(); reloadPhase(); });
+
+  // Show status for running ops
+  for (const op of runningOps) {
+    _startOpsPolling(op.id, _inferOpsType(op.command));
+  }
+}
+
+function _inferOpsType(command) {
+  if (command?.includes("dedup")) return "dedup";
+  if (command?.includes("metadata")) return "metadata";
+  if (command?.includes("reorganize")) return "unsorted";
+  if (command?.includes("enrich_hash")) return "hashes";
+  return "unknown";
+}
+
+async function _doOpsUnsorted() {
+  const btn = document.getElementById("btn-ops-unsorted");
+  if (btn) { btn.disabled = true; btn.textContent = "\u23F3 Spou\u0161t\u00EDm..."; }
+  try {
+    const result = await apiPost("/iphone/reorganize");
+    showToast("Reorganizace Unsorted spu\u0161t\u011Bna", "success");
+    _startOpsPolling(result.task_id, "unsorted");
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+    if (btn) { btn.disabled = false; btn.textContent = "\u25B6 Spustit"; }
+  }
+}
+
+async function _doOpsDedup() {
+  const btn = document.getElementById("btn-ops-dedup");
+  const dryRun = document.getElementById("ops-dedup-dry-run")?.checked || false;
+  if (btn) { btn.disabled = true; btn.textContent = "\u23F3 Spou\u0161t\u00EDm..."; }
+  try {
+    const result = await apiPost("/consolidation/run-dedup", { mode: "largest", dry_run: dryRun });
+    showToast(`Deduplikace GDrive spu\u0161t\u011Bna${dryRun ? " (dry run)" : ""}`, "success");
+    _startOpsPolling(result.task_id, "dedup");
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+    if (btn) { btn.disabled = false; btn.textContent = "\u25B6 Spustit"; }
+  }
+}
+
+async function _doOpsMetadata() {
+  const btn = document.getElementById("btn-ops-metadata");
+  if (btn) { btn.disabled = true; btn.textContent = "\u23F3 Spou\u0161t\u00EDm..."; }
+  try {
+    const result = await apiPost("/consolidation/run-metadata-enrichment");
+    showToast("Obohacen\u00ED metadat spu\u0161t\u011Bno", "success");
+    _startOpsPolling(result.task_id, "metadata");
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+    if (btn) { btn.disabled = false; btn.textContent = "\u25B6 Spustit"; }
+  }
+}
+
+async function _doOpsHashes() {
+  const btn = document.getElementById("btn-ops-hashes");
+  if (btn) { btn.disabled = true; btn.textContent = "\u23F3 Spou\u0161t\u00EDm..."; }
+  try {
+    const result = await apiPost("/consolidation/enrich-hashes");
+    showToast("Obohacen\u00ED hash\u016F spu\u0161t\u011Bno", "success");
+    _startOpsPolling(result.task_id, "hashes");
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+    if (btn) { btn.disabled = false; btn.textContent = "\u25B6 Spustit"; }
+  }
+}
+
+function _startOpsPolling(taskId, type) {
+  if (!taskId) return;
+  const statusEl = document.getElementById(`ops-status-${type}`);
+  const btn = document.getElementById(`btn-ops-${type}`);
+  if (btn) { btn.disabled = true; btn.textContent = "\u23F3 B\u011B\u017E\u00ED..."; }
+  if (statusEl) statusEl.innerHTML = '<span class="ops-running-dot"></span> B\u011B\u017E\u00ED...';
+
+  const cardEl = document.getElementById(`ops-card-${type}`);
+  if (cardEl) cardEl.classList.add("ops-card-active");
+
+  const interval = setInterval(async () => {
+    try {
+      const task = await api(`/tasks/${taskId}`);
+      if (task.status === "completed") {
+        clearInterval(interval);
+        delete _opsPollingTasks[taskId];
+        if (statusEl) statusEl.innerHTML = '\u2705 Hotovo';
+        if (btn) { btn.disabled = false; btn.textContent = "\u25B6 Spustit"; }
+        if (cardEl) { cardEl.classList.remove("ops-card-active"); cardEl.classList.add("ops-card-done"); }
+        const resultSummary = _formatOpsResult(type, task.result);
+        if (resultSummary) showToast(resultSummary, "success");
+      } else if (task.status === "failed") {
+        clearInterval(interval);
+        delete _opsPollingTasks[taskId];
+        if (statusEl) statusEl.innerHTML = `\u274C Selhalo: ${escapeHtml(task.error || "nezn\u00E1m\u00E1 chyba")}`;
+        if (btn) { btn.disabled = false; btn.textContent = "\u25B6 Spustit"; }
+        if (cardEl) { cardEl.classList.remove("ops-card-active"); cardEl.classList.add("ops-card-error"); }
+      } else {
+        // Still running — update progress
+        const prog = task.progress || {};
+        let progressText = "B\u011B\u017E\u00ED...";
+        if (prog.phase_label) progressText = prog.phase_label;
+        if (prog.analyzed !== undefined) progressText = `Analyzov\u00E1no ${prog.analyzed} soubor\u016F`;
+        if (prog.duplicates_removed !== undefined) progressText = `Odstr. ${prog.duplicates_removed} duplik\u00E1t\u016F`;
+        if (statusEl) statusEl.innerHTML = `<span class="ops-running-dot"></span> ${escapeHtml(progressText)}`;
+      }
+    } catch (_) { /* ignore poll errors */ }
+  }, 3000);
+
+  _opsPollingTasks[taskId] = interval;
+}
+
+function _formatOpsResult(type, result) {
+  if (!result) return null;
+  switch (type) {
+    case "unsorted": return `Reorganizace: ${result.moved || result.files_processed || 0} soubor\u016F p\u0159esunuto`;
+    case "dedup": return `Deduplikace: ${result.duplicates_removed || 0} odstr., ${formatBytes(result.bytes_freed || 0)} uvoln\u011Bno`;
+    case "metadata": return `Metadata: ${result.backfill?.dates_filled || 0} dat dopln\u011Bno, ${result.quality?.analyzed || 0} kvalita`;
+    case "hashes": return `Hashe: obohaceno`;
+    default: return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
