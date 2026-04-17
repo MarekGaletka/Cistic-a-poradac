@@ -1516,7 +1516,7 @@ def rclone_copyto(
     # consecutive checks with zero TCP, kill it.
     STALL_CHECK_INTERVAL = 60   # seconds between checks
     STALL_CHECKS_BEFORE_KILL = 10  # consecutive zero-TCP checks → kill (10 min)
-    MAX_UPLOAD_TIME = min(effective_timeout, 7200)  # overnight: 2h per file
+    MAX_UPLOAD_TIME = max(effective_timeout, 7200)  # overnight: at least 2h per file
 
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
