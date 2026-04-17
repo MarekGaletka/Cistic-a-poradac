@@ -275,6 +275,7 @@ def reorganize_unsorted(
     cat.open()
     try:
         conn = cat.conn
+        conn.execute("PRAGMA busy_timeout=30000")  # Wait up to 30s for write lock
         conn.row_factory = __import__("sqlite3").Row
         rows = conn.execute(
             "SELECT id, path, ext, date_original FROM files WHERE path LIKE ? AND date_original IS NULL",
@@ -282,12 +283,14 @@ def reorganize_unsorted(
         ).fetchall()
 
         # Pre-validate: list actual files on remote to filter out stale catalog entries
+        # Use --drive-list-chunk=1000 and --fast-list to bypass GDrive directory cache
         actual_files: set[str] = set()
         stale_ids: list[int] = []
         try:
             lsf_result = subprocess.run(
-                ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/", "--files-only"],
-                capture_output=True, text=True, timeout=60,
+                ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/",
+                 "--files-only", "--fast-list", "--no-mimetype"],
+                capture_output=True, text=True, timeout=120,
             )
             if lsf_result.returncode == 0:
                 actual_files = {line.strip() for line in lsf_result.stdout.splitlines() if line.strip()}
@@ -329,6 +332,22 @@ def reorganize_unsorted(
                 progress_fn({"phase": "reorganizing", "current": i, "total": total,
                              "moved": moved, "skipped": skipped, "failed": failed,
                              "current_file": filename})
+
+            # Quick existence check: verify file still exists on remote before expensive download
+            try:
+                check_result = subprocess.run(
+                    ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/",
+                     "--include", filename, "--files-only", "--max-depth", "1"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if not check_result.stdout.strip():
+                    logger.info("Skipping %s — no longer in Unsorted/ (already moved)", filename)
+                    conn.execute("DELETE FROM files WHERE id = ?", (row["id"],))
+                    conn.commit()
+                    stale_cleaned += 1
+                    continue
+            except Exception:
+                pass  # If check fails, proceed with download attempt
 
             # Only probe video files — images should already have EXIF
             if ext not in ("mov", "mp4", "m4v", "3gp"):
