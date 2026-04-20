@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -19,6 +20,11 @@ from ..shared import (
 router = APIRouter()
 
 _import_thread: threading.Thread | None = None
+_auto_import_thread: threading.Thread | None = None
+_auto_import_enabled: bool = False
+_auto_import_catalog_path: str | None = None
+_AUTO_IMPORT_CHECK_INTERVAL = 120  # seconds between checks
+_AUTO_IMPORT_COOLDOWN = 600  # seconds after completed import before checking again
 
 
 class IPhoneStartRequest(BaseModel):
@@ -197,3 +203,106 @@ async def iphone_reorganize(request: Request, bg: BackgroundTasks):
 
     bg.add_task(_run)
     return {"task_id": task.id, "status": "started"}
+
+
+# ---------------------------------------------------------------------------
+# Auto-import daemon
+# ---------------------------------------------------------------------------
+
+
+def _auto_import_loop():
+    """Background loop: detect iPhone, auto-import new files."""
+    global _import_thread
+    from ...iphone_import import (
+        IPhoneImportConfig,
+        _check_iphone_connected,
+        get_progress,
+        run_import,
+    )
+
+    logger.info("iPhone auto-import daemon started (check every %ds)", _AUTO_IMPORT_CHECK_INTERVAL)
+
+    while _auto_import_enabled:
+        try:
+            # Check if iPhone is connected (USB or WiFi)
+            if not _check_iphone_connected():
+                time.sleep(_AUTO_IMPORT_CHECK_INTERVAL)
+                continue
+
+            # Check if import is already running
+            progress = get_progress()
+            if progress["phase"] in ("listing", "transferring"):
+                time.sleep(_AUTO_IMPORT_CHECK_INTERVAL)
+                continue
+
+            logger.info("Auto-import: iPhone detected, starting import")
+
+            config = IPhoneImportConfig(
+                dest_remote="gws-backup",
+                dest_path="GML-Consolidated",
+                structure_pattern="year_month",
+                media_only=True,
+            )
+
+            task = _create_task("iphone_auto_import")
+
+            def _on_progress(prog):
+                _update_progress(task.id, prog)
+                _notify_ws(task.id, {"type": "iphone_progress", **prog})
+
+            try:
+                result = run_import(_auto_import_catalog_path, config, progress_fn=_on_progress)
+                _finish_task(task.id, result)
+
+                new_files = result.get("completed", 0) - result.get("skipped", 0)
+                if new_files > 0:
+                    logger.info("Auto-import: %d new files imported", new_files)
+                else:
+                    logger.info("Auto-import: no new files")
+            except Exception as e:
+                logger.exception("Auto-import failed")
+                _finish_task(task.id, {"error": str(e)}, error=str(e))
+
+            # Cooldown after import (avoid hammering)
+            time.sleep(_AUTO_IMPORT_COOLDOWN)
+
+        except Exception:
+            logger.exception("Auto-import loop error")
+            time.sleep(_AUTO_IMPORT_CHECK_INTERVAL)
+
+    logger.info("iPhone auto-import daemon stopped")
+
+
+@router.post("/iphone/auto-import")
+async def iphone_auto_import_toggle(request: Request):
+    """Enable/disable automatic iPhone import when device is detected."""
+    global _auto_import_thread, _auto_import_enabled, _auto_import_catalog_path
+
+    if _auto_import_enabled:
+        # Disable
+        _auto_import_enabled = False
+        logger.info("Auto-import disabled")
+        return {"auto_import": False, "status": "disabled"}
+    else:
+        # Enable
+        _auto_import_enabled = True
+        _auto_import_catalog_path = str(request.app.state.catalog_path)
+
+        if _auto_import_thread is None or not _auto_import_thread.is_alive():
+            _auto_import_thread = threading.Thread(
+                target=_auto_import_loop, daemon=True, name="iphone-auto-import"
+            )
+            _auto_import_thread.start()
+
+        logger.info("Auto-import enabled")
+        return {"auto_import": True, "status": "enabled", "check_interval": _AUTO_IMPORT_CHECK_INTERVAL}
+
+
+@router.get("/iphone/auto-import")
+async def iphone_auto_import_status():
+    """Get auto-import status."""
+    return {
+        "auto_import": _auto_import_enabled,
+        "check_interval": _AUTO_IMPORT_CHECK_INTERVAL,
+        "cooldown": _AUTO_IMPORT_COOLDOWN,
+    }
