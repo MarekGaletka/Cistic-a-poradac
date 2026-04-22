@@ -1926,9 +1926,13 @@ class Catalog:
         }
 
     def all_paths(self) -> set[str]:
-        """Return all file paths currently in catalog."""
+        """Return all file paths currently in catalog.
+
+        Uses cursor iteration instead of fetchall() to avoid loading
+        all rows into a temporary list before building the set.
+        """
         cur = self.conn.execute("SELECT path FROM files")
-        return {row[0] for row in cur.fetchall()}
+        return {row[0] for row in cur}
 
     # ── Export / Import ──────────────────────────────────────────────
 

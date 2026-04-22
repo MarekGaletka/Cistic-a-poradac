@@ -526,8 +526,9 @@ def backfill_metadata_from_stored(catalog: Catalog) -> dict:
     import json as _json
 
     # Files missing date_original but having ExifTool metadata
+    # Include date_original and gps_latitude in the JOIN to avoid N+1 get_file_by_path() calls
     cur = catalog.conn.execute(
-        "SELECT f.path, fm.raw_json FROM files f "
+        "SELECT f.path, fm.raw_json, f.date_original, f.gps_latitude FROM files f "
         "JOIN file_metadata fm ON fm.file_id = f.id "
         "WHERE f.date_original IS NULL OR f.gps_latitude IS NULL"
     )
@@ -535,19 +536,15 @@ def backfill_metadata_from_stored(catalog: Catalog) -> dict:
     dates_filled = 0
     gps_filled = 0
 
-    for path_str, raw in cur.fetchall():
+    for path_str, raw, existing_date, existing_lat in cur.fetchall():
         try:
             meta = _json.loads(raw)
         except (ValueError, TypeError):
             continue
 
-        row = catalog.get_file_by_path(path_str)
-        if row is None:
-            continue
-
         updates: dict[str, object] = {}
 
-        if not row.date_original:
+        if not existing_date:
             for key in _DATE_KEYS:
                 val = meta.get(key)
                 if val and isinstance(val, str) and len(val) >= 10:
@@ -555,7 +552,7 @@ def backfill_metadata_from_stored(catalog: Catalog) -> dict:
                     dates_filled += 1
                     break
 
-        if not row.gps_latitude:
+        if not existing_lat:
             lat = _extract_gps_float(meta, _GPS_LAT_KEYS)
             lon = _extract_gps_float(meta, _GPS_LON_KEYS)
             if lat is not None and lon is not None:

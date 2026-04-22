@@ -1088,6 +1088,18 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
         source_failures: dict[str, int] = {}
 
+        # --- Batch-load file metadata (date_original, size) to avoid N+1 queries ---
+        _pending_hashes = list({fs.file_hash for fs in pending if fs.file_hash})
+        _file_meta_cache: dict[str, tuple[str | None, int | None]] = {}
+        for _chunk_start in range(0, len(_pending_hashes), 500):
+            _chunk = _pending_hashes[_chunk_start:_chunk_start + 500]
+            _ph = ",".join("?" for _ in _chunk)
+            for _frow in conn.execute(
+                f"SELECT sha256, date_original, size FROM files WHERE sha256 IN ({_ph})",  # noqa: S608
+                _chunk,
+            ):
+                _file_meta_cache[_frow["sha256"]] = (_frow["date_original"], _frow["size"])
+
         # --- Prepare batch: build transfer tasks sequentially ---
         transfer_tasks: list[tuple] = []  # (fs, src_remote, src_path, dest_path, file_size)
 
@@ -1147,10 +1159,9 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
             # Build collision-safe destination path
             filename = PurePosixPath(src_path).name
-            file_row = conn.execute("SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
-                                    (fs.file_hash,)).fetchone()
-            mod_time = file_row["date_original"] if file_row else None
-            file_size = file_row["size"] if file_row else None
+            _cached_meta = _file_meta_cache.get(fs.file_hash)
+            mod_time = _cached_meta[0] if _cached_meta else None
+            file_size = _cached_meta[1] if _cached_meta else None
 
             dest_path = _build_dest_path(ctx.config.dest_path, filename, fs.file_hash, mod_time,
                                          ctx.config.structure_pattern)
