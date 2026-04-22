@@ -1,4 +1,4 @@
-/* GOD MODE Media Library — Dashboard page (redesigned) */
+/* GOD MODE Media Library — Dashboard page (Apple-quality redesign) */
 
 import { api, apiPost, apiDelete } from "../api.js";
 import { $, content, formatBytes, escapeHtml, showToast } from "../utils.js";
@@ -15,22 +15,19 @@ let _selectedRoots = [];
 export async function render(container) {
   try {
     const stats = await api("/stats");
-
-    // Check if catalog is empty
     if (!stats.total_files || stats.total_files === 0) {
       await renderEmptyState(container);
       return;
     }
-
     await renderDashboard(container, stats);
   } catch (e) {
-    // API error likely means no catalog — show empty state
     await renderEmptyState(container);
   }
 }
 
+// ── Empty state (first-run) ─────────────────────────────────────
+
 async function renderEmptyState(container) {
-  // Load saved roots
   try {
     const data = await api("/roots");
     _selectedRoots = data.roots || [];
@@ -38,14 +35,11 @@ async function renderEmptyState(container) {
     _selectedRoots = [];
   }
 
-  // Load bookmarks for quick-add
   let bookmarks = [];
   try {
     const data = await api("/browse");
-    bookmarks = (data.bookmarks || []).slice(0, 4); // First 4: Desktop, Pictures, Documents, Downloads
-  } catch {
-    // silent
-  }
+    bookmarks = (data.bookmarks || []).slice(0, 4);
+  } catch { /* silent */ }
 
   _renderEmptyContent(container, bookmarks);
 }
@@ -107,26 +101,20 @@ function _renderEmptyContent(container, bookmarks) {
   if (pickerBtn) {
     pickerBtn.addEventListener("click", () => {
       openFolderPicker(async (paths) => {
-        // Merge with existing
         const merged = [...new Set([..._selectedRoots, ...paths])];
         _selectedRoots = merged;
-        try {
-          await apiPost("/roots", { roots: _selectedRoots });
-        } catch { /* silent */ }
+        try { await apiPost("/roots", { roots: _selectedRoots }); } catch { /* silent */ }
         _renderEmptyContent(container, bookmarks);
       }, _selectedRoots);
     });
   }
 
-  // Bind quick-add buttons
   container.querySelectorAll(".quick-add-btn:not([disabled])").forEach(btn => {
     btn.addEventListener("click", async () => {
       const path = btn.dataset.path;
       if (!_selectedRoots.includes(path)) {
         _selectedRoots.push(path);
-        try {
-          await apiPost("/roots", { roots: _selectedRoots });
-        } catch { /* silent */ }
+        try { await apiPost("/roots", { roots: _selectedRoots }); } catch { /* silent */ }
         btn.classList.add("added");
         btn.disabled = true;
         _renderEmptyContent(container, bookmarks);
@@ -134,19 +122,15 @@ function _renderEmptyContent(container, bookmarks) {
     });
   });
 
-  // Bind chip remove buttons
   container.querySelectorAll(".folder-chip-remove").forEach(btn => {
     btn.addEventListener("click", async () => {
       const path = btn.dataset.path;
       _selectedRoots = _selectedRoots.filter(r => r !== path);
-      try {
-        await apiDelete("/roots", { path });
-      } catch { /* silent */ }
+      try { await apiDelete("/roots", { path }); } catch { /* silent */ }
       _renderEmptyContent(container, bookmarks);
     });
   });
 
-  // Bind start scan button
   const startBtn = container.querySelector("#btn-start-scanning");
   if (startBtn) {
     startBtn.addEventListener("click", async () => {
@@ -165,8 +149,9 @@ function _renderEmptyContent(container, bookmarks) {
   }
 }
 
+// ── Main dashboard ──────────────────────────────────────────────
+
 async function renderDashboard(container, stats) {
-  // Load roots, system info, memories, and favorites in parallel
   let roots = [];
   let sysInfo = null;
   let memoriesData = null;
@@ -188,64 +173,73 @@ async function renderDashboard(container, stats) {
     favoritesCount = favsData?.count ?? 0;
     tagsData = tagsResult || [];
     sourcesData = srcData;
-  } catch {
-    // silent
-  }
+  } catch { /* silent */ }
 
-  const statCards = [
-    { icon: "&#128247;", label: t("dashboard.total_files"), value: stats.total_files?.toLocaleString() ?? "0", color: "accent" },
-    { icon: "&#128190;", label: t("dashboard.total_size"), value: formatBytes(stats.total_size_bytes), color: "accent" },
-    { icon: "&#128203;", label: t("dashboard.duplicate_groups"), value: String(stats.duplicate_groups ?? 0), color: stats.duplicate_groups > 0 ? "yellow" : "green", link: stats.duplicate_groups > 0 ? "#duplicates" : null },
-    { icon: "&#127758;", label: t("dashboard.gps_files"), value: String(stats.gps_files ?? 0), color: "accent" },
-    { icon: "&#128274;", label: t("dashboard.hashed"), value: stats.hashed_files?.toLocaleString() ?? "0", color: "green" },
-    { icon: "&#127910;", label: t("dashboard.media_probed"), value: String(stats.media_probed ?? 0), color: "accent" },
-  ];
-  if (favoritesCount > 0) {
-    statCards.push({ icon: "&#11088;", label: t("dashboard.favorites"), value: String(favoritesCount), color: "yellow" });
-  }
+  // Compute derived values
+  const totalFiles = stats.total_files || 0;
+  const hashedPct = totalFiles > 0 ? Math.round((stats.hashed_files / totalFiles) * 100) : 0;
+  const gpsPct = totalFiles > 0 ? Math.round((stats.gps_files / totalFiles) * 100) : 0;
+  const datePct = totalFiles > 0 ? Math.round(((stats.date_original_count || 0) / totalFiles) * 100) : 0;
 
-  let html = `
-    <div class="dashboard-header">
-      <h2>${t("dashboard.title")}</h2>
-      <button class="btn-refresh" id="btn-dashboard-refresh" title="${t("dashboard.refresh")}">&#8635; ${t("dashboard.refresh")}</button>
-    </div>`;
+  // ── Greeting based on time of day
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? t("dashboard.greeting_morning") : hour < 18 ? t("dashboard.greeting_afternoon") : t("dashboard.greeting_evening");
 
-  // Last scan info
-  const lastScanRoot = stats.last_scan_root || (sysInfo && sysInfo.last_scan_root) || "";
-  if (lastScanRoot) {
-    const scanDate = stats.last_scan_date || "";
-    const displayDate = scanDate || "\u2014";
-    html += `<div style="margin-bottom:12px;padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)">
-      ${t("dashboard.last_scan_info", { date: displayDate })}
-    </div>`;
-  }
+  let html = `<div class="dash">`;
 
-  html += `<div class="stats-grid-v2">`;
-
-  for (const card of statCards) {
-    const linkStart = card.link ? `<a href="${card.link}" class="stat-card-v2-link">` : "";
-    const linkEnd = card.link ? "</a>" : "";
-    html += `${linkStart}<div class="stat-card-v2 stat-color-${card.color}">
-      <div class="stat-icon">${card.icon}</div>
-      <div class="stat-content">
-        <div class="stat-value">${card.value}</div>
-        <div class="stat-label">${card.label}</div>
+  // ── Hero header
+  html += `
+    <header class="dash-hero">
+      <div class="dash-hero-text">
+        <h1 class="dash-greeting">${greeting}</h1>
+        <p class="dash-subtitle">${t("dashboard.subtitle", { count: totalFiles.toLocaleString(), size: formatBytes(stats.total_size_bytes) })}</p>
       </div>
-    </div>${linkEnd}`;
+      <button class="dash-refresh-btn" id="btn-dashboard-refresh" title="${t("dashboard.refresh")}">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1v4h4"/><path d="M1 5a7 7 0 0113.36 2M15 15v-4h-4"/><path d="M15 11A7 7 0 011.64 9"/></svg>
+      </button>
+    </header>`;
+
+  // ── Stats ribbon
+  const statItems = [
+    { label: t("dashboard.total_files"), value: totalFiles.toLocaleString(), sub: formatBytes(stats.total_size_bytes), accent: true },
+    { label: t("dashboard.hashed"), value: `${hashedPct}%`, sub: `${(stats.hashed_files || 0).toLocaleString()} ${t("dashboard.source_files")}` },
+    { label: t("dashboard.gps_files"), value: `${gpsPct}%`, sub: `${(stats.gps_files || 0).toLocaleString()} ${t("dashboard.source_files")}` },
+    { label: t("dashboard.dated_files"), value: `${datePct}%`, sub: `${(stats.date_original_count || 0).toLocaleString()} ${t("dashboard.source_files")}` },
+  ];
+
+  if (stats.total_faces > 0) {
+    statItems.push({ label: t("dashboard.faces_detected"), value: stats.total_faces.toLocaleString(), sub: `${stats.total_persons || 0} ${t("dashboard.persons")}` });
+  }
+  if (stats.duplicate_groups > 0) {
+    statItems.push({ label: t("dashboard.duplicate_groups"), value: stats.duplicate_groups.toLocaleString(), sub: `${(stats.duplicate_files || 0).toLocaleString()} ${t("dashboard.source_files")}`, warn: true, link: "#duplicates" });
+  }
+  if (favoritesCount > 0) {
+    statItems.push({ label: t("dashboard.favorites"), value: favoritesCount.toLocaleString(), sub: "" });
   }
 
-  html += `</div>`;
+  html += `<section class="dash-stats-ribbon">`;
+  for (const item of statItems) {
+    const wrapStart = item.link ? `<a href="${item.link}" class="dash-stat-link">` : "";
+    const wrapEnd = item.link ? "</a>" : "";
+    const cls = item.warn ? "dash-stat dash-stat--warn" : item.accent ? "dash-stat dash-stat--accent" : "dash-stat";
+    html += `${wrapStart}<div class="${cls}">
+      <span class="dash-stat-value">${item.value}</span>
+      <span class="dash-stat-label">${item.label}</span>
+      ${item.sub ? `<span class="dash-stat-sub">${item.sub}</span>` : ""}
+    </div>${wrapEnd}`;
+  }
+  html += `</section>`;
 
-  // Integrity score widget
-  html += `<div id="integrity-score-widget" class="integrity-widget"></div>`;
+  // ── Integrity score
+  html += `<div id="integrity-score-widget" class="dash-integrity"></div>`;
 
-  // Memories (On This Day) section
+  // ── Memories (On This Day)
   if (memoriesData && memoriesData.memories && memoriesData.memories.length > 0) {
     const monthNames = t("months.genitive").split(",");
-    html += `<div class="memories-section">
-      <div class="memories-section-header">
-        <span class="memories-icon">&#128248;</span>
-        <h3>${t("dashboard.memories")}</h3>
+    html += `<section class="dash-card dash-memories">
+      <div class="dash-card-header">
+        <h2 class="dash-card-title">${t("dashboard.memories")}</h2>
+        <span class="dash-card-badge">${t("dashboard.on_this_day_label")}</span>
       </div>`;
     for (const mem of memoriesData.memories) {
       const yearsAgoLabel = mem.years_ago === 1
@@ -253,131 +247,161 @@ async function renderDashboard(container, stats) {
         : t("dashboard.years_ago", { count: mem.years_ago });
       const memDate = new Date(memoriesData.date);
       const dateLabel = `${memDate.getDate()}. ${monthNames[memDate.getMonth()]} ${mem.year}`;
-      html += `<div class="memories-year">
-        <div class="memories-header">
-          <span class="years-ago">${escapeHtml(yearsAgoLabel)}</span>
-          <span style="color:var(--text-muted);font-weight:400;font-size:13px">&mdash; ${escapeHtml(dateLabel)}</span>
+      html += `<div class="dash-memories-group">
+        <div class="dash-memories-year-label">
+          <span class="dash-memories-ago">${escapeHtml(yearsAgoLabel)}</span>
+          <span class="dash-memories-date">${escapeHtml(dateLabel)}</span>
         </div>
-        <div class="memories-scroll">`;
+        <div class="dash-memories-scroll">`;
       for (const f of mem.files) {
-        const thumbUrl = `/api/thumbnail${encodeURI(f.path)}?size=250`;
-        html += `<img class="memories-thumb" src="${thumbUrl}" alt="${escapeHtml(f.path.split("/").pop())}" data-memory-path="${escapeHtml(f.path)}" onerror="this.style.display='none'" loading="lazy">`;
+        const thumbUrl = `/api/thumbnail${encodeURI(f.path)}?size=280`;
+        html += `<img class="dash-memories-img" src="${thumbUrl}" alt="${escapeHtml(f.path.split("/").pop())}" data-memory-path="${escapeHtml(f.path)}" onerror="this.style.display='none'" loading="lazy">`;
       }
       html += `</div></div>`;
     }
-    html += `</div>`;
+    html += `</section>`;
   }
 
-  // Sources / managed folders section
-  const sources = sourcesData?.sources || [];
-  html += `<div class="dashboard-section" style="margin-top:16px">
-    <h3>${t("dashboard.sources")}</h3>`;
-  if (sources.length > 0) {
-    html += `<div class="sources-grid">`;
-    for (const src of sources) {
-      const statusClass = src.online ? "source-online" : "source-offline";
-      const statusIcon = src.online ? "\u{1F7E2}" : "\u{1F534}";
-      const statusLabel = src.online ? t("dashboard.source_online") : t("dashboard.source_offline");
-      const lastScanLabel = src.last_scan
-        ? t("dashboard.source_last_scan", { date: new Date(src.last_scan).toLocaleDateString("cs") })
-        : "";
-      html += `<div class="source-card ${statusClass}">
-        <div class="source-card-header">
-          <span class="source-status-dot">${statusIcon}</span>
-          <span class="source-name">${escapeHtml(src.name)}</span>
-          <span class="source-status-label">${statusLabel}</span>
-        </div>
-        <div class="source-card-path">${escapeHtml(src.path)}</div>
-        <div class="source-card-stats">
-          <span>${src.file_count.toLocaleString()} ${t("dashboard.source_files")}</span>
-          <span>${formatBytes(src.total_size)}</span>
-        </div>
-        ${lastScanLabel ? `<div class="source-card-scan">${lastScanLabel}</div>` : ""}
-        ${src.online ? `<button class="source-sync-btn" data-root="${escapeHtml(src.path)}">${t("dashboard.source_sync")}</button>` : ""}
-      </div>`;
-    }
-    html += `</div>`;
-    // Thumbnail cache info
-    const cache = sourcesData?.thumbnail_cache;
-    if (cache && cache.count > 0) {
-      html += `<div class="source-cache-info">${t("dashboard.thumb_cache", { count: cache.count.toLocaleString(), size: formatBytes(cache.size) })}</div>`;
-    }
-  } else if (roots.length > 0) {
-    html += `<div style="display:flex;flex-wrap:wrap;gap:6px">`;
-    for (const root of roots) {
-      const name = root.split("/").pop() || root;
-      html += `<span class="folder-chip" style="cursor:default"><span class="folder-chip-icon">\u{1F4C1}</span> ${escapeHtml(name)}<span class="folder-chip-path" style="font-size:10px;color:var(--text-muted);margin-left:4px">${escapeHtml(root)}</span></span>`;
-    }
-    html += `</div>`;
-  } else {
-    html += `<div style="font-size:12px;color:var(--text-muted);padding:8px 0">${t("dashboard.no_folders")} <a href="#" id="btn-dashboard-open-settings" style="color:var(--accent)">${t("dashboard.open_settings")}</a></div>`;
-  }
-  html += `</div>`;
-
-  // Quick actions
+  // ── Quick actions
   html += `
-    <div class="quick-actions">
-      <h3>${t("dashboard.quick_actions")}</h3>
-      <div class="quick-actions-grid">
-        <a href="#duplicates" class="quick-action-card" data-page="duplicates">
-          <span class="qa-icon">&#128203;</span>
-          <span class="qa-label">${t("dashboard.view_duplicates")}</span>
-          ${stats.duplicate_groups > 0 ? `<span class="qa-badge">${stats.duplicate_groups}</span>` : ""}
+    <section class="dash-card">
+      <h2 class="dash-card-title">${t("dashboard.quick_actions")}</h2>
+      <div class="dash-actions-grid">
+        <a href="#files" class="dash-action" data-page="files">
+          <div class="dash-action-icon dash-action-icon--blue">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M2 4a2 2 0 012-2h4.586A2 2 0 0110 2.586L11.414 4H16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V4z"/></svg>
+          </div>
+          <span class="dash-action-label">${t("dashboard.view_files")}</span>
         </a>
-        <a href="#files" class="quick-action-card" data-page="files">
-          <span class="qa-icon">&#128247;</span>
-          <span class="qa-label">${t("dashboard.view_files")}</span>
+        <a href="#duplicates" class="dash-action" data-page="duplicates">
+          <div class="dash-action-icon dash-action-icon--orange">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/><path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clip-rule="evenodd"/></svg>
+          </div>
+          <span class="dash-action-label">${t("dashboard.view_duplicates")}</span>
+          ${stats.duplicate_groups > 0 ? `<span class="dash-action-badge">${stats.duplicate_groups}</span>` : ""}
         </a>
-        <button class="quick-action-card" id="btn-dashboard-scan">
-          <span class="qa-icon">&#128269;</span>
-          <span class="qa-label">${t("dashboard.scan_folder")}</span>
+        <a href="#timeline" class="dash-action" data-page="timeline">
+          <div class="dash-action-icon dash-action-icon--purple">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>
+          </div>
+          <span class="dash-action-label">${t("nav.timeline")}</span>
+        </a>
+        <a href="#map" class="dash-action" data-page="map">
+          <div class="dash-action-icon dash-action-icon--green">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
+          </div>
+          <span class="dash-action-label">${t("nav.map")}</span>
+        </a>
+        <a href="#people" class="dash-action" data-page="people">
+          <div class="dash-action-icon dash-action-icon--pink">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/></svg>
+          </div>
+          <span class="dash-action-label">${t("nav.people")}</span>
+        </a>
+        <button class="dash-action" id="btn-dashboard-scan">
+          <div class="dash-action-icon dash-action-icon--teal">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M9 9a2 2 0 114 0 2 2 0 01-4 0z"/><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a4 4 0 00-3.446 6.032l-2.261 2.26a1 1 0 101.414 1.415l2.261-2.261A4 4 0 1011 5z" clip-rule="evenodd"/></svg>
+          </div>
+          <span class="dash-action-label">${t("dashboard.scan_folder")}</span>
         </button>
-        <button class="quick-action-card" id="btn-generate-report">
-          <span class="qa-icon">&#128202;</span>
-          <span class="qa-label">${t("report.generate")}</span>
+        <a href="#iphone" class="dash-action" data-page="iphone">
+          <div class="dash-action-icon dash-action-icon--slate">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7 2a2 2 0 00-2 2v12a2 2 0 002 2h6a2 2 0 002-2V4a2 2 0 00-2-2H7zm3 14a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+          </div>
+          <span class="dash-action-label">iPhone</span>
+        </a>
+        <button class="dash-action" id="btn-generate-report">
+          <div class="dash-action-icon dash-action-icon--amber">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm2 10a1 1 0 10-2 0v3a1 1 0 102 0v-3zm2-3a1 1 0 011 1v5a1 1 0 11-2 0v-5a1 1 0 011-1zm4-1a1 1 0 10-2 0v7a1 1 0 102 0V8z" clip-rule="evenodd"/></svg>
+          </div>
+          <span class="dash-action-label">${t("report.generate")}</span>
         </button>
       </div>
-    </div>`;
+    </section>`;
 
-  // Smart views
+  // ── Smart views
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   const dateFrom30 = thirtyDaysAgo.toISOString().split("T")[0];
 
   const smartCards = [
-    { icon: "\uD83D\uDCF8", label: t("smart.recent_photos"), filter: { ext: "jpg,jpeg,png,gif,bmp,tiff,tif,webp,heic,heif,raw,cr2,nef,arw,dng", date_from: dateFrom30 } },
-    { icon: "\uD83C\uDFAC", label: t("smart.all_videos"), filter: { ext: "mp4,mov,avi,mkv,wmv,flv,webm,m4v,3gp" } },
-    { icon: "\uD83D\uDCCD", label: t("smart.with_location"), filter: { has_gps: true } },
-    { icon: "\u2B50", label: t("smart.top_rated"), filter: { min_rating: 4 } },
-    { icon: "\uD83D\uDCE6", label: t("smart.large_files"), filter: { min_size: 104857600 } },
+    { icon: `<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>`, label: t("smart.recent_photos"), filter: { ext: "jpg,jpeg,png,gif,bmp,tiff,tif,webp,heic,heif,raw,cr2,nef,arw,dng", date_from: dateFrom30 } },
+    { icon: `<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/><path d="M14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z"/></svg>`, label: t("smart.all_videos"), filter: { ext: "mp4,mov,avi,mkv,wmv,flv,webm,m4v,3gp" } },
+    { icon: `<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>`, label: t("smart.with_location"), filter: { has_gps: true } },
+    { icon: `<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>`, label: t("smart.top_rated"), filter: { min_rating: 4 } },
+    { icon: `<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>`, label: t("smart.large_files"), filter: { min_size: 104857600 } },
   ];
-  html += `<div class="dashboard-section">
-    <h3>${t("smart.title")}</h3>
-    <div class="smart-views-grid">`;
+
+  html += `<section class="dash-card">
+    <h2 class="dash-card-title">${t("smart.title")}</h2>
+    <div class="dash-smart-grid">`;
   for (let i = 0; i < smartCards.length; i++) {
     const sc = smartCards[i];
-    html += `<button class="smart-view-card" data-smart-idx="${i}">
-      <span class="smart-view-icon">${sc.icon}</span>
-      <span class="smart-view-label">${escapeHtml(sc.label)}</span>
+    html += `<button class="dash-smart-pill" data-smart-idx="${i}">
+      <span class="dash-smart-icon">${sc.icon}</span>
+      <span>${escapeHtml(sc.label)}</span>
     </button>`;
   }
-  html += `</div></div>`;
+  html += `</div></section>`;
 
-  // Top tags section
+  // ── Sources / managed folders
+  const sources = sourcesData?.sources || [];
+  if (sources.length > 0) {
+    html += `<section class="dash-card">
+      <h2 class="dash-card-title">${t("dashboard.sources")}</h2>
+      <div class="dash-sources-grid">`;
+    for (const src of sources) {
+      const statusCls = src.online ? "dash-source--online" : "dash-source--offline";
+      const statusLabel = src.online ? t("dashboard.source_online") : t("dashboard.source_offline");
+      const lastScanLabel = src.last_scan
+        ? t("dashboard.source_last_scan", { date: new Date(src.last_scan).toLocaleDateString("cs") })
+        : "";
+      html += `<div class="dash-source ${statusCls}">
+        <div class="dash-source-head">
+          <span class="dash-source-dot"></span>
+          <span class="dash-source-name">${escapeHtml(src.name)}</span>
+          <span class="dash-source-status">${statusLabel}</span>
+        </div>
+        <div class="dash-source-path">${escapeHtml(src.path)}</div>
+        <div class="dash-source-meta">
+          <span>${src.file_count.toLocaleString()} ${t("dashboard.source_files")}</span>
+          <span>${formatBytes(src.total_size)}</span>
+        </div>
+        ${lastScanLabel ? `<div class="dash-source-scan">${lastScanLabel}</div>` : ""}
+        ${src.online ? `<button class="dash-source-sync" data-root="${escapeHtml(src.path)}">${t("dashboard.source_sync")}</button>` : ""}
+      </div>`;
+    }
+    html += `</div></section>`;
+  } else if (roots.length > 0) {
+    html += `<section class="dash-card">
+      <h2 class="dash-card-title">${t("dashboard.sources")}</h2>
+      <div class="dash-roots-list">`;
+    for (const root of roots) {
+      const name = root.split("/").pop() || root;
+      html += `<div class="dash-root-chip">
+        <span class="dash-root-icon">\u{1F4C1}</span>
+        <span class="dash-root-name">${escapeHtml(name)}</span>
+        <span class="dash-root-path">${escapeHtml(root)}</span>
+      </div>`;
+    }
+    html += `</div></section>`;
+  }
+
+  // ── Top tags
   if (tagsData.length > 0) {
-    const topTags = tagsData.filter(t => t.file_count > 0).slice(0, 5);
+    const topTags = tagsData.filter(tg => tg.file_count > 0).slice(0, 8);
     if (topTags.length > 0) {
-      html += `<div class="dashboard-section">
-        <h3>${t("tags.top_tags")}</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">`;
+      html += `<section class="dash-card">
+        <h2 class="dash-card-title">${t("tags.top_tags")}</h2>
+        <div class="dash-tags-row">`;
       for (const tag of topTags) {
-        html += `<a href="#files" class="tag-pill tag-pill-dashboard" style="background:${tag.color}22;color:${tag.color};border:1px solid ${tag.color}44;text-decoration:none" data-tag-id="${tag.id}">${escapeHtml(tag.name)} <span style="opacity:0.7;font-size:11px">(${tag.file_count})</span></a>`;
+        html += `<a href="#files" class="dash-tag" style="--tag-color:${tag.color}" data-tag-id="${tag.id}">${escapeHtml(tag.name)}<span class="dash-tag-count">${tag.file_count}</span></a>`;
       }
-      html += `</div></div>`;
+      html += `</div></section>`;
     }
   }
 
-  // Storage breakdown (donut chart using CSS conic-gradient)
+  // ── Storage breakdown
   const topExts = stats.top_extensions || [];
   if (topExts.length > 0) {
     const imageExts = new Set(["jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif", "webp", "heic", "heif", "raw", "cr2", "nef", "arw", "dng"]);
@@ -394,107 +418,103 @@ async function renderDashboard(container, stats) {
       const imagePct = Math.round((imageCount / total) * 100);
       const videoPct = Math.round((videoCount / total) * 100);
       const otherPct = 100 - imagePct - videoPct;
-      const imageEnd = imagePct;
-      const videoEnd = imagePct + videoPct;
 
-      html += `<div class="dashboard-section">
-        <h3>${t("dashboard.storage_breakdown")}</h3>
-        <div style="display:flex;align-items:center;gap:24px">
-          <div style="width:80px;height:80px;border-radius:50%;background:conic-gradient(#3b82f6 0% ${imageEnd}%, #eab308 ${imageEnd}% ${videoEnd}%, #6b7280 ${videoEnd}% 100%);flex-shrink:0"></div>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block"></span> ${t("dashboard.images")} — ${imageCount.toLocaleString()} (${imagePct}%)</div>
-            <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:10px;height:10px;border-radius:2px;background:#eab308;display:inline-block"></span> ${t("dashboard.videos")} — ${videoCount.toLocaleString()} (${videoPct}%)</div>
-            <div style="display:flex;align-items:center;gap:6px;font-size:12px"><span style="width:10px;height:10px;border-radius:2px;background:#6b7280;display:inline-block"></span> ${t("dashboard.other")} — ${otherCount.toLocaleString()} (${otherPct}%)</div>
+      html += `<section class="dash-card">
+        <h2 class="dash-card-title">${t("dashboard.storage_breakdown")}</h2>
+        <div class="dash-breakdown">
+          <div class="dash-breakdown-bar">
+            <div class="dash-breakdown-seg dash-breakdown-seg--image" style="width:${imagePct}%"></div>
+            <div class="dash-breakdown-seg dash-breakdown-seg--video" style="width:${videoPct}%"></div>
+            <div class="dash-breakdown-seg dash-breakdown-seg--other" style="width:${otherPct}%"></div>
+          </div>
+          <div class="dash-breakdown-legend">
+            <span class="dash-legend-item"><span class="dash-legend-dot dash-legend-dot--image"></span>${t("dashboard.images")} ${imageCount.toLocaleString()} (${imagePct}%)</span>
+            <span class="dash-legend-item"><span class="dash-legend-dot dash-legend-dot--video"></span>${t("dashboard.videos")} ${videoCount.toLocaleString()} (${videoPct}%)</span>
+            <span class="dash-legend-item"><span class="dash-legend-dot dash-legend-dot--other"></span>${t("dashboard.other")} ${otherCount.toLocaleString()} (${otherPct}%)</span>
           </div>
         </div>
-      </div>`;
+      </section>`;
     }
   }
 
-  // Top extensions as visual bars
+  // ── Two-column layout: Extensions + Cameras
   const exts = stats.top_extensions;
-  if (exts && exts.length) {
-    const maxCount = exts[0][1];
-    html += `<div class="dashboard-section">
-      <h3>${t("dashboard.top_extensions")}</h3>
-      <div class="bar-chart">`;
-    for (const [ext, count] of exts.slice(0, 8)) {
-      const pct = Math.round((count / maxCount) * 100);
-      html += `<div class="bar-row">
-        <span class="bar-label">.${escapeHtml(ext)}</span>
-        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-        <span class="bar-value">${count.toLocaleString()}</span>
-      </div>`;
-    }
-    html += `</div></div>`;
-  }
-
-  // Top cameras
   const cams = stats.top_cameras;
-  if (cams && cams.length) {
-    const maxCam = cams[0][1];
-    html += `<div class="dashboard-section">
-      <h3>${t("dashboard.top_cameras")}</h3>
-      <div class="bar-chart">`;
-    for (const [cam, count] of cams.slice(0, 6)) {
-      const pct = Math.round((count / maxCam) * 100);
-      html += `<div class="bar-row">
-        <span class="bar-label">${escapeHtml(cam)}</span>
-        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-        <span class="bar-value">${count.toLocaleString()}</span>
-      </div>`;
+  if ((exts && exts.length) || (cams && cams.length)) {
+    html += `<div class="dash-two-col">`;
+
+    if (exts && exts.length) {
+      const maxCount = exts[0][1];
+      html += `<section class="dash-card">
+        <h2 class="dash-card-title">${t("dashboard.top_extensions")}</h2>
+        <div class="dash-bars">`;
+      for (const [ext, count] of exts.slice(0, 8)) {
+        const pct = Math.round((count / maxCount) * 100);
+        html += `<div class="dash-bar-row">
+          <span class="dash-bar-label">.${escapeHtml(ext)}</span>
+          <div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pct}%"></div></div>
+          <span class="dash-bar-value">${count.toLocaleString()}</span>
+        </div>`;
+      }
+      html += `</div></section>`;
     }
-    html += `</div></div>`;
+
+    if (cams && cams.length) {
+      const maxCam = cams[0][1];
+      html += `<section class="dash-card">
+        <h2 class="dash-card-title">${t("dashboard.top_cameras")}</h2>
+        <div class="dash-bars">`;
+      for (const [cam, count] of cams.slice(0, 6)) {
+        const pct = Math.round((count / maxCam) * 100);
+        html += `<div class="dash-bar-row">
+          <span class="dash-bar-label">${escapeHtml(cam)}</span>
+          <div class="dash-bar-track"><div class="dash-bar-fill dash-bar-fill--cam" style="width:${pct}%"></div></div>
+          <span class="dash-bar-value">${count.toLocaleString()}</span>
+        </div>`;
+      }
+      html += `</div></section>`;
+    }
+
+    html += `</div>`;
   }
 
-  // Activity feed section
-  html += `<div class="dashboard-section">
-    <h3>📋 ${t("activity.recent_title")}</h3>
+  // ── Activity feed
+  html += `<section class="dash-card">
+    <h2 class="dash-card-title">${t("activity.recent_title")}</h2>
     <div id="activity-feed"></div>
-  </div>`;
+  </section>`;
+
+  html += `</div>`; // close .dash
 
   container.innerHTML = html;
 
-  // Render activity feed
+  // ── Bind events ───────────────────────────────────────────────
+
+  // Activity feed
   const activityEl = container.querySelector("#activity-feed");
   if (activityEl) renderActivityFeed(activityEl);
 
-  // Bind refresh
+  // Refresh
   const refreshBtn = container.querySelector("#btn-dashboard-refresh");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", () => render(container));
-  }
+  if (refreshBtn) refreshBtn.addEventListener("click", () => render(container));
 
-  // Bind scan
+  // Scan
   const scanBtn = container.querySelector("#btn-dashboard-scan");
   if (scanBtn) {
     scanBtn.addEventListener("click", () => {
-      // Open settings panel (which has the pipeline form)
       const settingsBtn = $("#btn-settings");
       if (settingsBtn) settingsBtn.click();
     });
   }
 
-  // Bind report generation
+  // Report
   const reportBtn = container.querySelector("#btn-generate-report");
   if (reportBtn) {
-    reportBtn.addEventListener("click", () => {
-      window.open("/api/report/generate", "_blank");
-    });
+    reportBtn.addEventListener("click", () => window.open("/api/report/generate", "_blank"));
   }
 
-  // Bind open settings link (for empty managed folders)
-  const openSettingsLink = container.querySelector("#btn-dashboard-open-settings");
-  if (openSettingsLink) {
-    openSettingsLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      const settingsBtn = $("#btn-settings");
-      if (settingsBtn) settingsBtn.click();
-    });
-  }
-
-  // Bind source sync buttons (incremental scan for a single root)
-  container.querySelectorAll(".source-sync-btn").forEach(btn => {
+  // Source sync
+  container.querySelectorAll(".dash-source-sync").forEach(btn => {
     btn.addEventListener("click", async () => {
       const root = btn.dataset.root;
       btn.disabled = true;
@@ -511,8 +531,8 @@ async function renderDashboard(container, stats) {
     });
   });
 
-  // Bind smart view cards
-  container.querySelectorAll(".smart-view-card").forEach(btn => {
+  // Smart views
+  container.querySelectorAll(".dash-smart-pill").forEach(btn => {
     btn.addEventListener("click", () => {
       const idx = parseInt(btn.dataset.smartIdx, 10);
       const filter = smartCards[idx].filter;
@@ -521,20 +541,20 @@ async function renderDashboard(container, stats) {
     });
   });
 
-  // Bind memories thumbnail clicks to open lightbox
+  // Memory thumbnails -> lightbox
   const memThumbs = container.querySelectorAll("[data-memory-path]");
   if (memThumbs.length > 0) {
     const memPaths = Array.from(memThumbs).map(el => el.dataset.memoryPath);
     memThumbs.forEach((thumb, idx) => {
-      thumb.addEventListener("click", () => {
-        openLightbox(memPaths, idx);
-      });
+      thumb.addEventListener("click", () => openLightbox(memPaths, idx));
     });
   }
 
-  // Load integrity score widget
+  // Integrity score widget
   loadIntegrityScore();
 }
+
+// ── Integrity score ─────────────────────────────────────────────
 
 async function loadIntegrityScore() {
   const el = document.getElementById("integrity-score-widget");
@@ -545,31 +565,31 @@ async function loadIntegrityScore() {
     const grade = data.grade || "?";
     const circumference = 2 * Math.PI * 40;
     const offset = circumference * (1 - score / 100);
-    const color = score >= 80 ? "#3fb950" : score >= 60 ? "#d29922" : "#f85149";
+    const color = score >= 80 ? "var(--color-success)" : score >= 60 ? "var(--color-warning)" : "var(--color-error)";
 
     const factors = Object.values(data.factors || {}).map(f =>
-      `<div style="display:flex;justify-content:space-between;font-size:0.8rem;padding:0.15rem 0">
+      `<div class="dash-integrity-factor">
         <span>${f.label}</span>
-        <span style="color:${f.value >= 70 ? '#3fb950' : f.value >= 40 ? '#d29922' : '#f85149'}">${f.value}%</span>
+        <span class="dash-integrity-factor-val" style="color:${f.value >= 70 ? 'var(--color-success)' : f.value >= 40 ? 'var(--color-warning)' : 'var(--color-error)'}">${f.value}%</span>
       </div>`
     ).join("");
 
     el.innerHTML = `
-      <div style="display:flex;align-items:center;gap:1.5rem;padding:1rem;background:var(--card);border:1px solid var(--border);border-radius:12px">
-        <div style="position:relative;width:100px;height:100px;flex-shrink:0">
-          <svg viewBox="0 0 100 100" style="transform:rotate(-90deg)">
-            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--border)" stroke-width="8"/>
-            <circle cx="50" cy="50" r="40" fill="none" stroke="${color}" stroke-width="8"
+      <div class="dash-card dash-integrity-card">
+        <div class="dash-integrity-ring">
+          <svg viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--color-border)" stroke-width="7"/>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="${color}" stroke-width="7"
               stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"
-              style="transition:stroke-dashoffset 1s ease"/>
+              style="transform:rotate(-90deg);transform-origin:center;transition:stroke-dashoffset 1s ease"/>
           </svg>
-          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
-            <span style="font-size:1.5rem;font-weight:700;color:${color}">${grade}</span>
-            <span style="font-size:0.7rem;color:var(--text-secondary)">${score}%</span>
+          <div class="dash-integrity-center">
+            <span class="dash-integrity-grade" style="color:${color}">${grade}</span>
+            <span class="dash-integrity-pct">${score}%</span>
           </div>
         </div>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;margin-bottom:0.5rem">Zdrav\u00ed knihovny</div>
+        <div class="dash-integrity-details">
+          <h3 class="dash-card-title">${t("dashboard.library_health")}</h3>
           ${factors}
         </div>
       </div>`;
