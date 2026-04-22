@@ -71,6 +71,10 @@
           <span class="nav-icon">&#128241;</span>
           <span class="nav-label">iPhone</span>
         </a>
+        <a href="#albums" data-page="albums">
+          <span class="nav-icon">&#128218;</span>
+          <span class="nav-label">Alba</span>
+        </a>
       </div>
       <div class="nav-bottom">
         <button id="btn-settings" class="nav-settings-btn" aria-label="Nastavení" title="Nastavení">
@@ -79,6 +83,15 @@
         </button>
       </div>
     </nav>
+    <!-- Global search -->
+    <div class="global-search" id="global-search">
+      <div class="global-search-input-wrap">
+        <span class="global-search-icon">&#128269;</span>
+        <input type="text" id="global-search-input" placeholder="Search files..." autocomplete="off" aria-label="Search files">
+        <kbd class="global-search-kbd">&#8984;K</kbd>
+      </div>
+      <div class="global-search-results hidden" id="global-search-results"></div>
+    </div>
     <main id="content" role="main" aria-live="polite">
       <div class="loading"><div class="spinner" role="status" aria-label="Načítání"></div>Načítání...</div>
     </main>

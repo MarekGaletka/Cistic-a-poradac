@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from .routes.albums import router as albums_router
 from .routes.backup import router as backup_router
 from .routes.cloud import _remotes_cache  # noqa: F401 — re-export for tests
 from .routes.cloud import router as cloud_router
@@ -19,6 +20,7 @@ from .routes.gallery import router as gallery_router
 from .routes.iphone import router as iphone_router
 from .routes.recovery import router as recovery_router
 from .routes.reorganize import router as reorganize_router
+from .routes.search import router as search_router
 from .routes.scenarios import router as scenarios_router
 from .routes.shares import router as shares_router
 from .routes.system import router as system_router
@@ -99,3 +101,5 @@ router.include_router(cloud_router)
 router.include_router(faces_router)
 router.include_router(consolidation_router)
 router.include_router(iphone_router)
+router.include_router(albums_router)
+router.include_router(search_router)

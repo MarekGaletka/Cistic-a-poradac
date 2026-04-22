@@ -2,11 +2,12 @@
 
 import { t } from "./i18n.js";
 import { $, $$, content, showToast } from "./utils.js";
-import { closeAllModals } from "./modal.js";
+import { closeAllModals, showFileDetail } from "./modal.js";
 import { closeLightbox } from "./lightbox.js";
 import { cleanupTasks } from "./tasks.js";
 import { cleanup as cleanupMap } from "./pages/map.js";
 import { initGlobalProgress } from "./tasks.js";
+import { initSearch } from "./search.js";
 
 // Page modules
 import * as dashboard from "./pages/dashboard.js";
@@ -21,6 +22,7 @@ import * as gallery from "./pages/gallery.js";
 import * as people from "./pages/people.js";
 import * as consolidation from "./pages/consolidation.js";
 import * as iphone from "./pages/iphone.js";
+import * as albums from "./pages/albums.js";
 
 // ── Router ──────────────────────────────────────────
 
@@ -37,6 +39,7 @@ const pages = {
   iphone,
   pipeline,
   doctor,
+  albums,
 };
 
 let _currentPage = null;
@@ -247,6 +250,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Init global progress bar
   initGlobalProgress();
+
+  // Init global search
+  initSearch();
+
+  // Listen for search result open events
+  document.addEventListener("gml-open-file", (e) => {
+    if (e.detail && e.detail.path) showFileDetail(e.detail.path);
+  });
 
   // Hash-based routing
   window.addEventListener("hashchange", () => navigate(location.hash.slice(1) || "dashboard"));

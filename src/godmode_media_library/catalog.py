@@ -13,7 +13,7 @@ from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -242,6 +242,15 @@ CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dup_group_file ON duplicates(group_id, file_id);
 CREATE INDEX IF NOT EXISTS idx_labels_people ON labels(people);
 CREATE INDEX IF NOT EXISTS idx_labels_place ON labels(place);
+
+CREATE TABLE IF NOT EXISTS smart_albums (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL,
+    icon         TEXT    NOT NULL DEFAULT '',
+    filters_json TEXT    NOT NULL DEFAULT '{}',
+    created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL
+);
 """
 
 
@@ -677,6 +686,26 @@ class Catalog:
             except sqlite3.Error:
                 logger.exception("Migration v13 failed")
                 self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v13")
+                raise
+
+        if from_version < 14:
+            logger.info("Migrating catalog schema v%d -> v14: adding smart_albums table", from_version)
+            self._conn.execute("SAVEPOINT migrate_v14")
+            try:
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS smart_albums (
+                        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name         TEXT    NOT NULL,
+                        icon         TEXT    NOT NULL DEFAULT '',
+                        filters_json TEXT    NOT NULL DEFAULT '{}',
+                        created_at   TEXT    NOT NULL,
+                        updated_at   TEXT    NOT NULL
+                    )
+                """)
+                self._conn.execute("RELEASE SAVEPOINT migrate_v14")
+            except sqlite3.Error:
+                logger.exception("Migration v14 failed")
+                self._conn.execute("ROLLBACK TO SAVEPOINT migrate_v14")
                 raise
 
     def _release_lock(self) -> None:
@@ -1450,6 +1479,236 @@ class Catalog:
                 result[row[0]] = row[1]
         return result
 
+    # ── Smart Album operations ─────────────────────────────────────
+
+    def create_smart_album(self, name: str, icon: str = "", filters_json: str = "{}") -> dict:
+        """Create a smart album. Returns the new album as a dict."""
+        import json as _json
+
+        # Validate JSON
+        _json.loads(filters_json)
+        now = utc_stamp()
+        cur = self.conn.execute(
+            "INSERT INTO smart_albums (name, icon, filters_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (name, icon, filters_json, now, now),
+        )
+        self.conn.commit()
+        return {
+            "id": cur.lastrowid,
+            "name": name,
+            "icon": icon,
+            "filters_json": filters_json,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def get_smart_albums(self) -> list[dict]:
+        """Return all smart albums."""
+        cur = self.conn.execute("SELECT id, name, icon, filters_json, created_at, updated_at FROM smart_albums ORDER BY id")
+        return [
+            {"id": r[0], "name": r[1], "icon": r[2], "filters_json": r[3], "created_at": r[4], "updated_at": r[5]}
+            for r in cur.fetchall()
+        ]
+
+    def get_smart_album(self, album_id: int) -> dict | None:
+        """Return a single smart album by id, or None."""
+        cur = self.conn.execute(
+            "SELECT id, name, icon, filters_json, created_at, updated_at FROM smart_albums WHERE id = ?",
+            (album_id,),
+        )
+        r = cur.fetchone()
+        if r is None:
+            return None
+        return {"id": r[0], "name": r[1], "icon": r[2], "filters_json": r[3], "created_at": r[4], "updated_at": r[5]}
+
+    def update_smart_album(self, album_id: int, *, name: str | None = None, icon: str | None = None, filters_json: str | None = None) -> bool:
+        """Update a smart album. Returns True if found and updated."""
+        import json as _json
+
+        sets: list[str] = []
+        params: list[object] = []
+        if name is not None:
+            sets.append("name = ?")
+            params.append(name)
+        if icon is not None:
+            sets.append("icon = ?")
+            params.append(icon)
+        if filters_json is not None:
+            _json.loads(filters_json)  # validate
+            sets.append("filters_json = ?")
+            params.append(filters_json)
+        if not sets:
+            return False
+        sets.append("updated_at = ?")
+        params.append(utc_stamp())
+        params.append(album_id)
+        cur = self.conn.execute(
+            f"UPDATE smart_albums SET {', '.join(sets)} WHERE id = ?",  # noqa: S608
+            params,
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def delete_smart_album(self, album_id: int) -> bool:
+        """Delete a smart album. Returns True if deleted."""
+        cur = self.conn.execute("DELETE FROM smart_albums WHERE id = ?", (album_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def query_smart_album_files(self, album_id: int, *, limit: int = 100, offset: int = 0) -> tuple[list[CatalogFileRow], int]:
+        """Parse a smart album's filters and query matching files.
+
+        Returns (rows, total_estimate).
+        """
+        import json as _json
+
+        album = self.get_smart_album(album_id)
+        if album is None:
+            return [], 0
+        try:
+            filters = _json.loads(album["filters_json"])
+        except (ValueError, TypeError):
+            filters = {}
+
+        conditions: list[str] = []
+        params: list[object] = []
+
+        # date_from / date_to -- match against EXIF date_original (YYYY:MM:DD format)
+        if filters.get("date_from"):
+            exif_from = filters["date_from"].replace("-", ":")
+            conditions.append("date_original >= ?")
+            params.append(exif_from)
+        if filters.get("date_to"):
+            exif_to = filters["date_to"].replace("-", ":")
+            conditions.append("date_original <= ?")
+            params.append(exif_to + " 23:59:59")
+
+        # camera_make
+        if filters.get("camera_make"):
+            escaped = filters["camera_make"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("camera_make LIKE ? ESCAPE '\\'")
+            params.append(f"%{escaped}%")
+
+        # camera_model
+        if filters.get("camera_model"):
+            escaped = filters["camera_model"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("camera_model LIKE ? ESCAPE '\\'")
+            params.append(f"%{escaped}%")
+
+        # has_gps
+        if filters.get("has_gps") is True:
+            conditions.append("gps_latitude IS NOT NULL")
+
+        # file_type (image / video)
+        _IMAGE_EXTS = ("jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "heic", "heif", "svg", "raw", "cr2", "nef", "arw", "dng")
+        _VIDEO_EXTS = ("mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp")
+        ft = filters.get("file_type", "").lower()
+        if ft == "image":
+            ph = ",".join("?" for _ in _IMAGE_EXTS)
+            conditions.append(f"ext IN ({ph})")
+            params.extend(_IMAGE_EXTS)
+        elif ft == "video":
+            ph = ",".join("?" for _ in _VIDEO_EXTS)
+            conditions.append(f"ext IN ({ph})")
+            params.extend(_VIDEO_EXTS)
+
+        # min_size / max_size (in bytes)
+        if filters.get("min_size"):
+            conditions.append("size >= ?")
+            params.append(int(filters["min_size"]))
+        if filters.get("max_size"):
+            conditions.append("size <= ?")
+            params.append(int(filters["max_size"]))
+
+        # path_contains
+        if filters.get("path_contains"):
+            escaped = filters["path_contains"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("path LIKE ? ESCAPE '\\'")
+            params.append(f"%{escaped}%")
+
+        # ext -- specific extension(s), comma-separated
+        if filters.get("ext"):
+            ext_list = [e.strip().lower().lstrip(".") for e in filters["ext"].split(",") if e.strip()]
+            if ext_list:
+                ph = ",".join("?" for _ in ext_list)
+                conditions.append(f"ext IN ({ph})")
+                params.extend(ext_list)
+
+        # quality_category
+        if filters.get("quality_category"):
+            conditions.append("quality_category = ?")
+            params.append(filters["quality_category"])
+
+        where = " AND ".join(conditions) if conditions else "1=1"
+
+        # Count total
+        count_sql = f"SELECT COUNT(*) FROM files WHERE {where}"  # noqa: S608
+        total = self.conn.execute(count_sql, params).fetchone()[0]
+
+        # Fetch rows
+        sql = (
+            f"SELECT id, path, size, mtime, ctime, birthtime, ext, sha256, "  # noqa: S608
+            f"inode, device, nlink, asset_key, asset_component, xattr_count, "
+            f"first_seen, last_scanned, duration_seconds, width, height, "
+            f"video_codec, audio_codec, bitrate, phash, date_original, "
+            f"camera_make, camera_model, gps_latitude, gps_longitude, metadata_richness "
+            f"FROM files WHERE {where} "
+            f"ORDER BY COALESCE(date_original, birthtime, mtime) DESC "
+            f"LIMIT ? OFFSET ?"
+        )
+        rows_raw = self.conn.execute(sql, [*params, limit, offset]).fetchall()
+        rows = [CatalogFileRow(*r) for r in rows_raw]
+
+        # Post-filter for criteria that need joins (has_faces, min_rating, tags)
+        needs_post_filter = any(filters.get(k) for k in ("has_faces", "min_rating", "tags"))
+        if needs_post_filter and rows:
+            # has_faces filter
+            if filters.get("has_faces"):
+                file_ids = [r.id for r in rows]
+                ph = ",".join("?" for _ in file_ids)
+                face_rows = self.conn.execute(
+                    f"SELECT DISTINCT file_id FROM faces WHERE file_id IN ({ph})",  # noqa: S608
+                    file_ids,
+                ).fetchall()
+                face_file_ids = {r[0] for r in face_rows}
+                rows = [r for r in rows if r.id in face_file_ids]
+
+            # min_rating filter
+            if filters.get("min_rating"):
+                min_r = int(filters["min_rating"])
+                ratings = self.get_files_ratings_bulk([r.path for r in rows])
+                rows = [r for r in rows if ratings.get(r.path, 0) >= min_r]
+
+            # tags filter -- match files that have ALL specified tags
+            if filters.get("tags"):
+                tag_names = filters["tags"]
+                if isinstance(tag_names, list) and tag_names:
+                    ph = ",".join("?" for _ in tag_names)
+                    tag_id_rows = self.conn.execute(
+                        f"SELECT id FROM tags WHERE name IN ({ph})",  # noqa: S608
+                        tag_names,
+                    ).fetchall()
+                    required_tag_ids = {r[0] for r in tag_id_rows}
+                    if required_tag_ids:
+                        file_ids = [r.id for r in rows]
+                        if file_ids:
+                            fph = ",".join("?" for _ in file_ids)
+                            tph = ",".join("?" for _ in required_tag_ids)
+                            ft_rows = self.conn.execute(
+                                f"SELECT file_id, tag_id FROM file_tags WHERE file_id IN ({fph}) AND tag_id IN ({tph})",  # noqa: S608
+                                [*file_ids, *required_tag_ids],
+                            ).fetchall()
+                            file_tag_map: dict[int, set[int]] = {}
+                            for fid, tid in ft_rows:
+                                file_tag_map.setdefault(fid, set()).add(tid)
+                            rows = [r for r in rows if file_tag_map.get(r.id, set()) >= required_tag_ids]
+                    else:
+                        rows = []
+
+            total = len(rows)
+
+        return rows, total
+
     # ── Face / Person operations ────────────────────────────────────
 
     def insert_face(
@@ -1878,6 +2137,76 @@ class Catalog:
 
         cur = self.conn.execute(sql, params)
         return [self._row_to_catalog_file(row) for row in cur.fetchall()]
+
+    def search_files(
+        self,
+        query: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[CatalogFileRow], int]:
+        """Search files across path, camera_make, camera_model, date_original.
+
+        Returns (results, total_count).  Results are ranked by relevance:
+        1. Exact filename match
+        2. Partial path match
+        3. Metadata match (camera / date)
+        """
+        if not query or not query.strip():
+            return [], 0
+
+        q = query.strip()
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_pat = f"%{escaped}%"
+
+        # Count total matches
+        count_sql = (
+            "SELECT COUNT(*) FROM files WHERE "
+            "(path LIKE ? ESCAPE '\\' "
+            "OR camera_make LIKE ? ESCAPE '\\' "
+            "OR camera_model LIKE ? ESCAPE '\\' "
+            "OR date_original LIKE ? ESCAPE '\\')"
+        )
+        count_params: list[object] = [like_pat, like_pat, like_pat, like_pat]
+        total = self.conn.execute(count_sql, count_params).fetchone()[0]
+
+        if total == 0:
+            return [], 0
+
+        # Fetch with relevance ordering:
+        # - filename exact match first
+        # - filename contains query
+        # - path contains query
+        # - metadata-only match
+        filename_exact = f"%/{escaped}"
+        search_sql = (
+            "SELECT *, "
+            "CASE "
+            "  WHEN path LIKE ? ESCAPE '\\' THEN 0 "
+            "  WHEN path LIKE ? ESCAPE '\\' THEN 1 "
+            "  WHEN path LIKE ? ESCAPE '\\' THEN 2 "
+            "  ELSE 3 "
+            "END AS _relevance "
+            "FROM files WHERE "
+            "(path LIKE ? ESCAPE '\\' "
+            "OR camera_make LIKE ? ESCAPE '\\' "
+            "OR camera_model LIKE ? ESCAPE '\\' "
+            "OR date_original LIKE ? ESCAPE '\\') "
+            "ORDER BY _relevance ASC, path ASC "
+            "LIMIT ? OFFSET ?"
+        )
+        search_params: list[object] = [
+            filename_exact,    # relevance 0: exact filename
+            f"%/{escaped}%",   # relevance 1: filename contains
+            like_pat,          # relevance 2: path contains
+            like_pat, like_pat, like_pat, like_pat,  # WHERE clause
+            limit, offset,
+        ]
+
+        cur = self.conn.execute(search_sql, search_params)
+        rows = cur.fetchall()
+        # Strip the extra _relevance column before converting
+        results = [self._row_to_catalog_file(row[:-1]) for row in rows]
+        return results, total
 
     def query_duplicates(
         self,
