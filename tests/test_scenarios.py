@@ -459,7 +459,7 @@ class TestExecuteStepTypes:
     def test_dedup_resolve_step(self):
         from godmode_media_library.scenarios import _execute_step
         mock_cat = MagicMock()
-        mock_cat.query_duplicates.return_value = {"groups": [{"files": [1, 2]}, {"files": [3]}]}
+        mock_cat.query_duplicates.return_value = [("g1", [1, 2]), ("g2", [3])]
         with patch("godmode_media_library.scenarios.Catalog", return_value=mock_cat, create=True):
             with patch.dict("sys.modules", {"godmode_media_library.catalog": MagicMock(Catalog=lambda p: mock_cat)}):
                 result = _execute_step("dedup_resolve", {}, "/fake/catalog.db", None)

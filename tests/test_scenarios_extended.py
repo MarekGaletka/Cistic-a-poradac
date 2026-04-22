@@ -373,7 +373,7 @@ class TestExecuteStepExtended:
 
     def test_dedup_resolve_step(self):
         mock_cat = MagicMock()
-        mock_cat.query_duplicates.return_value = {"groups": [{"files": ["a", "b"]}]}
+        mock_cat.query_duplicates.return_value = [("g1", ["a", "b"])]
         with patch("godmode_media_library.catalog.Catalog", return_value=mock_cat):
             result = _execute_step("dedup_resolve", {}, "/tmp/cat.db", None)
         assert result["groups_found"] == 1
