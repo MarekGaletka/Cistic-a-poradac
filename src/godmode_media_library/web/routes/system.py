@@ -8,6 +8,7 @@ import sys
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import quote as _url_quote
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -655,5 +656,5 @@ def report_download(request: Request) -> HTMLResponse:
     filename = f"godmode_report_{ts}.html"
     return HTMLResponse(
         content=html,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + _url_quote(filename, safe="")},
     )

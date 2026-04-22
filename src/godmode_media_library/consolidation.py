@@ -1746,11 +1746,23 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 lower_path = archive_path.lower()
                 if lower_path.endswith(".zip"):
                     with zipfile.ZipFile(local_archive, "r") as zf:
+                        # Zip Slip + zip bomb protection
+                        total_uncompressed = 0
+                        archive_size = os.path.getsize(local_archive) or 1
+                        max_uncompressed = 100 * 1024 ** 3  # 100 GB absolute limit
                         for info in zf.infolist():
                             member_path = os.path.realpath(os.path.join(extract_dir, info.filename))
                             real_extract = os.path.realpath(extract_dir)
                             if not member_path.startswith(real_extract + os.sep) and member_path != real_extract:
                                 raise ValueError(f"Zip Slip: {info.filename} escapes extraction directory")
+                            total_uncompressed += info.file_size
+                        if total_uncompressed > max_uncompressed or (
+                            total_uncompressed > archive_size * 100 and total_uncompressed > 10 * 1024 ** 3
+                        ):
+                            raise ValueError(
+                                f"Zip bomb detected: {total_uncompressed} bytes uncompressed "
+                                f"from {archive_size} byte archive (ratio {total_uncompressed / archive_size:.0f}x)"
+                            )
                         zf.extractall(extract_dir)
                 elif lower_path.endswith(".tar.gz") or lower_path.endswith(".tgz"):
                     with tarfile.open(local_archive, "r:gz") as tf:

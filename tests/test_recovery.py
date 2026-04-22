@@ -282,6 +282,53 @@ class TestRestoreFromQuarantine:
 # ---------------------------------------------------------------------------
 
 
+class TestRestoreManifestGuard:
+    """Regression: restore_from_quarantine must NOT overwrite a valid manifest
+    when the manifest read fails (e.g. corrupted JSON on disk)."""
+
+    def test_corrupt_manifest_not_overwritten(self, tmp_path):
+        """If manifest.json is corrupt, it must NOT be overwritten with '{}'."""
+        qdir = tmp_path / "quarantine"
+        qdir.mkdir()
+        f = qdir / "photo.jpg"
+        f.write_bytes(b"JPEG_DATA")
+
+        # Write a valid manifest, then corrupt it
+        manifest_path = qdir / "manifest.json"
+        original_content = '{"VALID": "DATA", "SHOULD_SURVIVE": true}'
+        manifest_path.write_text(original_content)
+        # Now corrupt it so json.loads fails
+        manifest_path.write_text("NOT VALID JSON{{{")
+
+        dest = tmp_path / "restored"
+        restore_from_quarantine(
+            paths=[str(f)], quarantine_root=qdir, restore_to=str(dest)
+        )
+
+        # The corrupt manifest should NOT have been overwritten with empty dict
+        after = manifest_path.read_text()
+        assert after == "NOT VALID JSON{{{", (
+            "Corrupt manifest was overwritten — manifest_loaded guard failed"
+        )
+
+    def test_valid_manifest_is_updated_after_restore(self, tmp_path):
+        """If manifest is valid, it should be updated (entry removed) after restore."""
+        qdir = tmp_path / "quarantine"
+        qdir.mkdir()
+        f = qdir / "photo.jpg"
+        f.write_bytes(b"JPEG_DATA")
+
+        dest = tmp_path / "restored"
+        dest.mkdir()
+        manifest = {str(f): {"original_path": str(dest / "photo.jpg")}}
+        (qdir / "manifest.json").write_text(json.dumps(manifest))
+
+        restore_from_quarantine(paths=[str(f)], quarantine_root=qdir)
+
+        updated = json.loads((qdir / "manifest.json").read_text())
+        assert str(f) not in updated
+
+
 class TestDeleteFromQuarantine:
     def test_delete_file(self, tmp_path):
         qdir = tmp_path / "quarantine"

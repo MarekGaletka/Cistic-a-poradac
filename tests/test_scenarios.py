@@ -183,6 +183,19 @@ class TestPersistence:
         monkeypatch.setattr(scenarios, "_SCENARIOS_PATH", bad_path)
         assert list_scenarios() == []
 
+    def test_corrupt_json_creates_bak(self, tmp_path, monkeypatch):
+        """Regression: corrupted scenarios.json must create a .bak backup."""
+        bad_path = tmp_path / "scenarios.json"
+        bad_path.write_text("{CORRUPT JSON HERE!!!")
+        monkeypatch.setattr(scenarios, "_SCENARIOS_PATH", bad_path)
+
+        result = list_scenarios()
+        assert result == []
+
+        bak_path = bad_path.with_suffix(".bak")
+        assert bak_path.exists(), ".bak backup was not created for corrupt scenarios file"
+        assert bak_path.read_text() == "{CORRUPT JSON HERE!!!"
+
     def test_roundtrip_with_trigger(self):
         created = create_scenario({
             "name": "Triggered",

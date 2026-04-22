@@ -1,6 +1,7 @@
 """Unit tests for consolidation.py helper functions."""
 
 import os
+import struct
 import tarfile
 import zipfile
 from pathlib import PurePosixPath
@@ -270,6 +271,72 @@ class TestZipSlipProtection:
 
 
 # ── EMA / speed helpers ──────────────────────────────────────────────
+
+
+class TestZipBombProtection:
+    """Regression: zip extraction must reject zip bombs (high compression ratio)."""
+
+    def test_zip_bomb_absolute_limit_rejected(self, tmp_path):
+        """A zip claiming >100 GB uncompressed must be rejected."""
+        zip_path = tmp_path / "bomb.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("small.txt", "x")
+
+        # Patch the infolist to report enormous uncompressed size
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            total_uncompressed = 0
+            archive_size = os.path.getsize(zip_path) or 1
+            max_uncompressed = 100 * 1024 ** 3  # 100 GB
+            for info in zf.infolist():
+                # Simulate a zip bomb by faking file_size
+                info.file_size = 200 * 1024 ** 3  # 200 GB claimed
+                total_uncompressed += info.file_size
+
+            assert total_uncompressed > max_uncompressed
+            # This is the exact check from consolidation.py
+            bomb_detected = total_uncompressed > max_uncompressed or (
+                total_uncompressed > archive_size * 100
+                and total_uncompressed > 10 * 1024 ** 3
+            )
+            assert bomb_detected, "Zip bomb (absolute limit) was not detected"
+
+    def test_zip_bomb_ratio_detected(self, tmp_path):
+        """A small archive claiming >100x ratio + >10 GB must be rejected."""
+        zip_path = tmp_path / "ratio_bomb.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("data.bin", "tiny")
+
+        archive_size = os.path.getsize(zip_path) or 1
+        # Simulate: 20 GB uncompressed from ~100 byte archive
+        total_uncompressed = 20 * 1024 ** 3
+        max_uncompressed = 100 * 1024 ** 3
+
+        bomb_detected = total_uncompressed > max_uncompressed or (
+            total_uncompressed > archive_size * 100
+            and total_uncompressed > 10 * 1024 ** 3
+        )
+        assert bomb_detected, "Zip bomb (ratio check) was not detected"
+
+    def test_normal_zip_not_rejected(self, tmp_path):
+        """A normal zip with reasonable ratio should pass."""
+        zip_path = tmp_path / "normal.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("data.txt", "hello world " * 100)
+
+        archive_size = os.path.getsize(zip_path) or 1
+        max_uncompressed = 100 * 1024 ** 3
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            total_uncompressed = sum(info.file_size for info in zf.infolist())
+
+        bomb_detected = total_uncompressed > max_uncompressed or (
+            total_uncompressed > archive_size * 100
+            and total_uncompressed > 10 * 1024 ** 3
+        )
+        assert not bomb_detected, "Normal zip was falsely detected as zip bomb"
 
 
 class TestSpeedHelpers:

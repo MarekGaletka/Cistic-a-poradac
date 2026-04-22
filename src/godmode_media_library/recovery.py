@@ -186,11 +186,15 @@ def restore_from_quarantine(
     root = (quarantine_root.resolve() if quarantine_root else None) or _DEFAULT_QUARANTINE
     manifest_path = root / "manifest.json"
     manifest: dict[str, Any] = {}
+    manifest_loaded = False
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
+            manifest_loaded = True
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Cannot read quarantine manifest %s: %s", manifest_path, exc)
+    else:
+        manifest_loaded = True  # No manifest file yet is a valid initial state
 
     restored = 0
     errors: list[str] = []
@@ -232,12 +236,15 @@ def restore_from_quarantine(
         except Exception as e:
             errors.append(f"Failed to restore {p}: {e}")
 
-    # Update manifest
-    if manifest_path.exists() or restored > 0:
+    # Only write manifest back if it was successfully loaded to avoid
+    # overwriting a valid manifest with an empty dict on read failure
+    if manifest_loaded:
         try:
             manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
         except OSError as exc:
             logger.warning("Cannot write quarantine manifest %s: %s", manifest_path, exc)
+    else:
+        logger.warning("Skipping manifest write — manifest was not successfully loaded from %s", manifest_path)
 
     return {"restored": restored, "errors": errors}
 

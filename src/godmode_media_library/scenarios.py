@@ -237,8 +237,16 @@ def _load_scenarios() -> list[Scenario]:
             )
             scenarios.append(sc)
         return scenarios
-    except Exception as e:
-        logger.error("Failed to load scenarios: %s", e)
+    except json.JSONDecodeError as e:
+        logger.error("Corrupted scenarios file %s: %s — creating backup", _SCENARIOS_PATH, e)
+        try:
+            import shutil
+            shutil.copy2(_SCENARIOS_PATH, _SCENARIOS_PATH.with_suffix(".bak"))
+        except OSError:
+            pass
+        return []
+    except OSError as e:
+        logger.error("Cannot read scenarios file %s: %s", _SCENARIOS_PATH, e)
         return []
 
 

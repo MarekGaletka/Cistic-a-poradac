@@ -423,6 +423,19 @@ class TestReportDownload:
         assert resp.status_code == 200
         assert "attachment" in resp.headers.get("content-disposition", "")
 
+    def test_report_download_uses_rfc5987_encoding(self, client):
+        """Regression: Content-Disposition must use RFC 5987 encoding (filename*=UTF-8'')
+        instead of bare filename="..." to prevent header injection."""
+        resp = client.get("/api/report/download")
+        cd = resp.headers.get("content-disposition", "")
+        assert "filename*=UTF-8''" in cd, (
+            f"Content-Disposition should use RFC 5987 encoding, got: {cd}"
+        )
+        # Must NOT contain bare filename="..." pattern (injection-vulnerable)
+        assert 'filename="' not in cd, (
+            f"Content-Disposition should not use bare filename=, got: {cd}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # POST /api/scan — triggers background task, returns task_id immediately
