@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from ..shared import (
@@ -57,9 +57,13 @@ class FaceClusterRequest(BaseModel):
 def _sync_person_labels(cat: Catalog, person_id: int) -> None:
     """Sync labels table when person name changes — update people column for all files with this person's faces."""
     faces = cat.get_faces_for_person(person_id, limit=100000)
-    file_ids = {f["file_id"] for f in faces}
+    file_ids = list({f["file_id"] for f in faces})
+    if not file_ids:
+        return
+    # Batch-load all faces for all affected files in one query (chunked)
+    faces_by_file = cat.get_faces_for_files(file_ids)
     for fid in file_ids:
-        all_faces = cat.get_faces_for_file(fid)
+        all_faces = faces_by_file.get(fid, [])
         names = sorted({f["person_name"] for f in all_faces if f.get("person_name")})
         people_str = ";".join(names)
         cat.upsert_label(fid, people=people_str)
@@ -226,14 +230,33 @@ def get_face_thumbnail(request: Request, face_id: int, size: int = Query(150, ge
         cache_key = f"face_{face_id}_{size}"
         cached = _thumb_cache_get(cache_key, size)
         if cached:
-            return StreamingResponse(io.BytesIO(cached), media_type="image/jpeg")
+            etag = f'"{face_id:x}-{len(cached):x}-{size:x}"'
+            if_none_match = request.headers.get("if-none-match")
+            if if_none_match and if_none_match.strip() == etag:
+                return Response(status_code=304, headers={"ETag": etag})
+            return StreamingResponse(
+                io.BytesIO(cached),
+                media_type="image/jpeg",
+                headers={
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "ETag": etag,
+                },
+            )
 
         data = crop_face_thumbnail(face["path"], face["bbox"], size=size)
         if data is None:
             raise HTTPException(404, "Cannot generate face thumbnail")
 
         _thumb_cache_put(cache_key, size, data)
-        return StreamingResponse(io.BytesIO(data), media_type="image/jpeg")
+        etag = f'"{face_id:x}-{len(data):x}-{size:x}"'
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "ETag": etag,
+            },
+        )
     finally:
         _return_catalog(cat)
 

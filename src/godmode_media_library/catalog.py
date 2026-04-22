@@ -1472,6 +1472,41 @@ class Catalog:
         )
         return cur.lastrowid  # type: ignore[return-value]
 
+    def get_faces_for_files(self, file_ids: list[int]) -> dict[int, list[dict]]:
+        """Batch-load faces for multiple file IDs in a single query (chunked for SQLite limit)."""
+        from collections import defaultdict
+
+        result: dict[int, list[dict]] = defaultdict(list)
+        if not file_ids:
+            return result
+        chunk_size = 500
+        id_list = list(file_ids)
+        for i in range(0, len(id_list), chunk_size):
+            chunk = id_list[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            cur = self.conn.execute(
+                f"""SELECT f.id, f.file_id, f.face_index, f.person_id, f.bbox_top, f.bbox_right,
+                          f.bbox_bottom, f.bbox_left, f.cluster_id, f.confidence,
+                          p.name as person_name
+                   FROM faces f LEFT JOIN persons p ON f.person_id = p.id
+                   WHERE f.file_id IN ({placeholders}) ORDER BY f.file_id, f.face_index""",
+                chunk,
+            )
+            for r in cur.fetchall():
+                result[r[1]].append(
+                    {
+                        "id": r[0],
+                        "file_id": r[1],
+                        "face_index": r[2],
+                        "person_id": r[3],
+                        "bbox": {"top": r[4], "right": r[5], "bottom": r[6], "left": r[7]},
+                        "cluster_id": r[8],
+                        "confidence": r[9],
+                        "person_name": r[10] or "",
+                    }
+                )
+        return result
+
     def get_faces_for_file(self, file_id: int) -> list[dict]:
         cur = self.conn.execute(
             """SELECT f.id, f.face_index, f.person_id, f.bbox_top, f.bbox_right,
@@ -1844,12 +1879,40 @@ class Catalog:
         cur = self.conn.execute(sql, params)
         return [self._row_to_catalog_file(row) for row in cur.fetchall()]
 
-    def query_duplicates(self) -> list[tuple[str, list[CatalogFileRow]]]:
-        """Return duplicate groups with their file rows."""
+    def query_duplicates(
+        self,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[tuple[str, list[CatalogFileRow]]]:
+        """Return duplicate groups with their file rows.
+
+        Parameters
+        ----------
+        limit:
+            Maximum number of *groups* to return.  ``None`` means all.
+        offset:
+            Number of groups to skip (for pagination).
+        """
+        # Build a sub-query that selects the desired group_ids with LIMIT/OFFSET.
+        params: list[int] = []
+        gid_sql = "SELECT DISTINCT group_id FROM duplicates ORDER BY group_id"
+        if limit is not None:
+            gid_sql += " LIMIT ?"
+            params.append(limit)
+            if offset:
+                gid_sql += " OFFSET ?"
+                params.append(offset)
+        elif offset:
+            # OFFSET without LIMIT: use -1 (unlimited) in SQLite
+            gid_sql += " LIMIT -1 OFFSET ?"
+            params.append(offset)
+
         cur = self.conn.execute(
-            """SELECT d.group_id, f.*
-               FROM duplicates d JOIN files f ON d.file_id = f.id
-               ORDER BY d.group_id, f.path"""
+            f"SELECT d.group_id, f.* "  # noqa: S608
+            f"FROM duplicates d JOIN files f ON d.file_id = f.id "
+            f"WHERE d.group_id IN ({gid_sql}) "
+            f"ORDER BY d.group_id, f.path",
+            params,
         )
         groups: dict[str, list[CatalogFileRow]] = {}
         for row in cur.fetchall():
@@ -1857,6 +1920,23 @@ class Catalog:
             file_row = self._row_to_catalog_file(row[1:])
             groups.setdefault(group_id, []).append(file_row)
         return list(groups.items())
+
+    def count_duplicate_groups(self) -> int:
+        """Return the total number of duplicate groups."""
+        row = self.conn.execute("SELECT COUNT(DISTINCT group_id) FROM duplicates").fetchone()
+        return row[0] if row else 0
+
+    def query_duplicate_group(self, group_id: str) -> list[CatalogFileRow] | None:
+        """Return file rows for a single duplicate group, or None if not found."""
+        cur = self.conn.execute(
+            "SELECT f.* FROM duplicates d JOIN files f ON d.file_id = f.id "
+            "WHERE d.group_id = ? ORDER BY f.path",
+            (group_id,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        return [self._row_to_catalog_file(row) for row in rows]
 
     def get_all_phashes(self) -> dict[str, str]:
         """Return dict of path → phash for all files with a phash."""
