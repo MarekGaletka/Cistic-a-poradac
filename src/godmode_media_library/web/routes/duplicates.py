@@ -32,13 +32,15 @@ def _quarantine_dest(quarantine_root: Path, original_path: Path) -> Path:
 def get_duplicates(
     request: Request,
     limit: int = Query(default=100, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> dict:
     """List duplicate groups."""
     cat = _open_catalog(request)
     try:
-        all_groups = cat.query_duplicates()  # list of (group_id, rows) tuples
+        total = cat.count_duplicate_groups()
+        page_groups = cat.query_duplicates(limit=limit, offset=offset)
         groups = []
-        for gid, rows in all_groups[:limit]:
+        for gid, rows in page_groups:
             groups.append(
                 {
                     "group_id": gid,
@@ -47,7 +49,7 @@ def get_duplicates(
                     "files": [{"path": str(r.path), "size": r.size} for r in rows],
                 }
             )
-        return {"groups": groups, "total_groups": len(all_groups)}
+        return {"groups": groups, "total_groups": total}
     finally:
         _return_catalog(cat)
 
@@ -124,12 +126,7 @@ def quarantine_duplicate_group(request: Request, group_id: str, body: DuplicateK
     quarantined = 0
     errors: list[str] = []
     try:
-        group_data = cat.query_duplicates()
-        group_rows = None
-        for gid, rows in group_data:
-            if gid == group_id:
-                group_rows = rows
-                break
+        group_rows = cat.query_duplicate_group(group_id)
         if group_rows is None:
             raise HTTPException(status_code=404, detail="Duplicate group not found")
 
@@ -216,12 +213,7 @@ def merge_duplicate_group(request: Request, group_id: str, body: DuplicateKeepRe
                 errors.append(f"Metadata merge failed: {e}")
 
         # Quarantine all but keeper
-        group_data = cat.query_duplicates()
-        group_rows = None
-        for gid, rows in group_data:
-            if gid == group_id:
-                group_rows = rows
-                break
+        group_rows = cat.query_duplicate_group(group_id)
         if group_rows is None:
             raise HTTPException(status_code=404, detail="Duplicate group not found")
 

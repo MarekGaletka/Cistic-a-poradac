@@ -687,10 +687,10 @@ def _execute_step(step_type: str, config: dict, catalog_path: str, progress_fn: 
         try:
             groups = cat.query_duplicates(limit=10000)
             resolved = 0
-            for g in groups.get("groups", []):
-                if len(g.get("files", [])) > 1:
+            for _gid, files in groups:
+                if len(files) > 1:
                     resolved += 1
-            return {"groups_found": len(groups.get("groups", [])), "note": "Duplicity připraveny k řešení"}
+            return {"groups_found": len(groups), "note": "Duplicity připraveny k řešení"}
         finally:
             cat.close()
 
