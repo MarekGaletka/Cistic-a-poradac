@@ -791,6 +791,6 @@ def test_schema_v5_to_v6_migration(tmp_path):
 
     # Verify version updated to latest
     ver = cat.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
-    assert ver == "12"
+    assert ver == "13"
 
     cat.close()
