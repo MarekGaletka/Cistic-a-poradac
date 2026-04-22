@@ -1944,42 +1944,87 @@ class Catalog:
         return {row[0]: row[1] for row in cur.fetchall()}
 
     def stats(self) -> dict[str, object]:
-        """Return library statistics from catalog."""
+        """Return library statistics from catalog.
+
+        Combines most per-table counts into single queries to reduce
+        the number of round-trips from ~15 to ~7.
+        """
         conn = self.conn
-        total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-        total_size = conn.execute("SELECT COALESCE(SUM(size), 0) FROM files").fetchone()[0]
-        hashed_files = conn.execute("SELECT COUNT(*) FROM files WHERE sha256 IS NOT NULL").fetchone()[0]
-        dup_groups = conn.execute("SELECT COUNT(DISTINCT group_id) FROM duplicates").fetchone()[0]
-        dup_files = conn.execute("SELECT COUNT(*) FROM duplicates").fetchone()[0]
-        labeled_files = conn.execute("SELECT COUNT(*) FROM labels WHERE people != '' OR place != ''").fetchone()[0]
-        scans = conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
-        last_scan = conn.execute("SELECT MAX(finished_at) FROM scans").fetchone()[0]
-        phashed_files = conn.execute("SELECT COUNT(*) FROM files WHERE phash IS NOT NULL").fetchone()[0]
-        media_probed = conn.execute("SELECT COUNT(*) FROM files WHERE duration_seconds IS NOT NULL OR width IS NOT NULL").fetchone()[0]
-        gps_files = conn.execute("SELECT COUNT(*) FROM files WHERE gps_latitude IS NOT NULL").fetchone()[0]
-        date_original_count = conn.execute("SELECT COUNT(*) FROM files WHERE date_original IS NOT NULL").fetchone()[0]
-        quality_count = conn.execute("SELECT COUNT(*) FROM files WHERE quality_category IS NOT NULL").fetchone()[0]
 
-        ext_counts = []
-        for row in conn.execute("SELECT ext, COUNT(*) as cnt FROM files GROUP BY ext ORDER BY cnt DESC LIMIT 20"):
-            ext_counts.append([row[0] or "(noext)", row[1]])
+        # 1) Single pass over `files` for all scalar aggregates (was 9 queries)
+        files_row = conn.execute(
+            "SELECT"
+            "  COUNT(*),"
+            "  COALESCE(SUM(size), 0),"
+            "  COUNT(sha256),"
+            "  COUNT(phash),"
+            "  SUM(CASE WHEN duration_seconds IS NOT NULL"
+            "            OR width IS NOT NULL THEN 1 ELSE 0 END),"
+            "  COUNT(gps_latitude),"
+            "  COUNT(date_original),"
+            "  COUNT(quality_category)"
+            " FROM files"
+        ).fetchone()
+        total_files = files_row[0]
+        total_size = files_row[1]
+        hashed_files = files_row[2]
+        phashed_files = files_row[3]
+        media_probed = files_row[4]
+        gps_files = files_row[5]
+        date_original_count = files_row[6]
+        quality_count = files_row[7]
 
-        camera_counts = []
-        cam_sql = (
-            "SELECT camera_model, COUNT(*) as cnt FROM files "
-            "WHERE camera_model IS NOT NULL GROUP BY camera_model ORDER BY cnt DESC LIMIT 10"
-        )
-        for row in conn.execute(cam_sql):
-            camera_counts.append([row[0], row[1]])
+        # 2) Single pass over `duplicates` (was 2 queries)
+        dup_row = conn.execute(
+            "SELECT COUNT(DISTINCT group_id), COUNT(*) FROM duplicates"
+        ).fetchone()
+        dup_groups = dup_row[0]
+        dup_files = dup_row[1]
 
-        # Last scan root for pipeline re-use
-        last_scan_root_row = conn.execute("SELECT root FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+        # 3) Labels
+        labeled_files = conn.execute(
+            "SELECT COUNT(*) FROM labels WHERE people != '' OR place != ''"
+        ).fetchone()[0]
+
+        # 4) Single pass over `scans` (was 3 queries)
+        scan_row = conn.execute(
+            "SELECT COUNT(*), MAX(finished_at) FROM scans"
+        ).fetchone()
+        scans = scan_row[0]
+        last_scan = scan_row[1]
+
+        last_scan_root_row = conn.execute(
+            "SELECT root FROM scans ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         last_scan_root = last_scan_root_row[0] if last_scan_root_row else ""
 
-        # Face stats (safe — tables may not exist in older catalogs)
+        # 5) Top extensions & cameras (GROUP BY, kept as separate queries)
+        ext_counts = [
+            [row[0] or "(noext)", row[1]]
+            for row in conn.execute(
+                "SELECT ext, COUNT(*) as cnt FROM files"
+                " GROUP BY ext ORDER BY cnt DESC LIMIT 20"
+            )
+        ]
+
+        camera_counts = [
+            [row[0], row[1]]
+            for row in conn.execute(
+                "SELECT camera_model, COUNT(*) as cnt FROM files"
+                " WHERE camera_model IS NOT NULL"
+                " GROUP BY camera_model ORDER BY cnt DESC LIMIT 10"
+            )
+        ]
+
+        # 6) Face stats (safe — tables may not exist in older catalogs)
         try:
-            total_faces = conn.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
-            total_persons = conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0]
+            face_row = conn.execute(
+                "SELECT"
+                "  (SELECT COUNT(*) FROM faces),"
+                "  (SELECT COUNT(*) FROM persons)"
+            ).fetchone()
+            total_faces = face_row[0]
+            total_persons = face_row[1]
         except (sqlite3.OperationalError, sqlite3.DatabaseError):
             total_faces = 0
             total_persons = 0
