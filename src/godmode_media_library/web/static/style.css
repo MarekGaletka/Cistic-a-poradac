@@ -11812,3 +11812,492 @@ select.cons-input {
     width: 140px;
   }
 }
+
+/* ================================================================
+   People v3: Clean overview layout (replaces sidebar nav)
+   ================================================================ */
+
+.people-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.people-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.people-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.people-section-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.people-section-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 11px;
+  background: var(--color-error, #e5534b);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ── Person grid (Apple Photos style) ───────────────────────── */
+
+.people-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 16px;
+}
+
+.people-person-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  text-align: center;
+  color: var(--text);
+  font: inherit;
+}
+
+.people-person-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  border-color: var(--accent);
+}
+
+.people-person-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.people-person-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.people-person-avatar-ph {
+  font-size: 36px;
+  opacity: 0.3;
+}
+
+.people-person-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.people-person-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── "All done" banner ──────────────────────────────────────── */
+
+.people-all-done {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.people-all-done-icon {
+  font-size: 20px;
+  color: var(--color-success, #3fb950);
+}
+
+/* ── Tools row (collapsed) ──────────────────────────────────── */
+
+.people-tools-row {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.people-tools-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* ── Cluster select (dropdown replacing text input + button) ── */
+
+.people-cluster-select {
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  min-width: 160px;
+  max-width: 220px;
+}
+
+.people-cluster-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* ================================================================
+   Person detail v3
+   ================================================================ */
+
+.person-detail-v3 {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.person-detail-topbar {
+  display: flex;
+  align-items: center;
+}
+
+.person-detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.person-detail-avatar-lg {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.person-detail-avatar-lg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.person-detail-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.person-detail-editable-name {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.person-detail-editable-name:hover {
+  color: var(--accent);
+}
+
+.person-detail-meta {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.person-detail-btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.btn-danger-text {
+  color: var(--color-error, #e5534b) !important;
+}
+
+.btn-danger-text:hover {
+  background: rgba(229, 83, 75, 0.12) !important;
+}
+
+/* ── Face card overlay (hover-to-remove) ────────────────────── */
+
+.face-card-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  background: linear-gradient(180deg, rgba(0,0,0,0.35) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.face-card:hover .face-card-overlay {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.face-card-remove {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  font-size: 13px;
+  line-height: 26px;
+  text-align: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.face-card-remove:hover {
+  background: var(--color-error, #e5534b);
+}
+
+/* ================================================================
+   GML Modal System (unified modals)
+   ================================================================ */
+
+.gml-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay, 9500);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: gml-modal-fadein 0.15s ease-out;
+}
+
+@keyframes gml-modal-fadein {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.gml-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  width: 90vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: gml-modal-slidein 0.2s ease-out;
+}
+
+@keyframes gml-modal-slidein {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.gml-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.gml-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.gml-modal-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 30px;
+  text-align: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.gml-modal-close:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.08));
+  color: var(--text);
+}
+
+.gml-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.gml-modal-hint {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.gml-modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── GML Inputs ─────────────────────────────────────────────── */
+
+.gml-input {
+  font-size: 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  width: 100%;
+  transition: border-color 0.15s;
+}
+
+.gml-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.gml-input-lg {
+  font-size: 16px;
+  padding: 10px 14px;
+}
+
+/* ── Assign modal person list ───────────────────────────────── */
+
+.assign-person-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s;
+  text-align: left;
+  font: inherit;
+}
+
+.assign-person-item:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.06));
+}
+
+.assign-person-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.assign-person-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.assign-person-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.assign-person-count {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* ── Responsive v3 ──────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .people-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 10px;
+  }
+
+  .people-person-avatar {
+    width: 60px;
+    height: 60px;
+  }
+
+  .person-detail-hero {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .person-detail-btns {
+    justify-content: center;
+  }
+
+  .person-detail-avatar-lg {
+    width: 90px;
+    height: 90px;
+  }
+
+  .person-detail-editable-name {
+    font-size: 20px;
+  }
+
+  .people-cluster-select {
+    min-width: 120px;
+  }
+}
