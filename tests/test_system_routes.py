@@ -536,17 +536,15 @@ class TestTaskListing:
 
 class TestMemoriesWithDates:
     def test_memories_with_dates_set(self, catalog_with_files):
-        """Insert dates and verify the endpoint processes them without error.
-
-        Note: The production code uses strftime('%%m-%%d', ...) which sends literal
-        '%%m-%%d' to SQLite instead of '%m-%d', so the query never matches.
-        This test validates the endpoint runs the full code path regardless.
+        """Insert EXIF-format dates for today's month-day in a past year
+        and verify the memories endpoint returns them.
         """
         from datetime import date
 
         today = date.today()
         past_year = today.year - 2
-        date_str = f"{past_year}-{today.month:02d}-{today.day:02d} 12:00:00"
+        # Use EXIF format with colons: "YYYY:MM:DD HH:MM:SS"
+        date_str = f"{past_year}:{today.month:02d}:{today.day:02d} 12:00:00"
 
         cat = Catalog(catalog_with_files)
         cat.open()
@@ -567,6 +565,9 @@ class TestMemoriesWithDates:
         data = resp.json()
         assert data["date"] == today.isoformat()
         assert isinstance(data["memories"], list)
+        # The query now correctly matches — we should get a memory entry
+        assert len(data["memories"]) >= 1
+        assert data["memories"][0]["year"] == str(past_year)
 
 
 # ---------------------------------------------------------------------------

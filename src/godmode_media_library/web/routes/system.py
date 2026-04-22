@@ -90,12 +90,16 @@ def get_memories(request: Request) -> dict:
     cat = _open_catalog(request)
     try:
         memories: list[dict] = []
+        # date_original is EXIF format "YYYY:MM:DD HH:MM:SS"
+        # Use SUBSTR to extract MM:DD (positions 6-10) — avoids strftime()
+        # which prevents index usage and was previously broken (double %%).
+        today_mmdd = f"{today.month:02d}:{today.day:02d}"
         cur = cat.conn.execute(
             "SELECT path, date_original, camera_model, size "
             "FROM files WHERE date_original IS NOT NULL "
-            "AND strftime('%%m-%%d', date_original) = ? "
+            "AND SUBSTR(date_original, 6, 5) = ? "
             "ORDER BY date_original DESC",
-            (today.strftime("%m-%d"),),
+            (today_mmdd,),
         )
         by_year: dict[str, list[dict]] = {}
         for row in cur.fetchall():
