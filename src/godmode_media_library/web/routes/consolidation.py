@@ -600,8 +600,8 @@ async def consolidation_run_metadata_enrichment(request: Request, bg: Background
     def _run():
         try:
             from ...catalog import Catalog
-            from ...scanner import _backfill_dates_from_filesystem, backfill_metadata_from_stored
             from ...quality import batch_analyze
+            from ...scanner import _backfill_dates_from_filesystem, backfill_metadata_from_stored
 
             cat = Catalog(catalog_path)
             cat.open()

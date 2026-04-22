@@ -47,7 +47,7 @@ async def iphone_status(request: Request):
 @router.get("/iphone/list")
 async def iphone_list():
     """List media files on connected iPhone."""
-    from ...iphone_import import list_iphone_files, _check_iphone_connected, _is_media
+    from ...iphone_import import _check_iphone_connected, _is_media, list_iphone_files
 
     if not _check_iphone_connected():
         raise HTTPException(status_code=404, detail="iPhone není připojen")

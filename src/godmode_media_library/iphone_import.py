@@ -8,6 +8,7 @@ Supports resume after iPhone disconnect/reconnect.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shutil
@@ -213,10 +214,8 @@ def _determine_dest_path(config: IPhoneImportConfig, exif: ExifMeta | None,
 
     # 1. EXIF DateTimeOriginal
     if exif and exif.date_original:
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             candidates.append(datetime.strptime(exif.date_original, "%Y:%m:%d %H:%M:%S"))
-        except (ValueError, TypeError):
-            pass
 
     # 2. QuickTime/MP4 creation_time from ffprobe
     if probe and getattr(probe, "creation_time", None):
@@ -363,7 +362,8 @@ def reorganize_unsorted(
                     if sibling and sibling["date_original"]:
                         date_str = sibling["date_original"]
                         try:
-                            dt = datetime.strptime(date_str[:19], "%Y:%m:%d %H:%M:%S") if ":" == date_str[4:5] else datetime.strptime(date_str[:19], "%Y-%m-%dT%H:%M:%S")
+                            fmt = "%Y:%m:%d %H:%M:%S" if date_str[4:5] == ":" else "%Y-%m-%dT%H:%M:%S"
+                            dt = datetime.strptime(date_str[:19], fmt)
                         except (ValueError, TypeError):
                             skipped += 1
                             continue
@@ -402,10 +402,8 @@ def reorganize_unsorted(
                 file_size_mb = 100  # default
                 if size_result.returncode == 0:
                     import json as _json
-                    try:
+                    with contextlib.suppress(Exception):
                         file_size_mb = _json.loads(size_result.stdout).get("bytes", 0) / 1e6
-                    except Exception:
-                        pass
                 dl_timeout = max(120, int(file_size_mb) + 120)
 
                 subprocess.run(
@@ -433,10 +431,8 @@ def reorganize_unsorted(
             except Exception as e:
                 logger.warning("Failed to download/probe %s: %s", filename, e)
                 if tmp_path:
-                    try:
+                    with contextlib.suppress(Exception):
                         os.unlink(tmp_path)
-                    except Exception:
-                        pass
                 failed += 1
                 continue
 
@@ -607,6 +603,7 @@ def run_import(
         #    - Download from iPhone + hash/EXIF/phash (sequential, fast ~31 MB/s)
         #    - Upload via rclone (concurrent pool, bottleneck ~1 MB/s each)
         import concurrent.futures
+
         from .utils import utc_stamp
 
         start_time = time.monotonic()
@@ -784,17 +781,13 @@ def run_import(
                     # EXIF
                     exif = None
                     if can_read_exif(local_temp.suffix.lstrip(".")):
-                        try:
+                        with contextlib.suppress(Exception):
                             exif = read_exif(local_temp)
-                        except Exception:
-                            pass
 
                     # Media probe
                     probe = None
-                    try:
+                    with contextlib.suppress(Exception):
                         probe = probe_file(local_temp)
-                    except Exception:
-                        pass
 
                     # Perceptual hash (skip for huge files — too slow)
                     phash = None

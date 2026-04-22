@@ -7,13 +7,15 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends tzdata curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy dependency definition and source for install
+# Copy dependency definition first (layer cache: deps change less than src)
 COPY pyproject.toml README.md /app/
-COPY src /app/src
 
-# Install Python dependencies (pinned pip version for reproducibility)
-RUN pip install --no-cache-dir "pip>=24.0,<25.0" && \
-    pip install --no-cache-dir .
+# Pre-install build tools (cached until pyproject.toml changes)
+RUN pip install --no-cache-dir "pip>=24.0,<25.0" "setuptools>=68" "wheel"
+
+# Copy source and install package
+COPY src /app/src
+RUN pip install --no-cache-dir .
 
 # Create non-root user and switch to it
 RUN groupadd -r gml && useradd -r -g gml -m gml && \
