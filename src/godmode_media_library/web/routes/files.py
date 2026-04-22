@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from ...deps import resolve_bin
 from ...disk_space import check_disk_space
@@ -53,6 +53,27 @@ router = APIRouter()
 
 
 # ── Local helpers (only used by files routes) ─────────────────────────
+
+
+def _make_etag(mtime: float, size: int) -> str:
+    """Build a simple ETag from file mtime and size."""
+    return f'"{int(mtime):x}-{size:x}"'
+
+
+def _thumb_cache_headers(etag: str) -> dict[str, str]:
+    """Return HTTP cache headers for content-addressed thumbnails."""
+    return {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "ETag": etag,
+    }
+
+
+def _check_not_modified(request: Request, etag: str) -> Response | None:
+    """Return a 304 Response if the client already has this ETag, else None."""
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and if_none_match.strip() == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return None
 
 
 def _quarantine_dest(quarantine_root: Path, original_path: Path) -> Path:
@@ -357,10 +378,14 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
     # Try cached thumbnail first (works even when source disk is offline)
     cached = _thumb_cache_get(str(full_path), size)
     if cached is not None:
+        etag = _make_etag(len(cached), size)
+        not_modified = _check_not_modified(request, etag)
+        if not_modified is not None:
+            return not_modified
         return StreamingResponse(
             io.BytesIO(cached),
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers=_thumb_cache_headers(etag),
         )
 
     if not full_path.exists():
@@ -414,10 +439,11 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             finally:
                 Path(tmp_path).unlink(missing_ok=True)
             _thumb_cache_put(str(full_path), size, thumb_bytes)
+            etag = _make_etag(len(thumb_bytes), size)
             return StreamingResponse(
                 io.BytesIO(thumb_bytes),
                 media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=86400"},
+                headers=_thumb_cache_headers(etag),
             )
         except HTTPException:
             raise
@@ -440,10 +466,11 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
             img.save(buf, format="JPEG", quality=80)
             thumb_bytes = buf.getvalue()
             _thumb_cache_put(str(full_path), size, thumb_bytes)
+            etag = _make_etag(len(thumb_bytes), size)
             return StreamingResponse(
                 io.BytesIO(thumb_bytes),
                 media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=86400"},
+                headers=_thumb_cache_headers(etag),
             )
     except (OSError, ValueError) as e:
         logger.warning("Thumbnail generation failed for %s: %s", full_path, e)
@@ -485,6 +512,13 @@ def get_preview(request: Request, file_path: str, size: int = Query(default=120,
         except ImportError:
             raise HTTPException(status_code=400, detail="pillow-heif required") from None
 
+    # Build ETag from file stat for conditional request support
+    stat = full_path.stat()
+    etag = _make_etag(stat.st_mtime, stat.st_size)
+    not_modified = _check_not_modified(request, etag)
+    if not_modified is not None:
+        return not_modified
+
     try:
         with Image.open(full_path) as img:
             img.thumbnail((size, size), Image.LANCZOS)
@@ -494,7 +528,10 @@ def get_preview(request: Request, file_path: str, size: int = Query(default=120,
             return StreamingResponse(
                 buf,
                 media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=3600"},
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                    "ETag": etag,
+                },
             )
     except (OSError, ValueError):
         raise HTTPException(status_code=500, detail="Preview failed") from None
