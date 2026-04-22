@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..shared import CreateTagRequest, TagFilesRequest, _open_catalog, _sanitize_path
+from ..shared import CreateTagRequest, TagFilesRequest, _open_catalog, _return_catalog, _sanitize_path
 
 router = APIRouter()
 
@@ -17,7 +17,7 @@ def list_tags(request: Request) -> dict:
         tags = cat.get_all_tags()
         return {"tags": tags}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/tags")
@@ -32,7 +32,7 @@ def create_tag(request: Request, body: CreateTagRequest) -> dict:
             raise HTTPException(status_code=409, detail="Tag name already exists") from e
         raise
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.delete("/tags/{tag_id}")
@@ -43,7 +43,7 @@ def delete_tag(request: Request, tag_id: int) -> dict:
         cat.delete_tag(tag_id)
         return {"deleted": True}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/files/tag")
@@ -60,7 +60,7 @@ def tag_files(request: Request, body: TagFilesRequest) -> dict:
         count = cat.bulk_tag(sanitized_paths, body.tag_id)
         return {"tagged": count}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.delete("/files/tag")
@@ -77,7 +77,7 @@ def untag_files(request: Request, body: TagFilesRequest) -> dict:
         count = cat.bulk_untag(sanitized_paths, body.tag_id)
         return {"untagged": count}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Tag suggestions ────────────────────────────────────────────────
@@ -149,7 +149,7 @@ def suggest_tags(request: Request, path: str = Query(...)) -> dict:
 
         return {"suggestions": suggestions}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

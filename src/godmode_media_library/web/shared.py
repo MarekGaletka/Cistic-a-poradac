@@ -360,15 +360,50 @@ def _finish_task(task_id: str, result: dict | None = None, error: str | None = N
         _notify_ws(task_id, msg)
 
 
-# ── Catalog helper ────────────────────────────────────────────────────
+# ── Catalog helper (connection pool) ──────────────────────────────────
+
+_catalog_pool: list[Any] = []  # Stack of idle Catalog instances
+_catalog_pool_lock = threading.Lock()
+_CATALOG_POOL_MAX = 4
 
 
 def _open_catalog(request: Request):
+    """Get a Catalog connection — reuses pooled connections when available."""
     from ..catalog import Catalog  # Lazy import to avoid circular dependency
 
-    cat = Catalog(request.app.state.catalog_path)
+    db_path = request.app.state.catalog_path
+
+    with _catalog_pool_lock:
+        # Try to reuse a pooled connection for the same DB path
+        for i, cat in enumerate(_catalog_pool):
+            if cat._db_path == db_path and cat._conn is not None:
+                _catalog_pool.pop(i)
+                return cat
+
+    # No pooled connection available — create new one
+    cat = Catalog(db_path)
     cat.open()
     return cat
+
+
+def _return_catalog(cat: Any) -> None:
+    """Return a Catalog to the pool instead of closing it."""
+    if cat is None or getattr(cat, "_conn", None) is None:
+        return
+    with _catalog_pool_lock:
+        if len(_catalog_pool) < _CATALOG_POOL_MAX:
+            _catalog_pool.append(cat)
+        else:
+            cat.close()
+
+
+def _close_catalog_pool() -> None:
+    """Close all pooled connections (call on app shutdown)."""
+    with _catalog_pool_lock:
+        while _catalog_pool:
+            cat = _catalog_pool.pop()
+            with contextlib.suppress(Exception):
+                cat.close()
 
 
 # ── Common data helpers ───────────────────────────────────────────────

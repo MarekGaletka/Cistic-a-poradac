@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .api import router as api_router
+from .shared import _close_catalog_pool, _return_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
         _capture_event_loop()
         yield
+        _close_catalog_pool()
 
     app = FastAPI(
         title="GOD MODE Media Library",
@@ -291,7 +293,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                 "label": share.get("label", ""),
             }
         finally:
-            cat.close()
+            _return_catalog(cat)
 
     @app.get("/shared/{token}")
     async def shared_file_download(
@@ -395,7 +397,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                 },
             )
         finally:
-            cat.close()
+            _return_catalog(cat)
 
     app.include_router(api_router, prefix="/api")
 

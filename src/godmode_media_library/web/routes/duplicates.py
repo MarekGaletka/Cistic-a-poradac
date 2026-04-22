@@ -15,6 +15,7 @@ from ..shared import (
     _DEFAULT_QUARANTINE_ROOT,
     DuplicateKeepRequest,
     _open_catalog,
+    _return_catalog,
     logger,
 )
 
@@ -48,7 +49,7 @@ def get_duplicates(
             )
         return {"groups": groups, "total_groups": len(all_groups)}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/duplicates/{group_id}")
@@ -64,7 +65,7 @@ def get_duplicate_group(request: Request, group_id: str) -> dict:
             "files": [{"path": path, "metadata": meta} for path, meta in group_meta],
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/duplicates/{group_id}/diff")
@@ -84,7 +85,7 @@ def get_duplicate_diff(request: Request, group_id: str) -> dict:
             "scores": diff.scores,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/similar")
@@ -110,7 +111,7 @@ def get_similar(
             "total_pairs": len(pairs),
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/duplicates/{group_id}/quarantine")
@@ -167,7 +168,7 @@ def quarantine_duplicate_group(request: Request, group_id: str, body: DuplicateK
                 errors.append(f"Failed to quarantine {row.path}: {e}")
         cat.commit()
     finally:
-        cat.close()
+        _return_catalog(cat)
     result: dict[str, Any] = {"quarantined": quarantined, "kept": body.keep_path}
     if errors:
         result["errors"] = errors
@@ -255,7 +256,7 @@ def merge_duplicate_group(request: Request, group_id: str, body: DuplicateKeepRe
                 errors.append(f"Failed to quarantine {row.path}: {e}")
         cat.commit()
     finally:
-        cat.close()
+        _return_catalog(cat)
     result: dict[str, Any] = {
         "merged": merge_applied,
         "quarantined": quarantined,

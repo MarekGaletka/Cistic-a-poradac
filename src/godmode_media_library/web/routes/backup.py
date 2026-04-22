@@ -10,6 +10,7 @@ from ..shared import (
     _create_task,
     _finish_task,
     _open_catalog,
+    _return_catalog,
     _update_progress,
     logger,
 )
@@ -55,7 +56,7 @@ def backup_stats(request: Request):
             "files_by_remote": stats.files_by_remote,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/backup/targets")
@@ -85,7 +86,7 @@ def backup_targets(request: Request):
             ]
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/backup/probe")
@@ -110,7 +111,7 @@ def backup_probe(request: Request):
             ],
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.put("/backup/targets/{remote_name}")
@@ -143,7 +144,7 @@ def update_backup_target(remote_name: str, body: BackupTargetUpdate, request: Re
                 cat.conn.commit()
         return {"status": "ok"}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/backup/plan")
@@ -172,7 +173,7 @@ def backup_plan(request: Request):
             "entries": plan.entries[:200],  # First 200 for preview
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/backup/execute")
@@ -201,7 +202,7 @@ def backup_execute(request: Request, background_tasks: BackgroundTasks, body: Ba
             logger.exception("Backup execution failed")
             _finish_task(task.id, error=str(e))
         finally:
-            cat.close()
+            _return_catalog(cat)
 
     background_tasks.add_task(run)
     return {"task_id": task.id, "status": "started", "dry_run": body.dry_run}
@@ -230,7 +231,7 @@ def backup_verify(request: Request, background_tasks: BackgroundTasks):
             logger.exception("Backup verification failed")
             _finish_task(task.id, error=str(e))
         finally:
-            cat.close()
+            _return_catalog(cat)
 
     background_tasks.add_task(run)
     return {"task_id": task.id, "status": "started"}
@@ -290,7 +291,7 @@ def backup_manifest(request: Request, page: int = 1, limit: int = 50, search: st
             "pages": max(1, (total + limit - 1) // limit),
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Backup Monitoring ────────────────────────────────────────────────
@@ -372,7 +373,7 @@ def bitrot_stats(request: Request):
     try:
         return get_verification_stats(cat)
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/bitrot/scan")
@@ -411,7 +412,7 @@ def bitrot_scan(request: Request, background_tasks: BackgroundTasks, limit: int 
             logger.exception("Bit rot scan failed")
             _finish_task(task.id, error=str(e))
         finally:
-            cat.close()
+            _return_catalog(cat)
 
     background_tasks.add_task(run)
     return {"task_id": task.id, "status": "started", "limit": limit}
@@ -504,7 +505,7 @@ def integrity_score(request: Request):
             "total_files": total_files,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Backup auto-heal ──────────────────────────────────────────────────
@@ -530,7 +531,7 @@ def backup_auto_heal(request: Request, background_tasks: BackgroundTasks):
             logger.exception("Auto-heal failed")
             _finish_task(task.id, error=str(e))
         finally:
-            cat.close()
+            _return_catalog(cat)
 
     background_tasks.add_task(run)
     return {"task_id": task.id, "status": "started"}

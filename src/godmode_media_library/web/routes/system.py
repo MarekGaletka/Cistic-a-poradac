@@ -19,6 +19,7 @@ from ..shared import (
     _create_task,
     _finish_task,
     _open_catalog,
+    _return_catalog,
     _task_to_msg,
     _tasks,
     _tasks_lock,
@@ -41,7 +42,7 @@ def get_stats(request: Request) -> dict:
     try:
         return cat.stats()
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/categories")
@@ -76,7 +77,7 @@ def get_categories(request: Request) -> dict:
 
         return {"categories": categories}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Memories (On This Day) ────────────────────────────────────────────
@@ -119,7 +120,7 @@ def get_memories(request: Request) -> dict:
             )
         return {"date": today.isoformat(), "memories": memories}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── System info & dependencies ────────────────────────────────────────
@@ -157,7 +158,7 @@ def get_system_info(request: Request) -> dict:
             "disk_total": disk_total,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/deps")
@@ -239,7 +240,7 @@ def backfill_metadata(request: Request):
         result["fs_dates_filled"] = fs_dates
         return result
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/pipeline")
@@ -570,7 +571,7 @@ def get_timeline_gaps(request: Request) -> dict:
             },
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Quality scoring endpoints ─────────────────────────────────────────
@@ -594,7 +595,7 @@ def trigger_quality_analysis(request: Request, background: BackgroundTasks):
                 stats = batch_analyze(cat, progress_fn=on_progress)
                 _finish_task(task.id, result=stats)
             finally:
-                cat.close()
+                _return_catalog(cat)
         except Exception as exc:
             _finish_task(task.id, error=str(exc))
             logger.exception("Quality analysis task failed")
@@ -629,7 +630,7 @@ def get_quality_stats(request: Request) -> dict:
             "analyzed": analyzed,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Report endpoints ──────────────────────────────────────────────────

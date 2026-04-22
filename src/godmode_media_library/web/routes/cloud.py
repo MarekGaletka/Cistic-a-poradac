@@ -13,6 +13,7 @@ from ..shared import (
     _create_task,
     _finish_task,
     _open_catalog,
+    _return_catalog,
     _update_progress,
     logger,
 )
@@ -130,7 +131,7 @@ def cloud_status(request: Request):
             src["scanned"] = src["file_count"] > 0
             src["disk_count"] = disk_counts.get(i, 0)
     finally:
-        cat.close()
+        _return_catalog(cat)
 
     # Cache the full enriched response
     _cloud_status_cache["data"] = copy.deepcopy(status)
@@ -200,7 +201,7 @@ def cloud_native_paths(request: Request):
             p["scanned"] = p["file_count"] > 0
             p["disk_count"] = disk_counts.get(i, 0)
     finally:
-        cat.close()
+        _return_catalog(cat)
 
     return {"paths": paths, "count": len(paths)}
 
@@ -296,7 +297,7 @@ def cloud_backup(request: Request, background: BackgroundTasks, body: CloudBacku
                         source_paths.append(r)
             source_paths = list(dict.fromkeys(source_paths))  # dedupe
         finally:
-            cat.close()
+            _return_catalog(cat)
 
     if not source_paths:
         raise HTTPException(400, "Žádné zdroje k zálohování — nejdřív naskenujte soubory")

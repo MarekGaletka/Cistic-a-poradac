@@ -14,6 +14,7 @@ from ..shared import (
     _create_task,
     _finish_task,
     _open_catalog,
+    _return_catalog,
     _sanitize_path,
     _update_progress,
     logger,
@@ -239,7 +240,7 @@ def consolidation_health(request: Request):
                 health["disks"] = disks
                 health["disk_connected"] = all(d["connected"] for d in disks.values()) if disks else None
         finally:
-            cat.close()
+            _return_catalog(cat)
     except Exception:
         pass
 
@@ -504,7 +505,7 @@ def consolidation_catalog_stats(request: Request):
             "by_year": year_stats,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/consolidation/sync-disk")
@@ -629,7 +630,7 @@ async def consolidation_run_metadata_enrichment(request: Request, bg: Background
                     "quality": quality_stats,
                 })
             finally:
-                cat.close()
+                _return_catalog(cat)
         except Exception as exc:
             logger.exception("Metadata enrichment failed")
             _finish_task(task.id, error=str(exc))

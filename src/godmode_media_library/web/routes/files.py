@@ -39,6 +39,7 @@ from ..shared import (
     _get_favorites_set,
     _is_path_allowed,
     _open_catalog,
+    _return_catalog,
     _row_to_dict,
     _sanitize_path,
     _set_configured_roots,
@@ -191,7 +192,7 @@ def get_files(
             "has_more": has_more,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Favorites ─────────────────────────────────────────────────────────
@@ -222,7 +223,7 @@ def toggle_favorite(request: Request, body: FavoriteRequest) -> dict:
         )
         cat.conn.commit()
     finally:
-        cat.close()
+        _return_catalog(cat)
     return {"path": path, "is_favorite": is_favorite}
 
 
@@ -248,7 +249,7 @@ def get_file_note(request: Request, file_path: str) -> dict:
             return {"note": None, "updated_at": None}
         return {"note": result[0], "updated_at": result[1]}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.put("/files/{file_path:path}/note")
@@ -260,7 +261,7 @@ def set_file_note(request: Request, file_path: str, body: NoteRequest) -> dict:
         cat.set_file_note(f"/{file_path}", body.note)
         return {"saved": True}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.delete("/files/{file_path:path}/note")
@@ -272,7 +273,7 @@ def delete_file_note(request: Request, file_path: str) -> dict:
         deleted = cat.delete_file_note(f"/{file_path}")
         return {"deleted": deleted}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Ratings ──────────────────────────────────────────────────────────
@@ -289,7 +290,7 @@ def set_file_rating(request: Request, file_path: str, body: RatingRequest) -> di
         cat.set_file_rating(f"/{file_path}", body.rating)
         return {"saved": True, "rating": body.rating}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.delete("/files/{file_path:path}/rating")
@@ -301,7 +302,7 @@ def delete_file_rating(request: Request, file_path: str) -> dict:
         deleted = cat.delete_file_rating(f"/{file_path}")
         return {"deleted": deleted}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── File detail (catch-all, must be after /note and /rating) ─────────
@@ -332,7 +333,7 @@ def get_file_detail(request: Request, file_path: str) -> dict:
             "rating": rating,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Thumbnails ────────────────────────────────────────────────────────
@@ -351,7 +352,7 @@ def get_thumbnail(request: Request, file_path: str, size: int = Query(default=20
         if row is None:
             raise HTTPException(status_code=404, detail="File not found in catalog")
     finally:
-        cat.close()
+        _return_catalog(cat)
 
     # Try cached thumbnail first (works even when source disk is offline)
     cached = _thumb_cache_get(str(full_path), size)
@@ -567,7 +568,7 @@ def quarantine_files(request: Request, body: QuarantineRequest) -> dict:
                 skipped += 1
         cat.commit()
     finally:
-        cat.close()
+        _return_catalog(cat)
     return {"moved": moved, "skipped": skipped, "errors": errors}
 
 
@@ -610,7 +611,7 @@ def delete_files(request: Request, body: DeleteRequest) -> dict:
                 skipped += 1
         cat.commit()
     finally:
-        cat.close()
+        _return_catalog(cat)
     return {"deleted": deleted, "skipped": skipped, "errors": errors}
 
 
@@ -660,7 +661,7 @@ def rename_files(request: Request, body: RenameRequest) -> dict:
                 skipped += 1
         cat.commit()
     finally:
-        cat.close()
+        _return_catalog(cat)
     return {"renamed": renamed, "skipped": skipped, "errors": errors}
 
 
@@ -710,7 +711,7 @@ def move_files(request: Request, body: MoveRequest) -> dict:
                 skipped += 1
         cat.commit()
     finally:
-        cat.close()
+        _return_catalog(cat)
     return {"moved": moved, "skipped": skipped, "errors": errors}
 
 
@@ -758,7 +759,7 @@ def restore_files(request: Request, body: RestoreRequest) -> dict:
             except OSError as e:
                 errors.append(f"Failed to restore {path_str}: {e}")
     finally:
-        cat.close()
+        _return_catalog(cat)
     return {"restored": restored, "errors": errors}
 
 
@@ -936,7 +937,7 @@ def get_sources(request: Request) -> dict:
             },
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Video streaming ───────────────────────────────────────────────────
@@ -953,7 +954,7 @@ def stream_file(request: Request, file_path: str):
         if row is None:
             raise HTTPException(status_code=404, detail="Not in catalog")
     finally:
-        cat.close()
+        _return_catalog(cat)
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..shared import _DEFAULT_SHARE_EXPIRY_HOURS, CreateShareRequest, _open_catalog, _sanitize_path, logger
+from ..shared import _DEFAULT_SHARE_EXPIRY_HOURS, CreateShareRequest, _open_catalog, _return_catalog, _sanitize_path, logger
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ def create_share(request: Request, body: CreateShareRequest) -> dict:
         logger.warning("Share creation failed: %s", e)
         raise HTTPException(status_code=404, detail="File not found") from e
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/shares")
@@ -44,7 +44,7 @@ def list_shares(request: Request, limit: int = 100, offset: int = 0) -> dict:
         shares = cat.get_all_shares(limit=limit, offset=offset)
         return {"shares": shares}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/shares/file")
@@ -56,7 +56,7 @@ def shares_for_file(request: Request, path: str = Query(...)) -> dict:
         shares = cat.get_shares_for_file(path)
         return {"shares": shares}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.delete("/shares/{share_id}")
@@ -67,4 +67,4 @@ def revoke_share(request: Request, share_id: int) -> dict:
         cat.delete_share(share_id)
         return {"deleted": True}
     finally:
-        cat.close()
+        _return_catalog(cat)

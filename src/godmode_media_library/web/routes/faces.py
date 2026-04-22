@@ -13,6 +13,7 @@ from ..shared import (
     _create_task,
     _finish_task,
     _open_catalog,
+    _return_catalog,
     _thumb_cache_get,
     _thumb_cache_put,
     _update_progress,
@@ -75,7 +76,7 @@ def list_persons(request: Request):
         persons = cat.get_all_persons()
         return {"persons": persons, "total": len(persons)}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/persons/{person_id}")
@@ -87,7 +88,7 @@ def get_person(request: Request, person_id: int):
             raise HTTPException(404, "Person not found")
         return person
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.put("/persons/{person_id}/name")
@@ -104,7 +105,7 @@ def rename_person(request: Request, person_id: int, body: PersonRenameRequest):
         cat.commit()
         return {"status": "ok", "person_id": person_id, "name": body.name}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/persons/{person_id}/merge")
@@ -120,7 +121,7 @@ def merge_persons(request: Request, person_id: int, body: PersonMergeRequest):
         cat.commit()
         return {"status": "ok", "reassigned_faces": reassigned}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.delete("/persons/{person_id}")
@@ -134,7 +135,7 @@ def delete_person(request: Request, person_id: int):
         cat.commit()
         return {"status": "ok"}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/persons/{person_id}/faces")
@@ -149,7 +150,7 @@ def get_person_faces(
         faces = cat.get_faces_for_person(person_id, limit=limit, offset=offset)
         return {"faces": faces, "count": len(faces), "person_id": person_id}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 # ── Face endpoints ────────────────────────────────────────────────────
@@ -198,7 +199,7 @@ def list_faces(
             ]
         return {"faces": faces, "count": len(faces)}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/faces/stats")
@@ -207,7 +208,7 @@ def face_stats(request: Request):
     try:
         return cat.face_stats()
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/faces/{face_id}/thumbnail")
@@ -234,7 +235,7 @@ def get_face_thumbnail(request: Request, face_id: int, size: int = Query(150, ge
         _thumb_cache_put(cache_key, size, data)
         return StreamingResponse(io.BytesIO(data), media_type="image/jpeg")
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.put("/faces/{face_id}/person")
@@ -261,7 +262,7 @@ def assign_face_to_person(request: Request, face_id: int, body: FaceAssignReques
         cat.commit()
         return {"status": "ok", "face_id": face_id, "person_id": body.person_id}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/faces/by-file")
@@ -275,7 +276,7 @@ def get_file_faces(request: Request, path: str = Query(...)):
         faces = cat.get_faces_for_file(file_row.id)
         return {"faces": faces, "file_path": path}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/faces/detect")
@@ -308,7 +309,7 @@ def trigger_face_detection(request: Request, background: BackgroundTasks, body: 
                     "errors": result.errors,
                 })
             finally:
-                cat.close()
+                _return_catalog(cat)
         except Exception as exc:
             _finish_task(task.id, error=str(exc))
             logger.exception("Face detection task failed")
@@ -341,7 +342,7 @@ def trigger_face_clustering(request: Request, background: BackgroundTasks, body:
                     "total_faces_clustered": sum(len(v) for v in clusters.values()),
                 })
             finally:
-                cat.close()
+                _return_catalog(cat)
         except Exception as exc:
             _finish_task(task.id, error=str(exc))
             logger.exception("Face clustering task failed")
@@ -358,7 +359,7 @@ def record_privacy_consent(request: Request):
         cat.set_privacy_flag("consent_given", datetime.now(timezone.utc).isoformat())
         return {"status": "ok", "consent_given": True}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.get("/faces/privacy")
@@ -373,7 +374,7 @@ def get_privacy_status(request: Request):
             "encryption_enabled": True,
         }
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.delete("/faces/privacy/encodings")
@@ -384,7 +385,7 @@ def wipe_face_encodings(request: Request):
         count = cat.wipe_face_encodings()
         return {"status": "ok", "encodings_wiped": count}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/persons/create")
@@ -396,7 +397,7 @@ def create_person(request: Request, body: PersonRenameRequest):
         cat.commit()
         return {"status": "ok", "person_id": person_id, "name": body.name}
     finally:
-        cat.close()
+        _return_catalog(cat)
 
 
 @router.post("/persons/cleanup")
@@ -426,4 +427,4 @@ def cleanup_auto_persons(request: Request):
         cat.conn.commit()
         return {"status": "ok", "persons_deleted": deleted, "faces_freed": faces_freed}
     finally:
-        cat.close()
+        _return_catalog(cat)
