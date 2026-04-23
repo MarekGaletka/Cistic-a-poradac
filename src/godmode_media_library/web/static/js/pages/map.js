@@ -222,34 +222,26 @@ function _buildMap(containerId, files) {
   };
 
 
-  const mapStyle = {
-    version: 8,
-    projection: { type: "vertical-perspective" },
-    sources: {
-      osm: {
-        type: "raster",
-        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-        tileSize: 256,
-        attribution: "&copy; OpenStreetMap contributors",
-        maxzoom: 19,
-      },
-    },
-    layers: [
-      { id: "osm-tiles", type: "raster", source: "osm" },
-    ],
-    sky: {
-      "atmosphere-blend": [
-        "interpolate", ["linear"], ["zoom"],
-        0, 0.15, 4, 0.1, 7, 0,
-      ],
-    },
-  };
-
   _map = new maplibregl.Map({
     container: containerId,
-    style: mapStyle,
+    style: {
+      version: 8,
+      projection: { type: "vertical-perspective" },
+      sources: {
+        osm: {
+          type: "raster",
+          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          attribution: "&copy; OpenStreetMap contributors",
+          maxzoom: 19,
+        },
+      },
+      layers: [
+        { id: "osm-tiles", type: "raster", source: "osm" },
+      ],
+    },
     center: [15.5, 49.8],
-    zoom: 2.2,
+    zoom: 2.5,
     attributionControl: false,
   });
 
@@ -358,7 +350,6 @@ export async function render(container) {
             },
           },
           layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
-          sky: { "atmosphere-blend": 0.12 },
         },
         center: [15.5, 49.8],
         zoom: 4,
