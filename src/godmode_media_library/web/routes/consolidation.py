@@ -670,3 +670,83 @@ def consolidation_available_disks():
             continue
 
     return {"disks": disks}
+
+
+# ── GDrive Cleanup ───────────────────────────────────────────────────
+
+
+class CleanupRequest(BaseModel):
+    dest_remote: str = "gws-backup"
+    dest_path: str = "GML-Consolidated"
+    dry_run: bool = False
+    skip_unsorted: bool = False
+    skip_staging: bool = False
+    skip_unknown: bool = False
+    run_dedup: bool = True
+
+    @field_validator("dest_remote", "dest_path")
+    @classmethod
+    def no_dangerous_chars(cls, v: str) -> str:
+        if "\x00" in v or "\n" in v or "\r" in v:
+            raise ValueError("Contains invalid characters (null/newline)")
+        if ".." in v:
+            raise ValueError("Path traversal (..) not allowed")
+        return v
+
+
+@router.post("/consolidation/cleanup")
+def consolidation_cleanup(body: CleanupRequest, request: Request, background_tasks: BackgroundTasks):
+    """Run GDrive cleanup: process Unsorted dupes, .staging, and unknown/ folders.
+
+    This is a long-running operation. Returns a task_id for progress tracking.
+    Run with dry_run=true first to preview changes.
+    """
+    from ...cleanup import gdrive_cleanup
+
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("AUDIT: %s started GDrive cleanup (dry_run=%s)", client_ip, body.dry_run)
+
+    task = _create_task("consolidation:cleanup")
+
+    def run():
+        try:
+            result = gdrive_cleanup(
+                remote=body.dest_remote,
+                base_path=body.dest_path,
+                dry_run=body.dry_run,
+                skip_unsorted=body.skip_unsorted,
+                skip_staging=body.skip_staging,
+                skip_unknown=body.skip_unknown,
+                run_dedup=body.run_dedup,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("GDrive cleanup failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "started", "dry_run": body.dry_run}
+
+
+@router.post("/consolidation/cleanup/preview")
+def consolidation_cleanup_preview(request: Request, background_tasks: BackgroundTasks):
+    """Preview GDrive cleanup — dry-run to see what would be done without making changes."""
+    from ...cleanup import gdrive_cleanup
+
+    task = _create_task("consolidation:cleanup-preview")
+
+    def run():
+        try:
+            result = gdrive_cleanup(
+                dry_run=True,
+                run_dedup=False,
+                progress_fn=lambda p: _update_progress(task.id, p),
+            )
+            _finish_task(task.id, result=result)
+        except Exception as e:
+            logger.exception("GDrive cleanup preview failed")
+            _finish_task(task.id, error=str(e))
+
+    background_tasks.add_task(run)
+    return {"task_id": task.id, "status": "previewing"}

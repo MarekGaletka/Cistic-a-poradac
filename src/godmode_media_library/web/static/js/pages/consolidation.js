@@ -923,7 +923,7 @@ async function renderPhaseG(el) {
   try {
     const tasksData = await api("/tasks");
     runningOps = (tasksData.tasks || []).filter(t =>
-      ["consolidation:dedup", "consolidation:metadata-enrichment", "iphone_reorganize"].some(c => t.command?.includes(c))
+      ["consolidation:dedup", "consolidation:metadata-enrichment", "iphone_reorganize", "consolidation:cleanup"].some(c => t.command?.includes(c))
       && (t.status === "running" || t.status === "pending")
     );
   } catch (_) { /* ignore */ }
@@ -1023,6 +1023,25 @@ async function renderPhaseG(el) {
             <button class="wiz-btn-primary wiz-btn-sm" id="btn-ops-hashes">\u25B6 Spustit</button>
           </div>
         </div>
+
+        <div class="ops-card ops-card-wide" id="ops-card-cleanup">
+          <div class="ops-card-icon">\uD83E\uDDF9</div>
+          <div class="ops-card-body">
+            <h4>GDrive Cleanup</h4>
+            <p>Kompletní úklid: smaže ověřené duplikáty z Unsorted/, vyčistí .staging/ (214 GB), roztřídí unknown/ (161 GB). Bezpečné — nejdřív indexuje organizované soubory, pak porovnává MD5 hashe.</p>
+            <div class="ops-cleanup-details" id="ops-cleanup-details" style="display:none"></div>
+          </div>
+          <div class="ops-card-footer">
+            <div class="ops-card-status" id="ops-status-cleanup"></div>
+            <div class="ops-card-actions">
+              <label class="ops-dry-run-toggle">
+                <input type="checkbox" id="ops-cleanup-dry-run" checked> Dry run
+              </label>
+              <button class="wiz-btn-secondary wiz-btn-sm" id="btn-ops-cleanup-preview">\uD83D\uDD0D Náhled</button>
+              <button class="wiz-btn-primary wiz-btn-sm" id="btn-ops-cleanup">\u25B6 Spustit</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="wiz-nav">
@@ -1036,6 +1055,8 @@ async function renderPhaseG(el) {
   bindButton("#btn-ops-dedup", _doOpsDedup);
   bindButton("#btn-ops-metadata", _doOpsMetadata);
   bindButton("#btn-ops-hashes", _doOpsHashes);
+  bindButton("#btn-ops-cleanup-preview", _doOpsCleanupPreview);
+  bindButton("#btn-ops-cleanup", _doOpsCleanup);
   el.querySelector("[data-prev]")?.addEventListener("click", () => { _currentPhase = 5; renderStepIndicator(); reloadPhase(); });
 
   // Show status for running ops
@@ -1045,6 +1066,7 @@ async function renderPhaseG(el) {
 }
 
 function _inferOpsType(command) {
+  if (command?.includes("cleanup")) return "cleanup";
   if (command?.includes("dedup")) return "dedup";
   if (command?.includes("metadata")) return "metadata";
   if (command?.includes("reorganize")) return "unsorted";
@@ -1105,6 +1127,35 @@ async function _doOpsHashes() {
   }
 }
 
+async function _doOpsCleanupPreview() {
+  const btn = document.getElementById("btn-ops-cleanup-preview");
+  if (btn) { btn.disabled = true; btn.textContent = "\u23F3 Skenuju..."; }
+  try {
+    const result = await apiPost("/consolidation/cleanup/preview");
+    showToast("Náhled GDrive Cleanup spuštěn", "success");
+    _startOpsPolling(result.task_id, "cleanup");
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+    if (btn) { btn.disabled = false; btn.textContent = "\uD83D\uDD0D Náhled"; }
+  }
+}
+
+async function _doOpsCleanup() {
+  const dryRun = document.getElementById("ops-cleanup-dry-run")?.checked || false;
+  if (!dryRun && !confirm("Opravdu spustit GDrive Cleanup? Smaže duplikáty a přesune soubory. Doporučujeme nejdřív Dry Run.")) return;
+
+  const btn = document.getElementById("btn-ops-cleanup");
+  if (btn) { btn.disabled = true; btn.textContent = "\u23F3 Spouštím..."; }
+  try {
+    const result = await apiPost("/consolidation/cleanup", { dry_run: dryRun, run_dedup: !dryRun });
+    showToast(`GDrive Cleanup spuštěn${dryRun ? " (dry run)" : ""}`, "success");
+    _startOpsPolling(result.task_id, "cleanup");
+  } catch (e) {
+    showToast(`Chyba: ${e.message}`, "error");
+    if (btn) { btn.disabled = false; btn.textContent = "\u25B6 Spustit"; }
+  }
+}
+
 function _startOpsPolling(taskId, type) {
   if (!taskId) return;
   const statusEl = document.getElementById(`ops-status-${type}`);
@@ -1135,10 +1186,13 @@ function _startOpsPolling(taskId, type) {
       } else {
         // Still running — update progress
         const prog = task.progress || {};
-        let progressText = "B\u011B\u017E\u00ED...";
+        let progressText = "Běží...";
         if (prog.phase_label) progressText = prog.phase_label;
-        if (prog.analyzed !== undefined) progressText = `Analyzov\u00E1no ${prog.analyzed} soubor\u016F`;
-        if (prog.duplicates_removed !== undefined) progressText = `Odstr. ${prog.duplicates_removed} duplik\u00E1t\u016F`;
+        if (prog.analyzed !== undefined) progressText = `Analyzováno ${prog.analyzed} souborů`;
+        if (prog.duplicates_removed !== undefined) progressText = `Odstr. ${prog.duplicates_removed} duplikátů`;
+        if (prog.current !== undefined && prog.total > 0) progressText += ` (${prog.current}/${prog.total})`;
+        if (prog.deleted !== undefined) progressText += ` | Smazáno: ${prog.deleted}`;
+        if (prog.moved !== undefined) progressText += ` | Přesunuto: ${prog.moved}`;
         if (statusEl) statusEl.innerHTML = `<span class="ops-running-dot"></span> ${escapeHtml(progressText)}`;
       }
     } catch (_) { /* ignore poll errors */ }
@@ -1150,10 +1204,25 @@ function _startOpsPolling(taskId, type) {
 function _formatOpsResult(type, result) {
   if (!result) return null;
   switch (type) {
-    case "unsorted": return `Reorganizace: ${result.moved || result.files_processed || 0} soubor\u016F p\u0159esunuto`;
-    case "dedup": return `Deduplikace: ${result.duplicates_removed || 0} odstr., ${formatBytes(result.bytes_freed || 0)} uvoln\u011Bno`;
-    case "metadata": return `Metadata: ${result.backfill?.dates_filled || 0} dat dopln\u011Bno, ${result.quality?.analyzed || 0} kvalita`;
+    case "unsorted": return `Reorganizace: ${result.moved || result.files_processed || 0} souborů přesunuto`;
+    case "dedup": return `Deduplikace: ${result.duplicates_removed || 0} odstr., ${formatBytes(result.bytes_freed || 0)} uvolněno`;
+    case "metadata": return `Metadata: ${result.backfill?.dates_filled || 0} dat doplněno, ${result.quality?.analyzed || 0} kvalita`;
     case "hashes": return `Hashe: obohaceno`;
+    case "cleanup": {
+      const s = result.summary || {};
+      const detailEl = document.getElementById("ops-cleanup-details");
+      if (detailEl) {
+        detailEl.style.display = "block";
+        detailEl.innerHTML = `
+          <div class="ops-cleanup-summary">
+            <div><strong>Unsorted:</strong> smazáno ${result.unsorted?.deleted || 0} duplikátů</div>
+            <div><strong>.staging:</strong> ${result.staging?.deleted_dupes || 0} duplikátů smazáno, ${result.staging?.moved_unique || 0} unikátů přesunuto</div>
+            <div><strong>unknown:</strong> ${result.unknown?.deleted_dupes || 0} duplikátů, ${result.unknown?.moved_dated || 0} s datem, ${result.unknown?.moved_undated || 0} bez data</div>
+            <div><strong>Celkem:</strong> ${s.total_deleted || 0} smazáno, ${s.total_moved || 0} přesunuto, uvolněno ${s.total_freed_human || "0 GB"}</div>
+          </div>`;
+      }
+      return `GDrive Cleanup: ${s.total_deleted || 0} smazáno, ${s.total_moved || 0} přesunuto, ${s.total_freed_human || "0 GB"} uvolněno`;
+    }
     default: return null;
   }
 }
