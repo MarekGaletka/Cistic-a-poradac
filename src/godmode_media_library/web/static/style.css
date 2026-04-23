@@ -2277,7 +2277,10 @@ details[open] > .diff-toggle::before { content: "v "; }
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   overflow: hidden;
+  background: #0b0b19;
 }
+/* MapLibre marker containers — no default styling */
+.maplibregl-marker { cursor: pointer; }
 
 /* Map thumbnail markers (Apple Photos style) */
 .map-thumb-icon {

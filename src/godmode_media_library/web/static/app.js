@@ -663,8 +663,7 @@ async function renderTimeline() {
 
 // ── Map ──────────────────────────────────────────────
 
-let _leafletMap = null;
-let _mapMarkers = [];
+let _glMap = null;
 
 async function renderMap() {
   content().innerHTML = '<h2>Map</h2><div id="map-container"></div>';
@@ -678,50 +677,31 @@ async function renderMap() {
       return;
     }
 
-    // Clean up previous map instance
-    if (_leafletMap) { _leafletMap.remove(); _leafletMap = null; }
-    _mapMarkers = [];
+    if (_glMap) { _glMap.remove(); _glMap = null; }
 
-    if (typeof L === "undefined") {
-      content().innerHTML = '<h2>Map</h2><div class="empty">Leaflet.js not loaded. Check your internet connection.</div>';
+    if (typeof maplibregl === "undefined") {
+      content().innerHTML = '<h2>Map</h2><div class="empty">MapLibre GL not loaded. Check your internet connection.</div>';
       return;
     }
 
-    _leafletMap = L.map("map-container").setView([0, 0], 2);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors",
-      maxZoom: 19,
-    }).addTo(_leafletMap);
+    _glMap = new maplibregl.Map({
+      container: "map-container",
+      style: "https://tiles.openfreemap.org/styles/liberty",
+      center: [0, 0], zoom: 1.8,
+      projection: "globe",
+      attributionControl: false,
+    });
+    _glMap.addControl(new maplibregl.NavigationControl(), "top-right");
 
-    // Add markers
-    const bounds = [];
-    for (const f of files) {
-      const lat = f.gps_latitude;
-      const lng = f.gps_longitude;
-      bounds.push([lat, lng]);
-
-      const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
-      const thumbUrl = isImage ? `/api/thumbnail${encodeURI(f.path)}?size=150` : "";
-      const thumbHtml = isImage ? `<img src="${thumbUrl}" style="width:120px;height:80px;object-fit:cover;border-radius:4px;margin-bottom:4px;display:block" onerror="this.style.display='none'" alt="">` : "";
-
-      const popup = `<div style="font-size:12px;max-width:160px">
-        ${thumbHtml}
-        <strong>${escapeHtml(fileName(f.path))}</strong><br>
-        <span style="color:#666">${escapeHtml(f.date_original || "")}</span><br>
-        <a href="#" onclick="event.preventDefault();closeAllPopups();showFileDetail('${escapeHtml(f.path).replace(/'/g, "\\'")}')">Details</a>
-      </div>`;
-
-      const marker = L.marker([lat, lng]).addTo(_leafletMap).bindPopup(popup);
-      _mapMarkers.push(marker);
-    }
-
-    // Fit map to markers
-    if (bounds.length) {
-      _leafletMap.fitBounds(bounds, { padding: [20, 20] });
-    }
-
-    // Fix Leaflet tile rendering issue with dynamic containers
-    setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
+    _glMap.on("load", () => {
+      const bounds = new maplibregl.LngLatBounds();
+      for (const f of files) {
+        const lng = f.gps_longitude, lat = f.gps_latitude;
+        bounds.extend([lng, lat]);
+        new maplibregl.Marker().setLngLat([lng, lat]).addTo(_glMap);
+      }
+      if (files.length) _glMap.fitBounds(bounds, { padding: 30, maxZoom: 15 });
+    });
 
   } catch (e) {
     content().innerHTML = `<h2>Map</h2><div class="empty">Error: ${escapeHtml(e.message)}</div>`;
