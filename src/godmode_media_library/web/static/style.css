@@ -255,7 +255,7 @@ nav a.active {
 main {
   flex: 1;
   margin-left: 220px;
-  padding: 24px 32px;
+  padding: 60px 32px 24px;
 }
 
 h2 {
@@ -3259,7 +3259,12 @@ button.danger:hover {
 
   main {
     margin-left: 0;
-    padding: 16px;
+    padding: 56px 16px 16px;
+  }
+
+  .global-search {
+    left: 0;
+    padding: 8px 16px;
   }
 
   .stats-grid-v2 { grid-template-columns: repeat(2, 1fr); }
@@ -13023,9 +13028,14 @@ select.cons-input {
 /* ── Global Search ───────────────────────────────────────── */
 
 .global-search {
-  position: relative;
-  padding: 0 24px 0 0;
-  z-index: 1000;
+  position: fixed;
+  top: 0;
+  left: 220px;
+  right: 0;
+  padding: 12px 32px;
+  z-index: 350;
+  background: var(--bg, #111);
+  border-bottom: 1px solid var(--border, #333);
 }
 
 .global-search-input-wrap {
@@ -13036,6 +13046,7 @@ select.cons-input {
   border: 1px solid var(--border, #333);
   border-radius: 10px;
   padding: 6px 12px;
+  max-width: 480px;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -13080,7 +13091,7 @@ select.cons-input {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  right: 24px;
+  width: 480px;
   background: var(--card-bg, #1c1c1e);
   border: 1px solid var(--border, #333);
   border-radius: 12px;
