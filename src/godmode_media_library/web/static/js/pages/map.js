@@ -221,13 +221,41 @@ function _buildMap(containerId, files) {
     })),
   };
 
+  console.log("[MAP] creating MapLibre map, container:", containerId);
+
+  /* Use inline style with OSM raster tiles as reliable fallback */
+  const mapStyle = {
+    version: 8,
+    projection: { type: "vertical-perspective" },
+    sources: {
+      osm: {
+        type: "raster",
+        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: 256,
+        attribution: "&copy; OpenStreetMap contributors",
+        maxzoom: 19,
+      },
+    },
+    layers: [
+      { id: "osm-tiles", type: "raster", source: "osm" },
+    ],
+    sky: {
+      "atmosphere-blend": [
+        "interpolate", ["linear"], ["zoom"],
+        0, 1, 5, 1, 7, 0,
+      ],
+    },
+  };
+
   _map = new maplibregl.Map({
     container: containerId,
-    style: STYLE_URL,
+    style: mapStyle,
     center: [15.5, 49.8],
     zoom: 1.8,
     attributionControl: false,
   });
+
+  console.log("[MAP] map created, waiting for load...");
 
   _map.addControl(new maplibregl.NavigationControl(), "top-right");
   _map.addControl(
@@ -236,25 +264,11 @@ function _buildMap(containerId, files) {
   );
 
   _map.on("error", (e) => {
-    console.error("MapLibre error:", e.error?.message || e);
+    console.error("[MAP] MapLibre error:", e.error?.message || e);
   });
 
   _map.on("load", () => {
-    /* enable globe projection */
-    _map.setProjection({ type: "vertical-perspective" });
-
-    /* atmosphere glow around globe */
-    try {
-      _map.setSky({
-        "atmosphere-blend": [
-          "interpolate", ["linear"], ["zoom"],
-          0, 1, 5, 1, 7, 0,
-        ],
-      });
-      _map.setLight({ anchor: "map", position: [1.5, 90, 80] });
-    } catch {
-      /* atmosphere not supported — globe still works */
-    }
+    console.log("[MAP] map loaded, projection:", _map.getProjection());
 
     /* clustered GeoJSON source */
     _map.addSource("files", {
@@ -294,6 +308,7 @@ function _buildMap(containerId, files) {
       if (e.sourceId === "files") _scheduleSync();
     });
     _scheduleSync();
+    console.log("[MAP] setup complete, files:", files.length);
   });
 }
 
@@ -337,14 +352,22 @@ export async function render(container) {
 
       _map = new maplibregl.Map({
         container: "map-container",
-        style: STYLE_URL,
+        style: {
+          version: 8,
+          projection: { type: "vertical-perspective" },
+          sources: {
+            osm: {
+              type: "raster",
+              tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+              tileSize: 256, maxzoom: 19,
+            },
+          },
+          layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
+        },
         center: [15.5, 49.8],
         zoom: 7,
         attributionControl: false,
         interactive: false,
-      });
-      _map.on("load", () => {
-        _map.setProjection({ type: "vertical-perspective" });
       });
 
       document
