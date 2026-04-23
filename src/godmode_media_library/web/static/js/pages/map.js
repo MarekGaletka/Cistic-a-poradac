@@ -235,9 +235,13 @@ function _buildMap(containerId, files) {
     "bottom-right",
   );
 
-  _map.on("style.load", () => {
+  _map.on("error", (e) => {
+    console.error("MapLibre error:", e.error?.message || e);
+  });
+
+  _map.on("load", () => {
     /* enable globe projection */
-    _map.setProjection({ type: "globe" });
+    _map.setProjection({ type: "vertical-perspective" });
 
     /* atmosphere glow around globe */
     try {
@@ -339,8 +343,8 @@ export async function render(container) {
         attributionControl: false,
         interactive: false,
       });
-      _map.on("style.load", () => {
-        _map.setProjection({ type: "globe" });
+      _map.on("load", () => {
+        _map.setProjection({ type: "vertical-perspective" });
       });
 
       document

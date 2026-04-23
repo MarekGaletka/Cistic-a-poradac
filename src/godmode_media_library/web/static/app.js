@@ -692,8 +692,8 @@ async function renderMap() {
     });
     _glMap.addControl(new maplibregl.NavigationControl(), "top-right");
 
-    _glMap.on("style.load", () => {
-      _glMap.setProjection({ type: "globe" });
+    _glMap.on("load", () => {
+      _glMap.setProjection({ type: "vertical-perspective" });
       const bounds = new maplibregl.LngLatBounds();
       for (const f of files) {
         const lng = f.gps_longitude, lat = f.gps_latitude;
