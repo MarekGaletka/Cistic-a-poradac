@@ -688,12 +688,12 @@ async function renderMap() {
       container: "map-container",
       style: "https://tiles.openfreemap.org/styles/liberty",
       center: [0, 0], zoom: 1.8,
-      projection: "globe",
       attributionControl: false,
     });
     _glMap.addControl(new maplibregl.NavigationControl(), "top-right");
 
-    _glMap.on("load", () => {
+    _glMap.on("style.load", () => {
+      _glMap.setProjection({ type: "globe" });
       const bounds = new maplibregl.LngLatBounds();
       for (const f of files) {
         const lng = f.gps_longitude, lat = f.gps_latitude;

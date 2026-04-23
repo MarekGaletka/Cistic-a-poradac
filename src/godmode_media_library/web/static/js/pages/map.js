@@ -226,7 +226,6 @@ function _buildMap(containerId, files) {
     style: STYLE_URL,
     center: [15.5, 49.8],
     zoom: 1.8,
-    projection: "globe",
     attributionControl: false,
   });
 
@@ -236,18 +235,21 @@ function _buildMap(containerId, files) {
     "bottom-right",
   );
 
-  _map.on("load", () => {
+  _map.on("style.load", () => {
+    /* enable globe projection */
+    _map.setProjection({ type: "globe" });
+
     /* atmosphere glow around globe */
     try {
-      _map.setFog({
-        color: "rgba(186, 210, 235, 1)",
-        "high-color": "rgba(36, 92, 223, 1)",
-        "horizon-blend": 0.02,
-        "space-color": "rgba(11, 11, 25, 1)",
-        "star-intensity": 0.6,
+      _map.setSky({
+        "atmosphere-blend": [
+          "interpolate", ["linear"], ["zoom"],
+          0, 1, 5, 1, 7, 0,
+        ],
       });
+      _map.setLight({ anchor: "map", position: [1.5, 90, 80] });
     } catch {
-      /* fog not supported — globe still works */
+      /* atmosphere not supported — globe still works */
     }
 
     /* clustered GeoJSON source */
@@ -334,9 +336,11 @@ export async function render(container) {
         style: STYLE_URL,
         center: [15.5, 49.8],
         zoom: 7,
-        projection: "globe",
         attributionControl: false,
         interactive: false,
+      });
+      _map.on("style.load", () => {
+        _map.setProjection({ type: "globe" });
       });
 
       document
