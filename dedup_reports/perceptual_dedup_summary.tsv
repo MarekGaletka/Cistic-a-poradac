@@ -1,7 +1,0 @@
-category	description	clusters	total_files	to_remove	action
-exact_match	Stejný SHA256	11	42	31	SAFE
-download_variant	Stažené varianty: file(1), file(2)...	815	1693	878	SAFE
-bundle_asset	Obrázky uvnitř .key/.app bundlů	115	359	244	SKIP
-burst_sequence	Burst/sekvenční fotky (<10s)	8	49	41	REVIEW
-mixed_bundle	Mix bundle + non-bundle	4	67	63	REVIEW
-needs_review	Vizuálně podobné, různé soubory	99	333	234	REVIEW

@@ -1,4 +1,4 @@
-/* GOD MODE Media Library — Map page (3D Globe with thumbnail markers) */
+/* GOD MODE Media Library — Map page (Apple Photos style with thumbnail markers) */
 
 import { api } from "../api.js";
 import { escapeHtml, fileName, IMAGE_EXTS } from "../utils.js";
@@ -6,303 +6,151 @@ import { t } from "../i18n.js";
 import { showFileDetail } from "../modal.js";
 import { openLightbox } from "../lightbox.js";
 
-let _map = null;
+let _leafletMap = null;
+let _clusterGroup = null;
 let _cancelled = false;
-let _markers = {};
-let _allFiles = [];
-let _lightboxPaths = [];
-let _rafId = 0;
 
-const VIDEO_EXTS = new Set([
-  "mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v",
-]);
+const VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v"]);
 const PAGE_SIZE = 10000;
-const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 
 export function cleanup() {
   _cancelled = true;
-  if (_rafId) {
-    cancelAnimationFrame(_rafId);
-    _rafId = 0;
+  if (_leafletMap) {
+    _leafletMap.remove();
+    _leafletMap = null;
   }
-  for (const m of Object.values(_markers)) m.remove();
-  _markers = {};
-  if (_map) {
-    _map.remove();
-    _map = null;
-  }
-  _allFiles = [];
-  _lightboxPaths = [];
+  _clusterGroup = null;
 }
 
-/* ── Data loading ────────────────────────────────── */
+function _thumbIcon(f) {
+  const isImage = IMAGE_EXTS.has((f.ext || "").toLowerCase());
+  const isVideo = VIDEO_EXTS.has((f.ext || "").toLowerCase());
+  if (isImage) {
+    const url = `/api/thumbnail${encodeURI(f.path)}?size=80`;
+    return L.divIcon({
+      html: `<div class="map-thumb-marker"><img src="${url}" onerror="this.parentElement.innerHTML='&#128247;'"></div>`,
+      className: "map-thumb-icon",
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
+    });
+  }
+  if (isVideo) {
+    return L.divIcon({
+      html: `<div class="map-thumb-marker map-thumb-video">▶</div>`,
+      className: "map-thumb-icon",
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
+    });
+  }
+  return L.divIcon({
+    html: `<div class="map-thumb-marker map-thumb-file">${escapeHtml(f.ext || "?")}</div>`,
+    className: "map-thumb-icon",
+    iconSize: [48, 48],
+    iconAnchor: [24, 24],
+  });
+}
 
+function _clusterIcon(cluster) {
+  const children = cluster.getAllChildMarkers();
+  const count = children.length;
+
+  let thumbHtml = "";
+  for (const m of children) {
+    const f = m._gmlFile;
+    if (f && IMAGE_EXTS.has((f.ext || "").toLowerCase())) {
+      const url = `/api/thumbnail${encodeURI(f.path)}?size=80`;
+      thumbHtml = `<img src="${url}" onerror="this.style.display='none'">`;
+      break;
+    }
+  }
+
+  const size = count >= 100 ? 64 : count >= 20 ? 56 : 48;
+  return L.divIcon({
+    html: `<div class="map-cluster-thumb" style="width:${size}px;height:${size}px">
+      ${thumbHtml}
+      <span class="map-cluster-count">${count}</span>
+    </div>`,
+    className: "map-cluster-icon",
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+/** Fetch all GPS files via pagination */
 async function _fetchAllGpsFiles() {
-  const all = [];
+  const allFiles = [];
   let offset = 0;
   let hasMore = true;
+
   while (hasMore && !_cancelled) {
-    const d = await api(
-      `/files?has_gps=true&limit=${PAGE_SIZE}&offset=${offset}`,
-    );
-    all.push(
-      ...(d.files || []).filter((f) => f.gps_latitude && f.gps_longitude),
-    );
-    hasMore = d.has_more === true;
+    const data = await api(`/files?has_gps=true&limit=${PAGE_SIZE}&offset=${offset}`);
+    const batch = (data.files || []).filter(f => f.gps_latitude && f.gps_longitude);
+    allFiles.push(...batch);
+    hasMore = data.has_more === true;
     offset += PAGE_SIZE;
   }
-  return all;
+
+  return allFiles;
 }
 
-/* ── Marker DOM elements ─────────────────────────── */
+function _addMarkersToMap(files) {
+  const lightboxPaths = files.filter(f => {
+    const ext = (f.ext || "").toLowerCase();
+    return IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
+  }).map(f => f.path);
 
-function _pointEl(f) {
-  const el = document.createElement("div");
-  const ext = (f.ext || "").toLowerCase();
-  const isImg = IMAGE_EXTS.has(ext);
-  const isVid = VIDEO_EXTS.has(ext);
-
-  el.className = "map-thumb-marker";
-  if (isImg) {
-    const img = document.createElement("img");
-    img.src = `/api/thumbnail${encodeURI(f.path)}?size=80`;
-    img.onerror = () => {
-      el.innerHTML = "&#128247;";
-    };
-    el.appendChild(img);
-  } else if (isVid) {
-    el.classList.add("map-thumb-video");
-    el.textContent = "\u25B6";
-  } else {
-    el.classList.add("map-thumb-file");
-    el.textContent = (f.ext || "?").toUpperCase();
+  const useCluster = typeof L.markerClusterGroup === "function";
+  if (useCluster) {
+    _clusterGroup = L.markerClusterGroup({
+      iconCreateFunction: _clusterIcon,
+      maxClusterRadius: 50,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+      disableClusteringAtZoom: 18,
+    });
   }
 
-  el.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (isImg || isVid) {
-      const i = _lightboxPaths.indexOf(f.path);
-      i >= 0 ? openLightbox(_lightboxPaths, i) : showFileDetail(f.path);
-    } else {
-      showFileDetail(f.path);
-    }
-  });
+  const bounds = [];
+  for (const f of files) {
+    const lat = f.gps_latitude;
+    const lng = f.gps_longitude;
+    bounds.push([lat, lng]);
 
-  return el;
-}
+    const icon = _thumbIcon(f);
+    const marker = L.marker([lat, lng], { icon });
+    marker._gmlFile = f;
 
-function _clusterEl(count, clusterId, lngLat) {
-  const sz = count >= 100 ? 64 : count >= 20 ? 56 : 48;
-  const el = document.createElement("div");
-  el.className = "map-cluster-thumb";
-  el.style.cssText = `width:${sz}px;height:${sz}px`;
-
-  const badge = document.createElement("span");
-  badge.className = "map-cluster-count";
-  badge.textContent =
-    count >= 1000 ? Math.round(count / 1000) + "k" : String(count);
-  el.appendChild(badge);
-
-  /* thumbnail from first image in cluster */
-  const src = _map?.getSource("files");
-  if (src) {
-    src
-      .getClusterLeaves(clusterId, 20, 0)
-      .then((leaves) => {
-        for (const lf of leaves) {
-          const f = _allFiles[lf.properties.idx];
-          if (f && IMAGE_EXTS.has((f.ext || "").toLowerCase())) {
-            const img = document.createElement("img");
-            img.src = `/api/thumbnail${encodeURI(f.path)}?size=80`;
-            img.onerror = () => img.remove();
-            el.insertBefore(img, badge);
-            break;
-          }
+    marker.on("click", () => {
+      const ext = (f.ext || "").toLowerCase();
+      const isMedia = IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext);
+      if (isMedia) {
+        const idx = lightboxPaths.indexOf(f.path);
+        if (idx >= 0) {
+          openLightbox(lightboxPaths, idx);
+        } else {
+          showFileDetail(f.path);
         }
-      })
-      .catch(() => {});
-  }
-
-  el.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const s = _map?.getSource("files");
-    if (s) {
-      s.getClusterExpansionZoom(clusterId)
-        .then((z) => _map?.easeTo({ center: lngLat, zoom: Math.min(z, 18) }))
-        .catch(() => {});
-    }
-  });
-
-  return el;
-}
-
-/* ── Sync HTML markers with clustered source ─────── */
-
-function _scheduleSync() {
-  if (_rafId) return;
-  _rafId = requestAnimationFrame(() => {
-    _rafId = 0;
-    _syncMarkers();
-  });
-}
-
-function _syncMarkers() {
-  if (!_map || _cancelled) return;
-  try {
-    if (!_map.getSource("files") || !_map.isSourceLoaded("files")) return;
-  } catch {
-    return;
-  }
-
-  const seen = new Set();
-
-  /* clusters */
-  for (const ft of _map.queryRenderedFeatures({ layers: ["_cl"] })) {
-    const id = "c" + ft.properties.cluster_id;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    if (!_markers[id]) {
-      const c = ft.geometry.coordinates;
-      _markers[id] = new maplibregl.Marker({
-        element: _clusterEl(
-          ft.properties.point_count,
-          ft.properties.cluster_id,
-          c,
-        ),
-      })
-        .setLngLat(c)
-        .addTo(_map);
-    }
-  }
-
-  /* individual points */
-  for (const ft of _map.queryRenderedFeatures({ layers: ["_pt"] })) {
-    const id = "p" + ft.properties.idx;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    if (!_markers[id]) {
-      const f = _allFiles[ft.properties.idx];
-      if (!f) continue;
-      _markers[id] = new maplibregl.Marker({ element: _pointEl(f) })
-        .setLngLat(ft.geometry.coordinates)
-        .addTo(_map);
-    }
-  }
-
-  /* remove markers no longer visible */
-  for (const id of Object.keys(_markers)) {
-    if (!seen.has(id)) {
-      _markers[id].remove();
-      delete _markers[id];
-    }
-  }
-}
-
-/* ── Build the globe map ─────────────────────────── */
-
-function _buildMap(containerId, files) {
-  _allFiles = files;
-  _lightboxPaths = files
-    .filter((f) => {
-      const e = (f.ext || "").toLowerCase();
-      return IMAGE_EXTS.has(e) || VIDEO_EXTS.has(e);
-    })
-    .map((f) => f.path);
-
-  const geojson = {
-    type: "FeatureCollection",
-    features: files.map((f, i) => ({
-      type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates: [f.gps_longitude, f.gps_latitude],
-      },
-      properties: { idx: i },
-    })),
-  };
-
-
-  /* Exact pattern from official MapLibre globe example */
-  _map = new maplibregl.Map({
-    container: containerId,
-    style: {
-      version: 8,
-      projection: { type: "globe" },
-      sources: {
-        satellite: {
-          type: "raster",
-          tiles: [
-            "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg",
-          ],
-          tileSize: 256,
-          attribution: "&copy; EOX / Sentinel-2",
-          maxzoom: 14,
-        },
-      },
-      layers: [
-        { id: "satellite", type: "raster", source: "satellite" },
-      ],
-    },
-    center: [15.5, 49.8],
-    zoom: 2.5,
-    attributionControl: false,
-  });
-
-
-  _map.addControl(new maplibregl.NavigationControl(), "top-right");
-  _map.addControl(
-    new maplibregl.AttributionControl({ compact: true }),
-    "bottom-right",
-  );
-
-  _map.on("error", (e) => {
-    console.error("[MAP] MapLibre error:", e.error?.message || e);
-  });
-
-  _map.on("load", () => {
-
-    /* clustered GeoJSON source */
-    _map.addSource("files", {
-      type: "geojson",
-      data: geojson,
-      cluster: true,
-      clusterMaxZoom: 16,
-      clusterRadius: 50,
+      } else {
+        showFileDetail(f.path);
+      }
     });
 
-    /* invisible helper layers for queryRenderedFeatures */
-    _map.addLayer({
-      id: "_cl",
-      type: "circle",
-      source: "files",
-      filter: ["has", "point_count"],
-      paint: { "circle-radius": 24, "circle-opacity": 0 },
-    });
-    _map.addLayer({
-      id: "_pt",
-      type: "circle",
-      source: "files",
-      filter: ["!", ["has", "point_count"]],
-      paint: { "circle-radius": 24, "circle-opacity": 0 },
-    });
-
-    /* fit bounds to data */
-    if (files.length) {
-      const bounds = new maplibregl.LngLatBounds();
-      for (const f of files) bounds.extend([f.gps_longitude, f.gps_latitude]);
-      _map.fitBounds(bounds, { padding: 50, maxZoom: 15 });
+    if (useCluster) {
+      _clusterGroup.addLayer(marker);
+    } else {
+      marker.addTo(_leafletMap);
     }
+  }
 
-    /* sync markers on view changes */
-    _map.on("moveend", _scheduleSync);
-    _map.on("sourcedata", (e) => {
-      if (e.sourceId === "files") _scheduleSync();
-    });
-    _scheduleSync();
-  });
+  if (useCluster) {
+    _leafletMap.addLayer(_clusterGroup);
+  }
+
+  if (bounds.length) {
+    _leafletMap.fitBounds(bounds, { padding: [30, 30] });
+  }
 }
-
-/* ── Page entry point ────────────────────────────── */
 
 export async function render(container) {
   _cancelled = false;
@@ -313,14 +161,8 @@ export async function render(container) {
 
   try {
     const files = await _fetchAllGpsFiles();
-    if (_cancelled) return;
 
-    if (typeof maplibregl === "undefined") {
-      container.innerHTML = `
-        <div class="page-header"><h2>${t("map.title")}</h2></div>
-        <div class="empty">${t("map.leaflet_error")}</div>`;
-      return;
-    }
+    if (_cancelled) return;
 
     if (!files.length) {
       container.innerHTML = `
@@ -339,49 +181,45 @@ export async function render(container) {
 
       cleanup();
       _cancelled = false;
+      if (typeof L !== "undefined") {
+        _leafletMap = L.map("map-container").setView([49.8, 15.5], 7);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 19,
+        }).addTo(_leafletMap);
+        setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
+      }
 
-      _map = new maplibregl.Map({
-        container: "map-container",
-        style: {
-          version: 8,
-          projection: { type: "globe" },
-          sources: {
-            satellite: {
-              type: "raster",
-              tiles: ["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg"],
-              tileSize: 256, maxzoom: 14,
-            },
-          },
-          layers: [{ id: "satellite", type: "raster", source: "satellite" }],
-        },
-        center: [15.5, 49.8],
-        zoom: 4,
-        attributionControl: false,
-        interactive: false,
+      document.getElementById("btn-map-pipeline")?.addEventListener("click", () => {
+        location.hash = "#settings";
       });
-
-      document
-        .getElementById("btn-map-pipeline")
-        ?.addEventListener("click", () => {
-          location.hash = "#settings";
-        });
       return;
     }
 
     container.innerHTML = `
-      <div class="page-header">
-        <h2>${t("map.title")} <span class="header-count">${t("map.files_on_map", { count: files.length })}</span></h2>
-      </div>
+      <div class="page-header"><h2>${t("map.title")} <span class="header-count">${t("map.files_on_map", { count: files.length })}</span></h2></div>
       <div id="map-container"></div>`;
 
     cleanup();
     _cancelled = false;
-    _buildMap("map-container", files);
+
+    if (typeof L === "undefined") {
+      container.innerHTML = `<div class="page-header"><h2>${t("map.title")}</h2></div><div class="empty">${t("map.leaflet_error")}</div>`;
+      return;
+    }
+
+    _leafletMap = L.map("map-container").setView([0, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19,
+    }).addTo(_leafletMap);
+
+    _addMarkersToMap(files);
+
+    setTimeout(() => { if (_leafletMap) _leafletMap.invalidateSize(); }, 100);
   } catch (e) {
     if (!_cancelled) {
-      container.innerHTML = `
-        <div class="page-header"><h2>${t("map.title")}</h2></div>
-        <div class="empty">${t("general.error", { message: e.message })}</div>`;
+      container.innerHTML = `<div class="page-header"><h2>${t("map.title")}</h2></div><div class="empty">${t("general.error", { message: e.message })}</div>`;
     }
   }
 }
