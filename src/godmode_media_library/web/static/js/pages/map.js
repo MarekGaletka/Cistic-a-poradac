@@ -221,9 +221,7 @@ function _buildMap(containerId, files) {
     })),
   };
 
-  console.log("[MAP] creating MapLibre map, container:", containerId);
 
-  /* Use inline style with OSM raster tiles as reliable fallback */
   const mapStyle = {
     version: 8,
     projection: { type: "vertical-perspective" },
@@ -242,7 +240,7 @@ function _buildMap(containerId, files) {
     sky: {
       "atmosphere-blend": [
         "interpolate", ["linear"], ["zoom"],
-        0, 1, 5, 1, 7, 0,
+        0, 0.15, 4, 0.1, 7, 0,
       ],
     },
   };
@@ -251,11 +249,10 @@ function _buildMap(containerId, files) {
     container: containerId,
     style: mapStyle,
     center: [15.5, 49.8],
-    zoom: 1.8,
+    zoom: 2.2,
     attributionControl: false,
   });
 
-  console.log("[MAP] map created, waiting for load...");
 
   _map.addControl(new maplibregl.NavigationControl(), "top-right");
   _map.addControl(
@@ -268,7 +265,6 @@ function _buildMap(containerId, files) {
   });
 
   _map.on("load", () => {
-    console.log("[MAP] map loaded, projection:", _map.getProjection());
 
     /* clustered GeoJSON source */
     _map.addSource("files", {
@@ -308,7 +304,6 @@ function _buildMap(containerId, files) {
       if (e.sourceId === "files") _scheduleSync();
     });
     _scheduleSync();
-    console.log("[MAP] setup complete, files:", files.length);
   });
 }
 
@@ -363,9 +358,10 @@ export async function render(container) {
             },
           },
           layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
+          sky: { "atmosphere-blend": 0.12 },
         },
         center: [15.5, 49.8],
-        zoom: 7,
+        zoom: 4,
         attributionControl: false,
         interactive: false,
       });
