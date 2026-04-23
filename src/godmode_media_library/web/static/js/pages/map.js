@@ -222,22 +222,25 @@ function _buildMap(containerId, files) {
   };
 
 
+  /* Exact pattern from official MapLibre globe example */
   _map = new maplibregl.Map({
     container: containerId,
     style: {
       version: 8,
-      projection: { type: "vertical-perspective" },
+      projection: { type: "globe" },
       sources: {
-        osm: {
+        satellite: {
           type: "raster",
-          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tiles: [
+            "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg",
+          ],
           tileSize: 256,
-          attribution: "&copy; OpenStreetMap contributors",
-          maxzoom: 19,
+          attribution: "&copy; EOX / Sentinel-2",
+          maxzoom: 14,
         },
       },
       layers: [
-        { id: "osm-tiles", type: "raster", source: "osm" },
+        { id: "satellite", type: "raster", source: "satellite" },
       ],
     },
     center: [15.5, 49.8],
@@ -341,15 +344,15 @@ export async function render(container) {
         container: "map-container",
         style: {
           version: 8,
-          projection: { type: "vertical-perspective" },
+          projection: { type: "globe" },
           sources: {
-            osm: {
+            satellite: {
               type: "raster",
-              tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-              tileSize: 256, maxzoom: 19,
+              tiles: ["https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg"],
+              tileSize: 256, maxzoom: 14,
             },
           },
-          layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
+          layers: [{ id: "satellite", type: "raster", source: "satellite" }],
         },
         center: [15.5, 49.8],
         zoom: 4,
