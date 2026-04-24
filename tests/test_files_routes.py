@@ -5,10 +5,7 @@ Targets coverage improvement from ~79% to 88%+.
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -315,9 +312,7 @@ class TestDeleteFiles:
     def test_delete_nonexistent(self, client):
         media_dir = client._media_dir
         client.post("/api/roots", json={"roots": [str(media_dir)]})
-        resp = client.post(
-            "/api/files/delete", json={"paths": [str(media_dir / "nofile.xyz")]}
-        )
+        resp = client.post("/api/files/delete", json={"paths": [str(media_dir / "nofile.xyz")]})
         assert resp.status_code == 200
         assert resp.json()["skipped"] == 1
 
@@ -637,9 +632,7 @@ class TestRoots:
         assert len(resp.json()["roots"]) == 1
 
     def test_save_roots_filters_nonexistent(self, client):
-        resp = client.post(
-            "/api/roots", json={"roots": ["/nonexistent/path/xyz"]}
-        )
+        resp = client.post("/api/roots", json={"roots": ["/nonexistent/path/xyz"]})
         assert resp.status_code == 200
         assert resp.json()["roots"] == []
 
@@ -708,9 +701,7 @@ class TestStreamFile:
     def test_stream_range_invalid(self, client):
         media_dir = client._media_dir
         fpath = str(media_dir / "photo1.jpg").lstrip("/")
-        resp = client.get(
-            f"/api/stream/{fpath}", headers={"Range": "bytes=999999-9999999"}
-        )
+        resp = client.get(f"/api/stream/{fpath}", headers={"Range": "bytes=999999-9999999"})
         assert resp.status_code == 416
 
     def test_stream_file_not_on_disk(self, client, populated_catalog):

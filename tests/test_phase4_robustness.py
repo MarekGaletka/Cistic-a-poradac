@@ -9,9 +9,6 @@ import datetime as dt
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ── 1. metadata_merge: group prefix preserved ───────────────────────────
 # Issue: EXIF: and XMP: prefixes were stripped, causing both tags to collide
 # as bare -DateTimeOriginal=.
@@ -166,8 +163,6 @@ def test_notification_uses_env_vars_not_interpolation(mock_sys, mock_run):
 def test_fcntl_conditional_import_regression():
     """If fcntl is unavailable (like Windows), open() must not crash."""
     import builtins
-    import os
-    import sqlite3
     import tempfile
 
     from godmode_media_library.catalog import Catalog

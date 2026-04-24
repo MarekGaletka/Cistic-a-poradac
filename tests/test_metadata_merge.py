@@ -223,6 +223,7 @@ def test_execute_merge_no_exiftool():
 
 # ── Group prefix preservation ──────────────────────────────────────────
 
+
 def test_group_prefix_preserved_in_exiftool_cmd():
     """Tags like EXIF:DateTimeOriginal keep their group prefix in the cmd."""
     plan = MergePlan(
@@ -251,6 +252,7 @@ def test_group_prefix_preserved_in_exiftool_cmd():
 
 
 # ── List serialization ──────────────────────────────────────────────────
+
 
 def test_list_value_serialization_in_copy():
     """List values in copy actions generate separate -tag=val entries."""
@@ -296,7 +298,7 @@ def test_merge_list_single_value():
         patch("subprocess.run", return_value=mock_proc) as mock_run,
         patch("pathlib.Path.exists", return_value=False),
     ):
-        result = execute_merge(plan, dry_run=False)
+        execute_merge(plan, dry_run=False)
 
     cmd = mock_run.call_args[0][0]
     assert "-XMP:Subject+=landscape" in cmd
@@ -475,7 +477,7 @@ def test_execute_merge_dash_prefix_path():
         patch("subprocess.run", return_value=mock_proc) as mock_run,
         patch("pathlib.Path.exists", return_value=False),
     ):
-        result = execute_merge(plan, dry_run=False)
+        execute_merge(plan, dry_run=False)
 
     cmd = mock_run.call_args[0][0]
     # Path should be prefixed with ./ to avoid being treated as a flag

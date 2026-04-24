@@ -11,6 +11,8 @@ import logging
 import os
 from dataclasses import dataclass
 
+from .asset_sets import PILLOW_IMAGE_EXTS
+
 logger = logging.getLogger(__name__)
 
 # ── Known screen resolutions (width, height) ────────────────────────
@@ -76,8 +78,6 @@ _LAPLACIAN_KERNEL = (0, 1, 0, 1, -4, 1, 0, 1, 0)
 
 # Size threshold for meme detection (100KB)
 _MEME_SIZE_THRESHOLD = 100 * 1024
-
-from .asset_sets import PILLOW_IMAGE_EXTS
 
 # Video extensions (classified without analysis)
 VIDEO_EXTS = {"mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp", "mts"}

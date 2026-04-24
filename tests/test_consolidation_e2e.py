@@ -8,7 +8,7 @@ and concurrent access guards.
 from __future__ import annotations
 
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -21,12 +21,9 @@ except ImportError:
 
 from godmode_media_library.catalog import Catalog
 from godmode_media_library.checkpoint import (
-    ConsolidationJob,
-    FileTransferState,
     check_db_integrity,
     complete_job,
     create_job,
-    get_failed_files,
     get_job,
     get_job_progress,
     get_resumable_jobs,
@@ -39,7 +36,6 @@ from godmode_media_library.checkpoint import (
 from godmode_media_library.consolidation import (
     ConsolidationConfig,
     ConsolidationProgress,
-    PhaseContext,
     _pause_events,
     get_consolidation_status,
     get_failed_files_report,
@@ -47,7 +43,6 @@ from godmode_media_library.consolidation import (
     signal_pause,
 )
 from godmode_media_library.consolidation_types import (
-    CONSOLIDATION_JOB_TYPES,
     JOB_TYPE_ULTIMATE,
     DedupStrategy,
     FileStatus,
@@ -176,10 +171,13 @@ class TestConsolidationStartValidation:
         """
         # The API itself uses str type, so it won't reject unknown patterns at the API level.
         # We verify the request is accepted (validation is in the pipeline).
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch("godmode_media_library.consolidation.run_consolidation", return_value={}):
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch("godmode_media_library.consolidation.run_consolidation", return_value={}),
+        ):
             resp = client.post("/api/consolidation/start", json={"structure_pattern": "nonexistent_pattern"})
             # API layer accepts it (str field)
             assert resp.status_code == 200
@@ -196,29 +194,38 @@ class TestConsolidationStartValidation:
 
     def test_start_verify_pct_zero_accepted(self, client):
         """verify_pct=0 is valid (skip verification)."""
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch("godmode_media_library.consolidation.run_consolidation", return_value={}):
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch("godmode_media_library.consolidation.run_consolidation", return_value={}),
+        ):
             resp = client.post("/api/consolidation/start", json={"verify_pct": 0})
             assert resp.status_code == 200
 
     def test_start_verify_pct_100_accepted(self, client):
         """verify_pct=100 is valid (full verification)."""
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch("godmode_media_library.consolidation.run_consolidation", return_value={}):
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch("godmode_media_library.consolidation.run_consolidation", return_value={}),
+        ):
             resp = client.post("/api/consolidation/start", json={"verify_pct": 100})
             assert resp.status_code == 200
 
     def test_start_bwlimit_valid_formats(self, client):
         """Valid bwlimit formats: '10M', '1G', '512K', plain number."""
         for bwlimit in ["10M", "1G", "512K", "1024", "100k", "5m"]:
-            with patch(
-                "godmode_media_library.consolidation.get_consolidation_status",
-                return_value={"has_active_job": False},
-            ), patch("godmode_media_library.consolidation.run_consolidation", return_value={}):
+            with (
+                patch(
+                    "godmode_media_library.consolidation.get_consolidation_status",
+                    return_value={"has_active_job": False},
+                ),
+                patch("godmode_media_library.consolidation.run_consolidation", return_value={}),
+            ):
                 resp = client.post("/api/consolidation/start", json={"bwlimit": bwlimit})
                 assert resp.status_code == 200, f"bwlimit={bwlimit!r} should be accepted"
 
@@ -263,7 +270,7 @@ class TestConsolidationPreview:
         client.post("/api/consolidation/preview", json={"dry_run": False})
         # preview_consolidation always sets dry_run=True
         if mock_run.called:
-            cfg_arg = mock_run.call_args
+            pass
             # The config is passed through preview_consolidation which sets dry_run=True
             # We just verify the mock was invoked (background task)
 
@@ -309,6 +316,7 @@ class TestPauseResumeLogic:
     def test_signal_pause_sets_event(self):
         """signal_pause sets the Event when the job is registered."""
         import time
+
         job_id = "test_pause_job"
         evt = threading.Event()
         _pause_events[job_id] = (evt, time.time())
@@ -322,6 +330,7 @@ class TestPauseResumeLogic:
     def test_pause_events_lifecycle(self):
         """_pause_events dict should be clean: add, use, remove."""
         import time
+
         job_id = "lifecycle_test"
         assert job_id not in _pause_events
 
@@ -356,6 +365,7 @@ class TestPauseResumeLogic:
 
         # Register an in-process event so signal_pause succeeds
         import time
+
         evt = threading.Event()
         _pause_events[job.job_id] = (evt, time.time())
         try:
@@ -645,6 +655,7 @@ class TestCheckpointIntegration:
     def test_job_appears_in_status(self, catalog_db):
         """Created job appears in get_consolidation_status."""
         import time
+
         cat = Catalog(catalog_db)
         cat.open()
         job = create_job(cat, JOB_TYPE_ULTIMATE)
@@ -654,8 +665,9 @@ class TestCheckpointIntegration:
         # Register a fake pause event so orphan detection doesn't mark the job as failed
         _pause_events[job.job_id] = (threading.Event(), time.time())
         try:
-            with patch("godmode_media_library.consolidation.list_remotes", return_value=[]), patch(
-                "godmode_media_library.consolidation.rclone_is_reachable", return_value=False
+            with (
+                patch("godmode_media_library.consolidation.list_remotes", return_value=[]),
+                patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False),
             ):
                 status = get_consolidation_status(catalog_db)
             assert status["has_active_job"] is True
@@ -672,8 +684,9 @@ class TestCheckpointIntegration:
         pause_job(cat, job.job_id)
         cat.close()
 
-        with patch("godmode_media_library.consolidation.list_remotes", return_value=[]), patch(
-            "godmode_media_library.consolidation.rclone_is_reachable", return_value=False
+        with (
+            patch("godmode_media_library.consolidation.list_remotes", return_value=[]),
+            patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False),
         ):
             status = get_consolidation_status(catalog_db)
         assert status["has_active_job"] is True
@@ -689,8 +702,9 @@ class TestCheckpointIntegration:
         complete_job(cat, job.job_id)
         cat.close()
 
-        with patch("godmode_media_library.consolidation.list_remotes", return_value=[]), patch(
-            "godmode_media_library.consolidation.rclone_is_reachable", return_value=False
+        with (
+            patch("godmode_media_library.consolidation.list_remotes", return_value=[]),
+            patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False),
         ):
             status = get_consolidation_status(catalog_db)
         assert status["has_active_job"] is False
@@ -703,8 +717,9 @@ class TestCheckpointIntegration:
         complete_job(cat, job.job_id, error="something broke")
         cat.close()
 
-        with patch("godmode_media_library.consolidation.list_remotes", return_value=[]), patch(
-            "godmode_media_library.consolidation.rclone_is_reachable", return_value=False
+        with (
+            patch("godmode_media_library.consolidation.list_remotes", return_value=[]),
+            patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False),
         ):
             status = get_consolidation_status(catalog_db)
         assert status["has_active_job"] is False
@@ -764,6 +779,7 @@ class TestConcurrentAccess:
     def test_second_start_rejected_when_job_running(self, catalog_db, client):
         """Starting a second consolidation while one is running returns 409."""
         import time
+
         cat = Catalog(catalog_db)
         cat.open()
         job = create_job(cat, JOB_TYPE_ULTIMATE)
@@ -773,8 +789,9 @@ class TestConcurrentAccess:
         # Register a fake pause event so orphan detection doesn't mark the job as failed
         _pause_events[job.job_id] = (threading.Event(), time.time())
         try:
-            with patch("godmode_media_library.consolidation.list_remotes", return_value=[]), patch(
-                "godmode_media_library.consolidation.rclone_is_reachable", return_value=False
+            with (
+                patch("godmode_media_library.consolidation.list_remotes", return_value=[]),
+                patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False),
             ):
                 resp = client.post("/api/consolidation/start", json={})
             assert resp.status_code == 409
@@ -792,9 +809,11 @@ class TestConcurrentAccess:
         complete_job(cat, job.job_id)
         cat.close()
 
-        with patch("godmode_media_library.consolidation.list_remotes", return_value=[]), patch(
-            "godmode_media_library.consolidation.rclone_is_reachable", return_value=False
-        ), patch("godmode_media_library.consolidation.run_consolidation", return_value={}):
+        with (
+            patch("godmode_media_library.consolidation.list_remotes", return_value=[]),
+            patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False),
+            patch("godmode_media_library.consolidation.run_consolidation", return_value={}),
+        ):
             resp = client.post("/api/consolidation/start", json={})
         assert resp.status_code == 200
 
@@ -807,8 +826,9 @@ class TestConcurrentAccess:
         pause_job(cat, job.job_id)
         cat.close()
 
-        with patch("godmode_media_library.consolidation.list_remotes", return_value=[]), patch(
-            "godmode_media_library.consolidation.rclone_is_reachable", return_value=False
+        with (
+            patch("godmode_media_library.consolidation.list_remotes", return_value=[]),
+            patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False),
         ):
             resp = client.post("/api/consolidation/start", json={})
         assert resp.status_code == 409

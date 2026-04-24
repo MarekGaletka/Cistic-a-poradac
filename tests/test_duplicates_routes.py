@@ -31,8 +31,8 @@ pytestmark = pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_file(cat: Catalog, path: str, size: int = 100, sha256: str = "abc123",
-                 phash: str | None = None) -> int:
+
+def _insert_file(cat: Catalog, path: str, size: int = 100, sha256: str = "abc123", phash: str | None = None) -> int:
     """Insert a file row directly and return its id."""
     now = datetime.now(timezone.utc).isoformat()
     cur = cat.conn.execute(
@@ -68,6 +68,7 @@ def _insert_file_metadata(cat: Catalog, file_id: int, meta: dict) -> None:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def empty_db(tmp_path):
@@ -315,12 +316,15 @@ class TestQuarantineDuplicateGroup:
 
         # Patch _DEFAULT_QUARANTINE_ROOT to use temp dir and disk space check
         quarantine_dir = tmp_path / "quarantine"
-        with patch(
-            "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
-            quarantine_dir,
-        ), patch(
-            "godmode_media_library.web.routes.duplicates.check_disk_space",
-            return_value=True,
+        with (
+            patch(
+                "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
+                quarantine_dir,
+            ),
+            patch(
+                "godmode_media_library.web.routes.duplicates.check_disk_space",
+                return_value=True,
+            ),
         ):
             resp = client.post(
                 "/api/duplicates/group1/quarantine",
@@ -405,12 +409,15 @@ class TestQuarantineDuplicateGroup:
         client = TestClient(app, raise_server_exceptions=False)
 
         quarantine_dir = tmp_path / "quarantine"
-        with patch(
-            "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
-            quarantine_dir,
-        ), patch(
-            "godmode_media_library.web.routes.duplicates.check_disk_space",
-            return_value=False,
+        with (
+            patch(
+                "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
+                quarantine_dir,
+            ),
+            patch(
+                "godmode_media_library.web.routes.duplicates.check_disk_space",
+                return_value=False,
+            ),
         ):
             resp = client.post(
                 "/api/duplicates/group1/quarantine",
@@ -441,12 +448,15 @@ class TestMergeDuplicateGroup:
         client = TestClient(app, raise_server_exceptions=False)
 
         quarantine_dir = tmp_path / "quarantine"
-        with patch(
-            "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
-            quarantine_dir,
-        ), patch(
-            "godmode_media_library.web.routes.duplicates.check_disk_space",
-            return_value=True,
+        with (
+            patch(
+                "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
+                quarantine_dir,
+            ),
+            patch(
+                "godmode_media_library.web.routes.duplicates.check_disk_space",
+                return_value=True,
+            ),
         ):
             resp = client.post(
                 "/api/duplicates/group1/merge",
@@ -497,15 +507,19 @@ class TestMergeDuplicateGroup:
         client = TestClient(app, raise_server_exceptions=False)
 
         quarantine_dir = tmp_path / "quarantine"
-        with patch(
-            "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
-            quarantine_dir,
-        ), patch(
-            "godmode_media_library.web.routes.duplicates.check_disk_space",
-            return_value=True,
-        ), patch(
-            "godmode_media_library.metadata_richness.compute_group_diff",
-            side_effect=RuntimeError("diff failed"),
+        with (
+            patch(
+                "godmode_media_library.web.routes.duplicates._DEFAULT_QUARANTINE_ROOT",
+                quarantine_dir,
+            ),
+            patch(
+                "godmode_media_library.web.routes.duplicates.check_disk_space",
+                return_value=True,
+            ),
+            patch(
+                "godmode_media_library.metadata_richness.compute_group_diff",
+                side_effect=RuntimeError("diff failed"),
+            ),
         ):
             resp = client.post(
                 "/api/duplicates/group1/merge",

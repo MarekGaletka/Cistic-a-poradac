@@ -202,9 +202,7 @@ class TestRestoreFromQuarantine:
         f.write_bytes(b"JPEG_DATA")
 
         dest = tmp_path / "restored"
-        result = restore_from_quarantine(
-            paths=[str(f)], quarantine_root=qdir, restore_to=str(dest)
-        )
+        result = restore_from_quarantine(paths=[str(f)], quarantine_root=qdir, restore_to=str(dest))
         assert result["restored"] == 1
         assert result["errors"] == []
         assert (dest / "photo.jpg").exists()
@@ -218,9 +216,7 @@ class TestRestoreFromQuarantine:
 
         original_dir = tmp_path / "original_location"
         original_dir.mkdir()
-        manifest = {
-            str(f): {"original_path": str(original_dir / "photo.jpg")}
-        }
+        manifest = {str(f): {"original_path": str(original_dir / "photo.jpg")}}
         (qdir / "manifest.json").write_text(json.dumps(manifest))
 
         result = restore_from_quarantine(paths=[str(f)], quarantine_root=qdir)
@@ -231,9 +227,7 @@ class TestRestoreFromQuarantine:
         qdir = tmp_path / "quarantine"
         qdir.mkdir()
         evil_path = str(qdir / ".." / ".." / "etc" / "passwd")
-        result = restore_from_quarantine(
-            paths=[evil_path], quarantine_root=qdir
-        )
+        result = restore_from_quarantine(paths=[evil_path], quarantine_root=qdir)
         assert result["restored"] == 0
         assert len(result["errors"]) == 1
         assert "Path traversal blocked" in result["errors"][0]
@@ -241,9 +235,7 @@ class TestRestoreFromQuarantine:
     def test_nonexistent_file_error(self, tmp_path):
         qdir = tmp_path / "quarantine"
         qdir.mkdir()
-        result = restore_from_quarantine(
-            paths=[str(qdir / "nope.jpg")], quarantine_root=qdir
-        )
+        result = restore_from_quarantine(paths=[str(qdir / "nope.jpg")], quarantine_root=qdir)
         assert result["restored"] == 0
         assert any("Not found" in e for e in result["errors"])
 
@@ -257,9 +249,7 @@ class TestRestoreFromQuarantine:
         dest.mkdir()
         (dest / "photo.jpg").write_bytes(b"EXISTING")
 
-        result = restore_from_quarantine(
-            paths=[str(f)], quarantine_root=qdir, restore_to=str(dest)
-        )
+        result = restore_from_quarantine(paths=[str(f)], quarantine_root=qdir, restore_to=str(dest))
         assert result["restored"] == 1
         # Original still exists, new one has suffix
         assert (dest / "photo.jpg").read_bytes() == b"EXISTING"
@@ -301,15 +291,11 @@ class TestRestoreManifestGuard:
         manifest_path.write_text("NOT VALID JSON{{{")
 
         dest = tmp_path / "restored"
-        restore_from_quarantine(
-            paths=[str(f)], quarantine_root=qdir, restore_to=str(dest)
-        )
+        restore_from_quarantine(paths=[str(f)], quarantine_root=qdir, restore_to=str(dest))
 
         # The corrupt manifest should NOT have been overwritten with empty dict
         after = manifest_path.read_text()
-        assert after == "NOT VALID JSON{{{", (
-            "Corrupt manifest was overwritten — manifest_loaded guard failed"
-        )
+        assert after == "NOT VALID JSON{{{", "Corrupt manifest was overwritten — manifest_loaded guard failed"
 
     def test_valid_manifest_is_updated_after_restore(self, tmp_path):
         """If manifest is valid, it should be updated (entry removed) after restore."""
@@ -352,9 +338,7 @@ class TestDeleteFromQuarantine:
     def test_nonexistent_file(self, tmp_path):
         qdir = tmp_path / "quarantine"
         qdir.mkdir()
-        result = delete_from_quarantine(
-            paths=[str(qdir / "nope.jpg")], quarantine_root=qdir
-        )
+        result = delete_from_quarantine(paths=[str(qdir / "nope.jpg")], quarantine_root=qdir)
         assert result["deleted"] == 0
         assert any("Not found" in e for e in result["errors"])
 
@@ -585,9 +569,7 @@ class TestCheckIntegrity:
 class TestCheckPhotorec:
     @patch("godmode_media_library.recovery.subprocess.run")
     def test_available(self, mock_run):
-        mock_run.return_value = MagicMock(
-            stdout="PhotoRec 7.2\nSome other line", returncode=0
-        )
+        mock_run.return_value = MagicMock(stdout="PhotoRec 7.2\nSome other line", returncode=0)
         result = check_photorec()
         assert result["available"] is True
         assert "7.2" in result["version"]
@@ -645,9 +627,7 @@ class TestRunPhotorec:
 
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
-        result = run_photorec(
-            str(source), output_dir=str(out_dir), file_types=["jpg"]
-        )
+        result = run_photorec(str(source), output_dir=str(out_dir), file_types=["jpg"])
         assert result.files_recovered == 1
         assert result.output_dir == str(out_dir)
 

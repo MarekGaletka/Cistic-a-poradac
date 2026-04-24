@@ -466,6 +466,7 @@ class TestApplyDeletePlanUnlinkNlinkCheck:
     def test_unlink_alias_skipped_without_primary_move(self, tmp_path: Path):
         """unlink_alias skipped when primary not moved first."""
         import os
+
         root = tmp_path / "root"
         root.mkdir()
         f1 = root / "photo.jpg"
@@ -474,21 +475,35 @@ class TestApplyDeletePlanUnlinkNlinkCheck:
         os.link(f1, f2)
 
         from godmode_media_library.delete_ops import _inode_id, _inode_key
+
         ikey = _inode_key(f1)
         iid = _inode_id(ikey)
 
         plan_path = tmp_path / "plan.tsv"
         write_tsv(
             plan_path,
-            ["inode_id", "path", "action", "primary_path", "asset_key",
-             "selected_seed", "unit_size", "nlink_expected", "nlink_scanned",
-             "external_links", "note"],
+            [
+                "inode_id",
+                "path",
+                "action",
+                "primary_path",
+                "asset_key",
+                "selected_seed",
+                "unit_size",
+                "nlink_expected",
+                "nlink_scanned",
+                "external_links",
+                "note",
+            ],
             [(iid, str(f2), "unlink_alias", str(f1), "", "0", "200", "2", "2", "0", "")],
         )
         log_path = tmp_path / "log.tsv"
         result = apply_delete_plan(
-            plan_path=plan_path, quarantine_root=tmp_path / "q",
-            log_path=log_path, dry_run=False, yes=True,
+            plan_path=plan_path,
+            quarantine_root=tmp_path / "q",
+            log_path=log_path,
+            dry_run=False,
+            yes=True,
         )
         assert result.skipped == 1
         assert result.unlinked_aliases == 0
@@ -504,14 +519,27 @@ class TestApplyDeletePlanUnlinkNlinkCheck:
         plan_path = tmp_path / "plan.tsv"
         write_tsv(
             plan_path,
-            ["inode_id", "path", "action", "primary_path", "asset_key",
-             "selected_seed", "unit_size", "nlink_expected", "nlink_scanned",
-             "external_links", "note"],
+            [
+                "inode_id",
+                "path",
+                "action",
+                "primary_path",
+                "asset_key",
+                "selected_seed",
+                "unit_size",
+                "nlink_expected",
+                "nlink_scanned",
+                "external_links",
+                "note",
+            ],
             [("iid", str(f1), "unknown_action", str(f1), "", "0", "100", "1", "1", "0", "")],
         )
         log_path = tmp_path / "log.tsv"
         result = apply_delete_plan(
-            plan_path=plan_path, quarantine_root=tmp_path / "q",
-            log_path=log_path, dry_run=False, yes=True,
+            plan_path=plan_path,
+            quarantine_root=tmp_path / "q",
+            log_path=log_path,
+            dry_run=False,
+            yes=True,
         )
         assert result.skipped == 1

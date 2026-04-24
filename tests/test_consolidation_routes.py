@@ -6,7 +6,6 @@ available-disks, sync-to-disk, sync-disk.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -161,12 +160,15 @@ class TestConsolidationPreview:
 
 class TestConsolidationStart:
     def test_start_returns_task_id(self, client):
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch(
-            "godmode_media_library.consolidation.run_consolidation",
-            return_value={"status": "done"},
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch(
+                "godmode_media_library.consolidation.run_consolidation",
+                return_value={"status": "done"},
+            ),
         ):
             resp = client.post(
                 "/api/consolidation/start",
@@ -178,12 +180,15 @@ class TestConsolidationStart:
         assert data["status"] == "started"
 
     def test_start_dry_run_flag(self, client):
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch(
-            "godmode_media_library.consolidation.run_consolidation",
-            return_value={},
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch(
+                "godmode_media_library.consolidation.run_consolidation",
+                return_value={},
+            ),
         ):
             resp = client.post(
                 "/api/consolidation/start",
@@ -214,12 +219,15 @@ class TestConsolidationStart:
         assert resp.status_code == 422
 
     def test_start_accepts_valid_bwlimit(self, client):
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch(
-            "godmode_media_library.consolidation.run_consolidation",
-            return_value={},
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch(
+                "godmode_media_library.consolidation.run_consolidation",
+                return_value={},
+            ),
         ):
             resp = client.post(
                 "/api/consolidation/start",
@@ -466,9 +474,7 @@ class TestConsolidationSyncToDisk:
     def test_sync_to_disk_valid_path(self, client, tmp_path):
         disk_dir = tmp_path / "external_disk"
         disk_dir.mkdir()
-        with patch(
-            "godmode_media_library.web.routes.consolidation._run_rclone_sync"
-        ):
+        with patch("godmode_media_library.web.routes.consolidation._run_rclone_sync"):
             resp = client.post(
                 "/api/consolidation/sync-to-disk",
                 json={"disk_path": str(disk_dir)},
@@ -520,9 +526,7 @@ class TestConsolidationSyncDisk:
     def test_sync_disk_valid_path(self, client, tmp_path):
         disk_dir = tmp_path / "sync_target"
         disk_dir.mkdir()
-        with patch(
-            "godmode_media_library.web.routes.consolidation._run_rclone_sync"
-        ):
+        with patch("godmode_media_library.web.routes.consolidation._run_rclone_sync"):
             resp = client.post(
                 "/api/consolidation/sync-disk",
                 json={"disk_path": str(disk_dir), "delete_extra": False},
@@ -536,9 +540,7 @@ class TestConsolidationSyncDisk:
     def test_sync_disk_default_delete_extra(self, client, tmp_path):
         disk_dir = tmp_path / "sync_default"
         disk_dir.mkdir()
-        with patch(
-            "godmode_media_library.web.routes.consolidation._run_rclone_sync"
-        ):
+        with patch("godmode_media_library.web.routes.consolidation._run_rclone_sync"):
             resp = client.post(
                 "/api/consolidation/sync-disk",
                 json={"disk_path": str(disk_dir)},
@@ -571,12 +573,15 @@ class TestConsolidationSyncDisk:
 class TestRequestModelValidation:
     def test_consolidation_start_bwlimit_valid_variants(self, client):
         """Various valid bwlimit formats should pass validation."""
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch(
-            "godmode_media_library.consolidation.run_consolidation",
-            return_value={},
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch(
+                "godmode_media_library.consolidation.run_consolidation",
+                return_value={},
+            ),
         ):
             for bwlimit in ["512K", "10M", "1G", "100", "0"]:
                 resp = client.post(
@@ -594,12 +599,15 @@ class TestRequestModelValidation:
             assert resp.status_code == 422, f"bwlimit={bwlimit} should be rejected"
 
     def test_consolidation_start_verify_pct_boundary(self, client):
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch(
-            "godmode_media_library.consolidation.run_consolidation",
-            return_value={},
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch(
+                "godmode_media_library.consolidation.run_consolidation",
+                return_value={},
+            ),
         ):
             for pct in [0, 100]:
                 resp = client.post(

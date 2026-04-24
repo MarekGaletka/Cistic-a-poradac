@@ -5,7 +5,7 @@ Targets coverage improvement from ~67% to 85%+.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -65,20 +65,24 @@ def catalog_db_with_faces(tmp_path):
     # Insert faces
     conn.execute(
         "INSERT INTO faces (id, file_id, face_index, person_id, bbox_top, bbox_right, bbox_bottom, bbox_left, confidence, created_at) "
-        "VALUES (1, 1, 0, 1, 10, 100, 110, 10, 0.95, ?)", (now_ts,)
+        "VALUES (1, 1, 0, 1, 10, 100, 110, 10, 0.95, ?)",
+        (now_ts,),
     )
     conn.execute(
         "INSERT INTO faces (id, file_id, face_index, person_id, bbox_top, bbox_right, bbox_bottom, bbox_left, confidence, created_at) "
-        "VALUES (2, 1, 1, 2, 20, 200, 220, 20, 0.88, ?)", (now_ts,)
+        "VALUES (2, 1, 1, 2, 20, 200, 220, 20, 0.88, ?)",
+        (now_ts,),
     )
     conn.execute(
         "INSERT INTO faces (id, file_id, face_index, person_id, bbox_top, bbox_right, bbox_bottom, bbox_left, confidence, created_at) "
-        "VALUES (3, 2, 0, 1, 30, 150, 180, 30, 0.92, ?)", (now_ts,)
+        "VALUES (3, 2, 0, 1, 30, 150, 180, 30, 0.92, ?)",
+        (now_ts,),
     )
     # Unidentified face
     conn.execute(
         "INSERT INTO faces (id, file_id, face_index, person_id, bbox_top, bbox_right, bbox_bottom, bbox_left, confidence, created_at) "
-        "VALUES (4, 2, 1, NULL, 40, 200, 240, 40, 0.75, ?)", (now_ts,)
+        "VALUES (4, 2, 1, NULL, 40, 200, 240, 40, 0.75, ?)",
+        (now_ts,),
     )
 
     conn.commit()
@@ -278,24 +282,30 @@ class TestFaceThumbnail:
         assert resp.status_code == 404
 
     def test_face_thumbnail_crop_fails(self, client_faces):
-        with patch(
-            "godmode_media_library.face_detect.crop_face_thumbnail",
-            return_value=None,
-        ), patch(
-            "godmode_media_library.web.routes.faces._thumb_cache_get",
-            return_value=None,
+        with (
+            patch(
+                "godmode_media_library.face_detect.crop_face_thumbnail",
+                return_value=None,
+            ),
+            patch(
+                "godmode_media_library.web.routes.faces._thumb_cache_get",
+                return_value=None,
+            ),
         ):
             resp = client_faces.get("/api/faces/1/thumbnail")
         assert resp.status_code == 404
 
     def test_face_thumbnail_success(self, client_faces):
         fake_jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 100
-        with patch(
-            "godmode_media_library.face_detect.crop_face_thumbnail",
-            return_value=fake_jpeg,
-        ), patch(
-            "godmode_media_library.web.routes.faces._thumb_cache_get",
-            return_value=None,
+        with (
+            patch(
+                "godmode_media_library.face_detect.crop_face_thumbnail",
+                return_value=fake_jpeg,
+            ),
+            patch(
+                "godmode_media_library.web.routes.faces._thumb_cache_get",
+                return_value=None,
+            ),
         ):
             resp = client_faces.get("/api/faces/1/thumbnail?size=100")
         assert resp.status_code == 200
@@ -371,9 +381,7 @@ class TestFaceDetect:
         assert data["status"] == "started"
 
     def test_detect_custom_params(self, client_faces):
-        resp = client_faces.post(
-            "/api/faces/detect", json={"model": "cnn", "max_dimension": 800}
-        )
+        resp = client_faces.post("/api/faces/detect", json={"model": "cnn", "max_dimension": 800})
         assert resp.status_code == 200
         assert "task_id" in resp.json()
 
@@ -392,9 +400,7 @@ class TestFaceCluster:
         assert data["status"] == "started"
 
     def test_cluster_custom_params(self, client_faces):
-        resp = client_faces.post(
-            "/api/faces/cluster", json={"eps": 0.4, "min_samples": 3}
-        )
+        resp = client_faces.post("/api/faces/cluster", json={"eps": 0.4, "min_samples": 3})
         assert resp.status_code == 200
         assert "task_id" in resp.json()
 

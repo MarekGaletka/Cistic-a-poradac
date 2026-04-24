@@ -531,7 +531,15 @@ def get_timeline_gaps(request: Request) -> dict:
 
         # Fetch sample thumbnails per month (up to 4 image paths per month)
         _IMG_EXTS = (
-            "jpg", "jpeg", "heic", "png", "webp", "tiff", "tif", "bmp", "gif",
+            "jpg",
+            "jpeg",
+            "heic",
+            "png",
+            "webp",
+            "tiff",
+            "tif",
+            "bmp",
+            "gif",
         )
         # ext column may or may not have a leading dot
         ext_vals = []

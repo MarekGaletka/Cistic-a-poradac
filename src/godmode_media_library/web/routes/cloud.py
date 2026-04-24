@@ -266,13 +266,16 @@ def cloud_sync(request: Request, background: BackgroundTasks, body: CloudSyncReq
                 include_pattern=body.include_pattern,
                 dry_run=body.dry_run,
             )
-            _finish_task(task.id, result={
-                "remote": result.remote,
-                "local_path": result.local_path,
-                "files_transferred": result.files_transferred,
-                "errors": result.errors,
-                "elapsed_seconds": round(result.elapsed_seconds, 1),
-            })
+            _finish_task(
+                task.id,
+                result={
+                    "remote": result.remote,
+                    "local_path": result.local_path,
+                    "files_transferred": result.files_transferred,
+                    "errors": result.errors,
+                    "elapsed_seconds": round(result.elapsed_seconds, 1),
+                },
+            )
         except Exception as exc:
             _finish_task(task.id, error=str(exc))
             logger.exception("Cloud sync task failed")

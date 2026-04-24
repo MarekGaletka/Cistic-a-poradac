@@ -2,38 +2,35 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, AsyncMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from godmode_media_library.iphone_import import (
-    IPhoneImportConfig,
-    IPhoneFile,
+    MEDIA_EXTS,
     ImportProgress,
+    IPhoneFile,
+    IPhoneImportConfig,
+    _cancel_event,
+    _check_iphone_connected,
+    _cleanup_temp,
+    _determine_dest_path,
     _fmt_bytes,
     _is_media,
-    _determine_dest_path,
-    _cleanup_temp,
+    _pause_event,
+    _progress,
+    _progress_lock,
+    _run_async,
+    cancel_import,
+    get_iphone_status,
     get_progress,
     pause_import,
     resume_import,
-    cancel_import,
-    _check_iphone_connected,
-    _run_async,
-    get_iphone_status,
-    MEDIA_EXTS,
-    _progress,
-    _progress_lock,
-    _pause_event,
-    _cancel_event,
 )
 
-
 # ── _fmt_bytes ────────────────────────────────────────────────────────
+
 
 class TestFmtBytes:
     def test_bytes(self):
@@ -47,15 +44,16 @@ class TestFmtBytes:
         assert _fmt_bytes(1024 * 1024 - 1) == "1024.0 KB"
 
     def test_megabytes(self):
-        assert _fmt_bytes(1024 ** 2) == "1.0 MB"
-        assert _fmt_bytes(int(1.5 * 1024 ** 2)) == "1.5 MB"
+        assert _fmt_bytes(1024**2) == "1.0 MB"
+        assert _fmt_bytes(int(1.5 * 1024**2)) == "1.5 MB"
 
     def test_gigabytes(self):
-        assert _fmt_bytes(1024 ** 3) == "1.00 GB"
-        assert _fmt_bytes(int(2.5 * 1024 ** 3)) == "2.50 GB"
+        assert _fmt_bytes(1024**3) == "1.00 GB"
+        assert _fmt_bytes(int(2.5 * 1024**3)) == "2.50 GB"
 
 
 # ── _is_media ─────────────────────────────────────────────────────────
+
 
 class TestIsMedia:
     def test_common_image_extensions(self):
@@ -90,6 +88,7 @@ class TestIsMedia:
 
 
 # ── _determine_dest_path ─────────────────────────────────────────────
+
 
 class TestDetermineDestPath:
     def setup_method(self):
@@ -231,6 +230,7 @@ class TestDetermineDestPath:
 
 # ── Dataclass defaults ────────────────────────────────────────────────
 
+
 class TestDataclasses:
     def test_iphone_import_config_defaults(self):
         cfg = IPhoneImportConfig()
@@ -243,8 +243,7 @@ class TestDataclasses:
         assert cfg.upload_workers == 4
 
     def test_iphone_file(self):
-        f = IPhoneFile(afc_path="/DCIM/100APPLE/IMG_001.JPG",
-                       filename="IMG_001.JPG", size=5000)
+        f = IPhoneFile(afc_path="/DCIM/100APPLE/IMG_001.JPG", filename="IMG_001.JPG", size=5000)
         assert f.mtime == 0.0
         assert f.size == 5000
 
@@ -257,6 +256,7 @@ class TestDataclasses:
 
 
 # ── Global state controls ─────────────────────────────────────────────
+
 
 class TestGlobalControls:
     def setup_method(self):
@@ -331,6 +331,7 @@ class TestGlobalControls:
 
 # ── _cleanup_temp ─────────────────────────────────────────────────────
 
+
 class TestCleanupTemp:
     def test_removes_existing_file(self, tmp_path):
         f = tmp_path / "test.tmp"
@@ -354,31 +355,32 @@ class TestCleanupTemp:
 
 # ── _check_iphone_connected ──────────────────────────────────────────
 
+
 class TestCheckIPhoneConnected:
     @patch("godmode_media_library.iphone_import._run_async")
     @patch("godmode_media_library.iphone_import._get_afc_service")
     def test_connected_returns_true(self, mock_afc, mock_run):
         """When devices are found, return True."""
-        with patch(
-            "godmode_media_library.iphone_import._check_iphone_connected"
-        ) as mock_check:
+        with patch("godmode_media_library.iphone_import._check_iphone_connected"):
             # We need to test the actual function, so let's patch the import inside
             pass
 
         # Test the actual function by mocking pymobiledevice3
-        mock_list_devices = MagicMock()
+        MagicMock()
         mock_run.return_value = [MagicMock()]  # One device
 
-        with patch.dict(
-            "sys.modules",
-            {"pymobiledevice3": MagicMock(), "pymobiledevice3.usbmux": MagicMock()},
-        ):
-            with patch(
+        with (
+            patch.dict(
+                "sys.modules",
+                {"pymobiledevice3": MagicMock(), "pymobiledevice3.usbmux": MagicMock()},
+            ),
+            patch(
                 "godmode_media_library.iphone_import._run_async",
                 return_value=[MagicMock()],
-            ):
-                result = _check_iphone_connected()
-                assert result is True
+            ),
+        ):
+            result = _check_iphone_connected()
+            assert result is True
 
     def test_import_error_returns_false(self):
         """When pymobiledevice3 can't be imported, return False."""
@@ -393,26 +395,26 @@ class TestCheckIPhoneConnected:
 
     def test_empty_device_list_returns_false(self):
         """When no devices found, return False."""
-        with patch(
-            "godmode_media_library.iphone_import._run_async", return_value=[]
-        ):
-            with patch.dict(
+        with (
+            patch("godmode_media_library.iphone_import._run_async", return_value=[]),
+            patch.dict(
                 "sys.modules",
                 {
                     "pymobiledevice3": MagicMock(),
                     "pymobiledevice3.usbmux": MagicMock(),
                 },
-            ):
-                result = _check_iphone_connected()
-                assert result is False
+            ),
+        ):
+            result = _check_iphone_connected()
+            assert result is False
 
 
 # ── _run_async ────────────────────────────────────────────────────────
 
+
 class TestRunAsync:
     def test_no_running_loop(self):
         """When no event loop is running, uses asyncio.run."""
-        import asyncio
 
         async def coro():
             return 42
@@ -436,6 +438,7 @@ class TestRunAsync:
 
 # ── get_iphone_status ─────────────────────────────────────────────────
 
+
 class TestGetIPhoneStatus:
     def setup_method(self):
         _pause_event.clear()
@@ -451,7 +454,6 @@ class TestGetIPhoneStatus:
         with patch("godmode_media_library.iphone_import.Catalog") as MockCat:
             mock_cat = MagicMock()
             MockCat.return_value = mock_cat
-            mock_ckpt_jobs = []
             with patch("godmode_media_library.iphone_import.ckpt") as mock_ckpt:
                 mock_ckpt.list_jobs.return_value = []
                 result = get_iphone_status(db_path)
@@ -548,6 +550,7 @@ class TestGetIPhoneStatus:
 
 # ── run_import ────────────────────────────────────────────────────────
 
+
 class TestRunImport:
     """Tests for the main run_import pipeline. Heavily mocked."""
 
@@ -589,8 +592,16 @@ class TestRunImport:
     @patch("godmode_media_library.iphone_import.rclone_copyto", return_value={"success": True})
     @patch("godmode_media_library.iphone_import.shutil.disk_usage")
     def test_successful_single_file_import(
-        self, mock_disk, mock_rclone, mock_probe, mock_exif, mock_sha,
-        mock_ckpt, mock_catalog, mock_asyncio_run, mock_iphone_check,
+        self,
+        mock_disk,
+        mock_rclone,
+        mock_probe,
+        mock_exif,
+        mock_sha,
+        mock_ckpt,
+        mock_catalog,
+        mock_asyncio_run,
+        mock_iphone_check,
         tmp_path,
     ):
         """End-to-end: one file, no EXIF, upload succeeds."""
@@ -605,6 +616,7 @@ class TestRunImport:
         )
 
         call_count = [0]
+
         def asyncio_run_side_effect(coro):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -637,7 +649,7 @@ class TestRunImport:
         mock_cat_instance.get_file_by_hash = MagicMock(return_value=None)
 
         # Disk space: plenty
-        mock_disk.return_value = SimpleNamespace(free=10 * 1024 ** 3)
+        mock_disk.return_value = SimpleNamespace(free=10 * 1024**3)
 
         config = IPhoneImportConfig(temp_dir=str(tmp_path), upload_workers=1)
         result = run_import("/fake/catalog.db", config=config)
@@ -661,6 +673,7 @@ class TestRunImport:
         # asyncio.run is called once for list_iphone_files, then for each download.
         # We set cancel from a timer so it fires after run_import clears the events.
         call_count = [0]
+
         def asyncio_side(coro):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -697,7 +710,12 @@ class TestRunImport:
     @patch("godmode_media_library.iphone_import.ckpt")
     @patch("godmode_media_library.iphone_import.shutil.disk_usage")
     def test_low_disk_space_aborts(
-        self, mock_disk, mock_ckpt, mock_catalog, mock_asyncio_run, mock_check,
+        self,
+        mock_disk,
+        mock_ckpt,
+        mock_catalog,
+        mock_asyncio_run,
+        mock_check,
         tmp_path,
     ):
         """Import should abort when disk space is too low."""
@@ -730,9 +748,7 @@ class TestRunImport:
         # The disk space error is set, but phase gets overwritten to "completed"
         # because _cancel_event is not set (abort only breaks the loop).
         # The important thing is the error message was reported and job was paused.
-        mock_ckpt.update_job.assert_any_call(
-            mock_cat, "j1", status="paused", error="Nedostatek místa"
-        )
+        mock_ckpt.update_job.assert_any_call(mock_cat, "j1", status="paused", error="Nedostatek místa")
         # Verify no files were actually processed (0 completed, 0 failed)
         assert result["completed_files"] == 0
         assert result["failed_files"] == 0
@@ -744,8 +760,14 @@ class TestRunImport:
     @patch("godmode_media_library.iphone_import.sha256_file", return_value="existing_hash")
     @patch("godmode_media_library.iphone_import.shutil.disk_usage")
     def test_dedup_skip(
-        self, mock_disk, mock_sha, mock_ckpt, mock_catalog, mock_asyncio_run,
-        mock_check, tmp_path,
+        self,
+        mock_disk,
+        mock_sha,
+        mock_ckpt,
+        mock_catalog,
+        mock_asyncio_run,
+        mock_check,
+        tmp_path,
     ):
         """Files with existing hash in catalog should be skipped (dedup)."""
         from godmode_media_library.iphone_import import run_import
@@ -753,6 +775,7 @@ class TestRunImport:
         iphone_file = IPhoneFile("/DCIM/100APPLE/IMG_001.JPG", "IMG_001.JPG", 1024)
 
         call_count = [0]
+
         def asyncio_side_effect(coro):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -777,7 +800,7 @@ class TestRunImport:
         mock_ckpt.create_job.return_value = mock_job
         mock_ckpt.get_job_progress.return_value = {}
 
-        mock_disk.return_value = SimpleNamespace(free=10 * 1024 ** 3)
+        mock_disk.return_value = SimpleNamespace(free=10 * 1024**3)
 
         config = IPhoneImportConfig(temp_dir=str(tmp_path), upload_workers=1)
         result = run_import("/fake/catalog.db", config=config)
@@ -793,7 +816,12 @@ class TestRunImport:
     @patch("godmode_media_library.iphone_import.ckpt")
     @patch("godmode_media_library.iphone_import.shutil.disk_usage")
     def test_download_failure_marks_failed(
-        self, mock_disk, mock_ckpt, mock_catalog, mock_asyncio_run, mock_check,
+        self,
+        mock_disk,
+        mock_ckpt,
+        mock_catalog,
+        mock_asyncio_run,
+        mock_check,
         tmp_path,
     ):
         """If download fails, file is marked as failed and import continues."""
@@ -802,6 +830,7 @@ class TestRunImport:
         iphone_file = IPhoneFile("/DCIM/100APPLE/IMG_001.JPG", "IMG_001.JPG", 1024)
 
         call_count = [0]
+
         def asyncio_side_effect(coro):
             call_count[0] += 1
             if call_count[0] == 1:
@@ -822,7 +851,7 @@ class TestRunImport:
         mock_ckpt.create_job.return_value = mock_job
         mock_ckpt.get_job_progress.return_value = {}
 
-        mock_disk.return_value = SimpleNamespace(free=10 * 1024 ** 3)
+        mock_disk.return_value = SimpleNamespace(free=10 * 1024**3)
 
         config = IPhoneImportConfig(temp_dir=str(tmp_path), upload_workers=1)
         result = run_import("/fake/catalog.db", config=config)
@@ -846,12 +875,10 @@ class TestRunImport:
         mock_cat.conn.cursor.return_value = cursor
 
         existing_job = SimpleNamespace(job_id="existing-job", job_type="iphone_import", status="paused")
-        mock_ckpt.list_jobs.side_effect = lambda cat, status=None: (
-            [existing_job] if status in ("running", "paused") else []
-        )
+        mock_ckpt.list_jobs.side_effect = lambda cat, status=None: [existing_job] if status in ("running", "paused") else []
         mock_ckpt.get_job_progress.return_value = {}
 
-        result = run_import("/fake/catalog.db")
+        run_import("/fake/catalog.db")
 
         # Should update existing job, not create new
         mock_ckpt.create_job.assert_not_called()
@@ -859,6 +886,7 @@ class TestRunImport:
 
 
 # ── reorganize_unsorted ───────────────────────────────────────────────
+
 
 class TestReorganizeUnsorted:
     @patch("godmode_media_library.iphone_import.Catalog")
@@ -886,8 +914,9 @@ class TestReorganizeUnsorted:
     @patch("godmode_media_library.iphone_import.Catalog")
     def test_mov_file_with_creation_time(self, MockCatalog, tmp_path):
         """A MOV file with valid creation_time gets moved to correct year/month."""
-        from godmode_media_library.iphone_import import reorganize_unsorted
         import json
+
+        from godmode_media_library.iphone_import import reorganize_unsorted
 
         mock_cat = MagicMock()
         MockCatalog.return_value = mock_cat
@@ -910,16 +939,15 @@ class TestReorganizeUnsorted:
 
         mock_conn.execute.return_value.fetchall.return_value = [dict_row]
 
-        ffprobe_output = json.dumps({
-            "format": {
-                "tags": {
-                    "com.apple.quicktime.creationdate": "2023-06-15T14:30:00+0200"
-                }
-            },
-            "streams": [],
-        })
+        ffprobe_output = json.dumps(
+            {
+                "format": {"tags": {"com.apple.quicktime.creationdate": "2023-06-15T14:30:00+0200"}},
+                "streams": [],
+            }
+        )
 
         call_idx = [0]
+
         def subprocess_side_effect(*args, **kwargs):
             call_idx[0] += 1
             cmd = args[0] if args else kwargs.get("args", [])
@@ -945,15 +973,12 @@ class TestReorganizeUnsorted:
 
             return result
 
-        with patch("subprocess.run", side_effect=subprocess_side_effect):
-            with patch("tempfile.NamedTemporaryFile") as mock_tmp:
-                mock_tmp.return_value.__enter__ = MagicMock(
-                    return_value=MagicMock(name="/tmp/test.mov")
-                )
-                mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
-                mock_tmp.return_value.name = "/tmp/test.mov"
-                with patch("os.unlink"):
-                    result = reorganize_unsorted(str(tmp_path / "cat.db"))
+        with patch("subprocess.run", side_effect=subprocess_side_effect), patch("tempfile.NamedTemporaryFile") as mock_tmp:
+            mock_tmp.return_value.__enter__ = MagicMock(return_value=MagicMock(name="/tmp/test.mov"))
+            mock_tmp.return_value.__exit__ = MagicMock(return_value=False)
+            mock_tmp.return_value.name = "/tmp/test.mov"
+            with patch("os.unlink"):
+                result = reorganize_unsorted(str(tmp_path / "cat.db"))
 
         assert result["total"] == 1
 
@@ -985,6 +1010,7 @@ class TestReorganizeUnsorted:
         # Third: lsf --include check
         # Fourth: sibling lookup
         execute_calls = [0]
+
         def execute_side_effect(*args, **kwargs):
             execute_calls[0] += 1
             result = MagicMock()
@@ -1061,6 +1087,7 @@ class TestReorganizeUnsorted:
 
 
 # ── IPhoneFile / MEDIA_EXTS ──────────────────────────────────────────
+
 
 class TestMediaExts:
     def test_all_expected_extensions_present(self):

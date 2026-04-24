@@ -67,10 +67,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
 
     api_token = os.environ.get("GML_API_TOKEN", "")
     if not api_token:
-        logger.warning(
-            "GML_API_TOKEN is not set — API authentication is disabled. "
-            "Set GML_API_TOKEN to secure the API."
-        )
+        logger.warning("GML_API_TOKEN is not set — API authentication is disabled. Set GML_API_TOKEN to secure the API.")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -161,7 +158,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
         cutoff = now - _AUTH_FAILURE_WINDOW
         filtered_failures = [t for t in failures if t > cutoff]
         if len(filtered_failures) > _AUTH_FAILURE_MAX * 2:
-            filtered_failures = filtered_failures[-_AUTH_FAILURE_MAX * 2:]
+            filtered_failures = filtered_failures[-_AUTH_FAILURE_MAX * 2 :]
         _auth_failures[client_ip] = filtered_failures
         if len(_auth_failures[client_ip]) >= _AUTH_FAILURE_MAX:
             return JSONResponse(
@@ -182,9 +179,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
             provided = token_header
         elif token_param:
             provided = token_param
-            logger.warning(
-                "API token passed via query parameter — use Authorization header instead for security"
-            )
+            logger.warning("API token passed via query parameter — use Authorization header instead for security")
 
         if not hmac.compare_digest(provided, api_token):
             # Record this auth failure for rate limiting
@@ -334,9 +329,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                     provided_pw = request.headers.get("x-share-password", "") or None
                 if not provided_pw and password:
                     provided_pw = password
-                    logger.warning(
-                        "Share password passed via query parameter — use X-Share-Password header instead for security"
-                    )
+                    logger.warning("Share password passed via query parameter — use X-Share-Password header instead for security")
                 if not provided_pw:
                     return JSONResponse(
                         status_code=401,
@@ -350,7 +343,10 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                     iterations = int(iter_str)
                     expected_dk = bytes.fromhex(dk_hex)
                     provided_dk = hashlib.pbkdf2_hmac(
-                        "sha256", provided_pw.encode("utf-8"), salt, iterations,
+                        "sha256",
+                        provided_pw.encode("utf-8"),
+                        salt,
+                        iterations,
                     )
                     pw_ok = hmac.compare_digest(provided_dk, expected_dk)
                 elif ":" in stored:
@@ -359,7 +355,10 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                     salt = bytes.fromhex(salt_hex)
                     expected_dk = bytes.fromhex(dk_hex)
                     provided_dk = hashlib.pbkdf2_hmac(
-                        "sha256", provided_pw.encode("utf-8"), salt, 100_000,
+                        "sha256",
+                        provided_pw.encode("utf-8"),
+                        salt,
+                        100_000,
                     )
                     pw_ok = hmac.compare_digest(provided_dk, expected_dk)
                 else:
@@ -392,7 +391,7 @@ def create_app(catalog_path: Path | None = None) -> FastAPI:
                 file_streamer(),
                 media_type=content_type,
                 headers={
-                    "Content-Disposition": "attachment; filename*=UTF-8''" + _url_quote(file_path.name, safe=''),
+                    "Content-Disposition": "attachment; filename*=UTF-8''" + _url_quote(file_path.name, safe=""),
                     "Content-Length": str(file_path.stat().st_size),
                 },
             )

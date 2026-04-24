@@ -189,6 +189,7 @@ class TestRangeValidation:
 
 # ── TOML error handling tests ─────────────────────────────────────────
 
+
 class TestTomlErrorHandling:
     def test_invalid_toml_raises_config_error(self, tmp_path):
         bad_toml = tmp_path / "bad.toml"
@@ -202,6 +203,7 @@ class TestTomlErrorHandling:
     def test_no_tomllib_returns_empty(self, tmp_path, monkeypatch):
         """When tomllib is None, _load_toml returns empty dict."""
         import godmode_media_library.config as config_mod
+
         monkeypatch.setattr(config_mod, "tomllib", None)
         cfg = load_config(
             global_path=tmp_path / "whatever.toml",
@@ -211,6 +213,7 @@ class TestTomlErrorHandling:
 
 
 # ── Type validation tests ─────────────────────────────────────────────
+
 
 class TestTypeValidation:
     def test_bool_field_rejects_int(self, tmp_path):
@@ -269,6 +272,7 @@ class TestTypeValidation:
 
 
 # ── Quarantine path validation ─────────────────────────────────────────
+
 
 class TestQuarantinePathValidation:
     def test_system_dir_rejected(self, tmp_path):

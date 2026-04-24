@@ -27,7 +27,6 @@ from godmode_media_library.face_crypto import (
     rotate_key,
 )
 
-
 # ── Helper to set up a fresh keystore environment ────────────────────
 
 
@@ -39,9 +38,7 @@ def _patch_paths(tmp_path):
     class _ctx:
         def __enter__(self):
             _reset_cache()
-            self._p1 = patch(
-                "godmode_media_library.face_crypto._key_path", return_value=key_file
-            )
+            self._p1 = patch("godmode_media_library.face_crypto._key_path", return_value=key_file)
             self._p2 = patch(
                 "godmode_media_library.face_crypto._keystore_path",
                 return_value=ks_file,
@@ -75,7 +72,7 @@ class TestNoopRoundtrip:
         original = [0.1 * i for i in range(_ENCODING_SIZE)]
         blob = encrypt_encoding_noop(original)
         recovered = decrypt_encoding_noop(blob)
-        for a, b in zip(original, recovered):
+        for a, b in zip(original, recovered, strict=False):
             assert abs(a - b) < 1e-12
 
     def test_noop_blob_size(self):
@@ -112,7 +109,7 @@ class TestEncryptedRoundtrip:
             blob = encrypt_encoding(original)
             recovered = decrypt_encoding(blob)
 
-            for a, b in zip(original, recovered):
+            for a, b in zip(original, recovered, strict=False):
                 assert abs(a - b) < 1e-12
 
     def test_encrypted_blob_is_larger_than_raw(self, tmp_path):
@@ -147,7 +144,7 @@ class TestEncryptedRoundtrip:
             ctx.ks_file.write_text(json.dumps(ks))
             _reset_cache()
 
-            with pytest.raises(Exception):  # InvalidToken or similar
+            with pytest.raises((Exception,)):  # noqa: B017  # InvalidToken or similar
                 decrypt_encoding(blob)
 
     def test_key_auto_generated(self, tmp_path):
@@ -256,7 +253,7 @@ class TestKeyRotation:
 
             # Must decrypt without errors
             recovered = decrypt_encoding(legacy_blob)
-            for a, b in zip(original, recovered):
+            for a, b in zip(original, recovered, strict=False):
                 assert abs(a - b) < 1e-12
 
     def test_versioned_blob_format(self, tmp_path):

@@ -181,11 +181,7 @@ def test_incremental_scan_detects_duplicates(tmp_path: Path) -> None:
 
 # ── Permission errors ──────────────────────────────────────────────
 
-import os
-import sys
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 
 def test_scan_skips_unreadable_file(tmp_path: Path) -> None:
@@ -210,15 +206,15 @@ def test_scan_skips_unreadable_file(tmp_path: Path) -> None:
                 raise OSError("Permission denied")
         return original_stat(self, *args, **kwargs)
 
-    with Catalog(db_path) as cat:
-        with patch.object(Path, "stat", patched_stat):
-            stats = incremental_scan(cat, [media])
+    with Catalog(db_path) as cat, patch.object(Path, "stat", patched_stat):
+        stats = incremental_scan(cat, [media])
 
     # Good file was scanned; bad file may or may not be depending on when stat fails
     assert stats.files_scanned >= 1
 
 
 # ── Symlink handling ────────────────────────────────────────────────
+
 
 def test_scan_handles_symlinks(tmp_path: Path) -> None:
     """Symlinks should be followed (or skipped) without errors."""
@@ -239,6 +235,7 @@ def test_scan_handles_symlinks(tmp_path: Path) -> None:
 
 # ── Unicode filenames ────────────────────────────────────────────────
 
+
 def test_scan_unicode_filenames(tmp_path: Path) -> None:
     """Scanner should handle unicode filenames without errors."""
     db_path = tmp_path / "catalog.db"
@@ -254,6 +251,7 @@ def test_scan_unicode_filenames(tmp_path: Path) -> None:
 
 
 # ── Progress callback ────────────────────────────────────────────────
+
 
 def test_scan_progress_callback(tmp_path: Path) -> None:
     """Progress callback should be called during scan phases."""
@@ -276,6 +274,7 @@ def test_scan_progress_callback(tmp_path: Path) -> None:
 
 # ── Multi-worker hashing ────────────────────────────────────────────
 
+
 def test_scan_multi_worker(tmp_path: Path) -> None:
     """Multi-worker scan should produce same results as single-worker."""
     db_path = tmp_path / "catalog.db"
@@ -293,6 +292,7 @@ def test_scan_multi_worker(tmp_path: Path) -> None:
 
 # ── Multi-worker futures exception handling ──────────────────────────
 
+
 def test_scan_multi_worker_hash_failure(tmp_path: Path) -> None:
     """When sha256_file raises in a worker, the file is skipped."""
     db_path = tmp_path / "catalog.db"
@@ -300,22 +300,21 @@ def test_scan_multi_worker_hash_failure(tmp_path: Path) -> None:
     _create_file(media / "good.bin", b"GOOD" * 100)
     _create_file(media / "bad.bin", b"BAD" * 100)
 
-    original_sha256 = None
-
     def patched_sha256(path):
         if "bad.bin" in str(path):
             raise OSError("Read error")
         from godmode_media_library.utils import sha256_file
+
         return sha256_file(path)
 
-    with Catalog(db_path) as cat:
-        with patch("godmode_media_library.scanner.sha256_file", side_effect=patched_sha256):
-            stats = incremental_scan(cat, [media], workers=2)
+    with Catalog(db_path) as cat, patch("godmode_media_library.scanner.sha256_file", side_effect=patched_sha256):
+        stats = incremental_scan(cat, [media], workers=2)
 
     assert stats.files_scanned == 2
 
 
 # ── min_size_bytes filter ────────────────────────────────────────────
+
 
 def test_scan_min_size_bytes(tmp_path: Path) -> None:
     """Files smaller than min_size_bytes should not be hashed."""
@@ -366,8 +365,6 @@ class TestExtractGpsFloat:
 
 # ── _backfill_dates_from_filesystem ────────────────────────────────
 
-from godmode_media_library.scanner import _backfill_dates_from_filesystem
-
 
 def test_backfill_dates_from_filesystem(tmp_path: Path) -> None:
     """Files without date_original should get backfilled from mtime."""
@@ -376,15 +373,13 @@ def test_backfill_dates_from_filesystem(tmp_path: Path) -> None:
     _create_file(media / "nodate.txt", b"NODATE" * 100)
 
     with Catalog(db_path) as cat:
-        stats = incremental_scan(cat, [media])
+        incremental_scan(cat, [media])
         row = cat.get_file_by_path(str(media / "nodate.txt"))
         # date_original should be backfilled from filesystem timestamp
         assert row.date_original is not None
 
 
 # ── _update_duplicate_groups ────────────────────────────────────────
-
-from godmode_media_library.scanner import _update_duplicate_groups
 
 
 def test_update_duplicate_groups(tmp_path: Path) -> None:

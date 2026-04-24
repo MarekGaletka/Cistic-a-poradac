@@ -7,7 +7,6 @@ status with disk_path, _consolidation_progress_dict, dedup mode validation.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -241,12 +240,15 @@ class TestConsolidationHealthExtended:
 class TestConsolidationStartLowDisk:
     def test_start_low_disk_space(self, client, tmp_path):
         """When disk has < 1 GB free, start should be rejected."""
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch(
-            "godmode_media_library.web.routes.consolidation.shutil.disk_usage",
-            return_value=MagicMock(free=500_000_000),  # 0.5 GB
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch(
+                "godmode_media_library.web.routes.consolidation.shutil.disk_usage",
+                return_value=MagicMock(free=500_000_000),  # 0.5 GB
+            ),
         ):
             resp = client.post(
                 "/api/consolidation/start",
@@ -355,12 +357,15 @@ class TestRequestValidationExtended:
         assert resp.status_code == 200
 
     def test_consolidation_media_only_flag(self, client):
-        with patch(
-            "godmode_media_library.consolidation.get_consolidation_status",
-            return_value={"has_active_job": False},
-        ), patch(
-            "godmode_media_library.consolidation.run_consolidation",
-            return_value={},
+        with (
+            patch(
+                "godmode_media_library.consolidation.get_consolidation_status",
+                return_value={"has_active_job": False},
+            ),
+            patch(
+                "godmode_media_library.consolidation.run_consolidation",
+                return_value={},
+            ),
         ):
             resp = client.post(
                 "/api/consolidation/start",

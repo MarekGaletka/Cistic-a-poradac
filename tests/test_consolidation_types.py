@@ -19,7 +19,6 @@ from godmode_media_library.consolidation_types import (
     StructurePattern,
 )
 
-
 # ── StrEnum backward compatibility ──
 
 

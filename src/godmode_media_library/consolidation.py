@@ -262,12 +262,36 @@ def _categorize_file(path: str) -> str:
     """
     ext = PurePosixPath(path).suffix.lower()
     # Media: photos, videos, audio, images
-    media_cat_exts = frozenset({
-        ".jpg", ".jpeg", ".png", ".heic", ".raw", ".cr2", ".nef", ".arw",
-        ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".m4v", ".3gp",
-        ".webm", ".gif", ".bmp", ".tiff", ".svg", ".webp",
-        # Also include broader media from MEDIA_EXTENSIONS
-    }) | MEDIA_EXTENSIONS
+    media_cat_exts = (
+        frozenset(
+            {
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".heic",
+                ".raw",
+                ".cr2",
+                ".nef",
+                ".arw",
+                ".mp4",
+                ".mov",
+                ".avi",
+                ".mkv",
+                ".wmv",
+                ".flv",
+                ".m4v",
+                ".3gp",
+                ".webm",
+                ".gif",
+                ".bmp",
+                ".tiff",
+                ".svg",
+                ".webp",
+                # Also include broader media from MEDIA_EXTENSIONS
+            }
+        )
+        | MEDIA_EXTENSIONS
+    )
     # Check Documents BEFORE Media (because MEDIA_EXTENSIONS has legacy .pdf)
     if ext in DOCUMENT_EXTENSIONS:
         return "Documents"
@@ -461,6 +485,7 @@ def _check_disk_space(disk_path: str, required_bytes: int) -> dict:
 def _resolve_rclone() -> str:
     """Resolve the rclone binary path, falling back to 'rclone'."""
     from .deps import resolve_bin
+
     return resolve_bin("rclone") or "rclone"
 
 
@@ -571,8 +596,12 @@ def _rclone_lsjson_recursive_stream(remote: str, timeout: int = 1800) -> Iterato
     if not check_rclone():
         return
     cmd = [
-        _rclone_bin(), "lsjson", f"{remote}:",
-        "-R", "--no-mimetype", "--fast-list",
+        _rclone_bin(),
+        "lsjson",
+        f"{remote}:",
+        "-R",
+        "--no-mimetype",
+        "--fast-list",
     ]
     logger.info("cloud_catalog: starting %s", " ".join(cmd))
     try:
@@ -605,8 +634,12 @@ def _rclone_lsjson_recursive_fallback(remote: str, timeout: int = 1800) -> list[
     if not check_rclone():
         return []
     cmd = [
-        _rclone_bin(), "lsjson", f"{remote}:",
-        "-R", "--no-mimetype", "--fast-list",
+        _rclone_bin(),
+        "lsjson",
+        f"{remote}:",
+        "-R",
+        "--no-mimetype",
+        "--fast-list",
     ]
     logger.info("cloud_catalog fallback: %s", " ".join(cmd))
     try:
@@ -627,6 +660,7 @@ def _rclone_lsjson_fast(remote: str, timeout: int = 1800) -> Iterator[dict]:
     """Best-effort fast recursive listing — tries ijson streaming, falls back to full parse."""
     try:
         import ijson  # noqa: F401
+
         yield from _rclone_lsjson_recursive_stream(remote, timeout)
     except ImportError:
         logger.info("ijson not installed, using full-parse fallback for %s", remote)
@@ -897,14 +931,17 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
     if include_all or wanted_remotes:
         if wanted_remotes:
             remote_placeholders = ",".join("?" for _ in wanted_remotes)
-            cur = conn.execute(f"""
+            cur = conn.execute(
+                f"""
                 SELECT sha256, path, source_remote, size, date_original, metadata_richness
                 FROM files
                 WHERE sha256 IS NOT NULL
                   AND source_remote IS NOT NULL AND source_remote != '' AND source_remote != 'local'
                   AND source_remote IN ({remote_placeholders})
                 ORDER BY source_remote, path
-            """, list(wanted_remotes))  # noqa: S608
+            """,
+                list(wanted_remotes),
+            )  # noqa: S608
         else:
             cur = conn.execute("""
                 SELECT sha256, path, source_remote, size, date_original, metadata_richness
@@ -921,12 +958,15 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
         if wanted_local_roots:
             conditions = " OR ".join("path LIKE ? || '%'" for _ in wanted_local_roots)
             prefixes = [r.rstrip("/") + "/" for r in wanted_local_roots]
-            cur_local = conn.execute(f"""
+            cur_local = conn.execute(
+                f"""
                 SELECT sha256, path, size, date_original FROM files
                 WHERE sha256 IS NOT NULL
                   AND (source_remote IS NULL OR source_remote = '' OR source_remote = 'local')
                   AND ({conditions})
-            """, prefixes)  # noqa: S608
+            """,
+                prefixes,
+            )  # noqa: S608
         else:
             cur_local = conn.execute("""
                 SELECT sha256, path, size, date_original FROM files
@@ -989,7 +1029,9 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
     logger.info(
         "Registered %d files for streaming (%d skipped as already transferred, %d bundle roots)",
-        registered, skipped_already_done, len(bundles_detected),
+        registered,
+        skipped_already_done,
+        len(bundles_detected),
     )
 
     logger.info("Registered %d files for streaming (including %d bundle roots)", registered, len(bundles_detected))
@@ -1092,7 +1134,7 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
         _pending_hashes = list({fs.file_hash for fs in pending if fs.file_hash})
         _file_meta_cache: dict[str, tuple[str | None, int | None]] = {}
         for _chunk_start in range(0, len(_pending_hashes), 500):
-            _chunk = _pending_hashes[_chunk_start:_chunk_start + 500]
+            _chunk = _pending_hashes[_chunk_start : _chunk_start + 500]
             _ph = ",".join("?" for _ in _chunk)
             for _frow in conn.execute(
                 f"SELECT sha256, date_original, size FROM files WHERE sha256 IN ({_ph})",  # noqa: S608
@@ -1129,8 +1171,15 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             src_path = parts[1] if len(parts) > 1 else parts[0]
 
             if src_remote == "local" and not os.path.exists(src_path):
-                ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                               Phase.STREAM, FileStatus.FAILED, error="Lokální soubor nenalezen")
+                ckpt.mark_file(
+                    ctx.cat,
+                    ctx.job.job_id,
+                    fs.file_hash,
+                    fs.source_location,
+                    Phase.STREAM,
+                    FileStatus.FAILED,
+                    error="Lokální soubor nenalezen",
+                )
                 continue
 
             if src_remote != "local" and source_failures.get(src_remote, 0) >= MAX_SOURCE_FAILURES:
@@ -1140,21 +1189,40 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             bundle_root = _get_bundle_root(src_path) if src_remote != "local" else None
             if bundle_root and src_remote != "local":
                 dest_bundle_path = f"{ctx.config.dest_path}/{bundle_root}"
-                ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                               Phase.STREAM, FileStatus.IN_PROGRESS,
-                               dest=f"{ctx.config.dest_remote}:{dest_bundle_path}")
+                ckpt.mark_file(
+                    ctx.cat,
+                    ctx.job.job_id,
+                    fs.file_hash,
+                    fs.source_location,
+                    Phase.STREAM,
+                    FileStatus.IN_PROGRESS,
+                    dest=f"{ctx.config.dest_remote}:{dest_bundle_path}",
+                )
                 try:
                     result = _rclone_copy_dir(src_remote, bundle_root, ctx.config.dest_remote, dest_bundle_path)
                     status = FileStatus.COMPLETED if result["success"] else FileStatus.FAILED
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                                   Phase.STREAM, status,
-                                   dest=f"{ctx.config.dest_remote}:{dest_bundle_path}",
-                                   error=None if result["success"] else result.get("error", "")[:ERROR_TRUNCATE_LEN])
+                    ckpt.mark_file(
+                        ctx.cat,
+                        ctx.job.job_id,
+                        fs.file_hash,
+                        fs.source_location,
+                        Phase.STREAM,
+                        status,
+                        dest=f"{ctx.config.dest_remote}:{dest_bundle_path}",
+                        error=None if result["success"] else result.get("error", "")[:ERROR_TRUNCATE_LEN],
+                    )
                     if result["success"]:
                         ctx.last_transfer_time = time.monotonic()
                 except Exception as exc:
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                                   Phase.STREAM, FileStatus.FAILED, error=str(exc)[:ERROR_TRUNCATE_LEN])
+                    ckpt.mark_file(
+                        ctx.cat,
+                        ctx.job.job_id,
+                        fs.file_hash,
+                        fs.source_location,
+                        Phase.STREAM,
+                        FileStatus.FAILED,
+                        error=str(exc)[:ERROR_TRUNCATE_LEN],
+                    )
                 continue
 
             # Build collision-safe destination path
@@ -1163,15 +1231,20 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             mod_time = _cached_meta[0] if _cached_meta else None
             file_size = _cached_meta[1] if _cached_meta else None
 
-            dest_path = _build_dest_path(ctx.config.dest_path, filename, fs.file_hash, mod_time,
-                                         ctx.config.structure_pattern)
+            dest_path = _build_dest_path(ctx.config.dest_path, filename, fs.file_hash, mod_time, ctx.config.structure_pattern)
             if dest_path in dest_paths_used:
                 dest_path = _make_collision_safe(dest_path, fs.file_hash, dest_paths_used)
             dest_paths_used.add(dest_path)
 
-            ckpt.mark_file(ctx.cat, ctx.job.job_id, fs.file_hash, fs.source_location,
-                           Phase.STREAM, FileStatus.IN_PROGRESS,
-                           dest=f"{ctx.config.dest_remote}:{dest_path}")
+            ckpt.mark_file(
+                ctx.cat,
+                ctx.job.job_id,
+                fs.file_hash,
+                fs.source_location,
+                Phase.STREAM,
+                FileStatus.IN_PROGRESS,
+                dest=f"{ctx.config.dest_remote}:{dest_path}",
+            )
 
             transfer_tasks.append((fs, src_remote, src_path, dest_path, file_size))
 
@@ -1185,6 +1258,7 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
 
         # Group tasks by source remote for bulk transfer
         from collections import defaultdict
+
         remote_groups: dict[str, list[tuple]] = defaultdict(list)
         for task in transfer_tasks:
             fs, src_remote, src_path, dest_path, file_size = task
@@ -1200,12 +1274,17 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 staging_base = f"{ctx.config.dest_path}/.staging/local"
                 src_paths = [t[2] for t in tasks]  # absolute local paths
 
-                ctx.report(Phase.STREAM, f"Bulk upload: local ({len(tasks)} souborů)...", 5,
-                           files_transferred=_wal_counter, bytes_transferred=total_stream_bytes)
+                ctx.report(
+                    Phase.STREAM,
+                    f"Bulk upload: local ({len(tasks)} souborů)...",
+                    5,
+                    files_transferred=_wal_counter,
+                    bytes_transferred=total_stream_bytes,
+                )
 
-                def _bulk_local_progress(files_done, bytes_done, speed_bps,
-                                        _tasks=tasks, _wal_counter=_wal_counter,
-                                        _total_stream_bytes=total_stream_bytes):
+                def _bulk_local_progress(
+                    files_done, bytes_done, speed_bps, _tasks=tasks, _wal_counter=_wal_counter, _total_stream_bytes=total_stream_bytes
+                ):
                     ctx.progress.current_file = f"local: {files_done}/{len(_tasks)}"
                     ctx.last_transfer_time = time.monotonic()
                     mb_done = bytes_done / (1024 * 1024)
@@ -1213,14 +1292,23 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                     label = f"local: {files_done}/{len(_tasks)} ({mb_done:.0f} MB)"
                     if speed_mbs:
                         label += f" [{speed_mbs:.1f} MB/s]"
-                    ctx.report(Phase.STREAM, label, 5,
-                               files_transferred=_wal_counter + files_done,
-                               bytes_transferred=_total_stream_bytes + bytes_done,
-                               transfer_speed_bps=speed_bps)
+                    ctx.report(
+                        Phase.STREAM,
+                        label,
+                        5,
+                        files_transferred=_wal_counter + files_done,
+                        bytes_transferred=_total_stream_bytes + bytes_done,
+                        transfer_speed_bps=speed_bps,
+                    )
 
                 bulk_result = rclone_bulk_copy(
-                    "local", ctx.config.dest_remote, staging_base, src_paths,
-                    transfers=16, checkers=32, bwlimit=ctx.config.bwlimit,
+                    "local",
+                    ctx.config.dest_remote,
+                    staging_base,
+                    src_paths,
+                    transfers=16,
+                    checkers=32,
+                    bwlimit=ctx.config.bwlimit,
                     progress_fn=_bulk_local_progress,
                 )
 
@@ -1228,13 +1316,21 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                     error_msg = bulk_result.get("error", "bulk local upload failed")
                     logger.warning("Bulk local upload failed: %s", error_msg)
                     if any(q in error_msg.lower() for q in QUOTA_ERRORS):
-                        ckpt.update_job(ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED,
-                                        error=f"Rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}")
+                        ckpt.update_job(
+                            ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED, error=f"Rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}"
+                        )
                         ctx.progress.paused = True
                         break
                     for task in tasks:
-                        ckpt.mark_file(ctx.cat, ctx.job.job_id, task[0].file_hash, task[0].source_location,
-                                       Phase.STREAM, FileStatus.FAILED, error=error_msg[:ERROR_TRUNCATE_LEN])
+                        ckpt.mark_file(
+                            ctx.cat,
+                            ctx.job.job_id,
+                            task[0].file_hash,
+                            task[0].source_location,
+                            Phase.STREAM,
+                            FileStatus.FAILED,
+                            error=error_msg[:ERROR_TRUNCATE_LEN],
+                        )
                     continue
 
                 total_stream_bytes += bulk_result["bytes"]
@@ -1246,18 +1342,23 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                     t_fs = task[0]
                     t_file_size = task[4]
                     t_staging_dest = f"{staging_base}/{task[2].lstrip('/')}"
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
-                                   Phase.STREAM, FileStatus.COMPLETED,
-                                   dest=f"{ctx.config.dest_remote}:{t_staging_dest}",
-                                   bytes_transferred=t_file_size or 0)
+                    ckpt.mark_file(
+                        ctx.cat,
+                        ctx.job.job_id,
+                        t_fs.file_hash,
+                        t_fs.source_location,
+                        Phase.STREAM,
+                        FileStatus.COMPLETED,
+                        dest=f"{ctx.config.dest_remote}:{t_staging_dest}",
+                        bytes_transferred=t_file_size or 0,
+                    )
                     _wal_counter += 1
                 ckpt.wal_checkpoint(ctx.cat)
 
                 # Server-side move from staging to final paths
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                ctx.report(Phase.STREAM, f"Přesouvám {len(tasks)} souborů na finální cesty...", 5,
-                           bytes_transferred=total_stream_bytes)
+                ctx.report(Phase.STREAM, f"Přesouvám {len(tasks)} souborů na finální cesty...", 5, bytes_transferred=total_stream_bytes)
 
                 def _do_local_move(task_args, _staging_base=staging_base):
                     t_fs, _, t_src_path, t_dest_path, t_file_size = task_args
@@ -1269,10 +1370,16 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                     for future in as_completed([pool.submit(_do_local_move, t) for t in tasks]):
                         t_fs, t_dest_path, t_staging, t_file_size, moved = future.result()
                         if moved:
-                            ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
-                                           Phase.STREAM, FileStatus.COMPLETED,
-                                           dest=f"{ctx.config.dest_remote}:{t_dest_path}",
-                                           bytes_transferred=t_file_size or 0)
+                            ckpt.mark_file(
+                                ctx.cat,
+                                ctx.job.job_id,
+                                t_fs.file_hash,
+                                t_fs.source_location,
+                                Phase.STREAM,
+                                FileStatus.COMPLETED,
+                                dest=f"{ctx.config.dest_remote}:{t_dest_path}",
+                                bytes_transferred=t_file_size or 0,
+                            )
                         else:
                             logger.warning("Server-side move failed: %s → %s", t_staging, t_dest_path)
                 continue
@@ -1282,13 +1389,23 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
             staging_base = f"{ctx.config.dest_path}/.staging/{src_remote}"
             src_paths = [t[2] for t in tasks]  # extract src_path from each task
 
-            ctx.report(Phase.STREAM, f"Bulk transfer: {src_remote} ({len(tasks)} souborů)...", 5,
-                       files_transferred=_wal_counter, bytes_transferred=total_stream_bytes)
+            ctx.report(
+                Phase.STREAM,
+                f"Bulk transfer: {src_remote} ({len(tasks)} souborů)...",
+                5,
+                files_transferred=_wal_counter,
+                bytes_transferred=total_stream_bytes,
+            )
 
-            def _bulk_progress(files_done, bytes_done, speed_bps,
-                               _tasks=tasks, _wal_counter=_wal_counter,
-                               _total_stream_bytes=total_stream_bytes,
-                               _src_remote=src_remote):
+            def _bulk_progress(
+                files_done,
+                bytes_done,
+                speed_bps,
+                _tasks=tasks,
+                _wal_counter=_wal_counter,
+                _total_stream_bytes=total_stream_bytes,
+                _src_remote=src_remote,
+            ):
                 ctx.progress.current_file = f"{_src_remote}: {files_done}/{len(_tasks)}"
                 ctx.last_transfer_time = time.monotonic()
                 mb_done = bytes_done / (1024 * 1024)
@@ -1297,14 +1414,23 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 label = f"{_src_remote}: {files_done}/{len(_tasks)} ({mb_done:.0f} MB)"
                 if speed_str:
                     label += f" [{speed_str}]"
-                ctx.report(Phase.STREAM, label, 5,
-                           files_transferred=_wal_counter + files_done,
-                           bytes_transferred=_total_stream_bytes + bytes_done,
-                           transfer_speed_bps=speed_bps)
+                ctx.report(
+                    Phase.STREAM,
+                    label,
+                    5,
+                    files_transferred=_wal_counter + files_done,
+                    bytes_transferred=_total_stream_bytes + bytes_done,
+                    transfer_speed_bps=speed_bps,
+                )
 
             bulk_result = rclone_bulk_copy(
-                src_remote, ctx.config.dest_remote, staging_base, src_paths,
-                transfers=32, checkers=64, bwlimit=ctx.config.bwlimit,
+                src_remote,
+                ctx.config.dest_remote,
+                staging_base,
+                src_paths,
+                transfers=32,
+                checkers=64,
+                bwlimit=ctx.config.bwlimit,
                 progress_fn=_bulk_progress,
             )
 
@@ -1312,14 +1438,22 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 error_msg = bulk_result.get("error", "bulk copy failed")
                 logger.warning("Bulk copy from %s failed: %s", src_remote, error_msg)
                 if any(q in error_msg.lower() for q in QUOTA_ERRORS):
-                    ckpt.update_job(ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED,
-                                    error=f"Rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}")
+                    ckpt.update_job(
+                        ctx.cat, ctx.job.job_id, status=JobStatus.PAUSED, error=f"Rate limit: {error_msg[:ERROR_TRUNCATE_MEDIUM]}"
+                    )
                     ctx.progress.paused = True
                     break
                 # Mark all as failed and continue to next remote
                 for task in tasks:
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, task[0].file_hash, task[0].source_location,
-                                   Phase.STREAM, FileStatus.FAILED, error=error_msg[:ERROR_TRUNCATE_LEN])
+                    ckpt.mark_file(
+                        ctx.cat,
+                        ctx.job.job_id,
+                        task[0].file_hash,
+                        task[0].source_location,
+                        Phase.STREAM,
+                        FileStatus.FAILED,
+                        error=error_msg[:ERROR_TRUNCATE_LEN],
+                    )
                 continue
 
             total_stream_bytes += bulk_result["bytes"]
@@ -1333,18 +1467,23 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 t_fs = task[0]
                 t_file_size = task[4]
                 t_staging_dest = f"{staging_base}/{task[2]}"
-                ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
-                               Phase.STREAM, FileStatus.COMPLETED,
-                               dest=f"{ctx.config.dest_remote}:{t_staging_dest}",
-                               bytes_transferred=t_file_size or 0)
+                ckpt.mark_file(
+                    ctx.cat,
+                    ctx.job.job_id,
+                    t_fs.file_hash,
+                    t_fs.source_location,
+                    Phase.STREAM,
+                    FileStatus.COMPLETED,
+                    dest=f"{ctx.config.dest_remote}:{t_staging_dest}",
+                    bytes_transferred=t_file_size or 0,
+                )
                 _wal_counter += 1
             ckpt.wal_checkpoint(ctx.cat)
             logger.info("Marked %d files COMPLETED (staging) for %s after bulk copy", len(tasks), src_remote)
 
             # Phase B: Server-side move from staging to final paths (instant on GDrive)
             # Parallelized — each moveto is a metadata-only API call
-            ctx.report(Phase.STREAM, f"Přesouvám {len(tasks)} souborů na finální cesty...", 5,
-                       bytes_transferred=total_stream_bytes)
+            ctx.report(Phase.STREAM, f"Přesouvám {len(tasks)} souborů na finální cesty...", 5, bytes_transferred=total_stream_bytes)
 
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1360,18 +1499,26 @@ def _phase_5_stream(ctx: PhaseContext) -> None:
                 for future in as_completed([pool.submit(_do_move, t) for t in tasks]):
                     t_fs, t_dest_path, t_staging, t_file_size, moved = future.result()
                     move_counter += 1
-                    ctx.report(Phase.STREAM,
-                               f"Přesouvám {move_counter}/{len(tasks)} souborů na finální cesty...",
-                               5,
-                               bytes_transferred=total_stream_bytes,
-                               transfer_speed_bps=0,
-                               eta_seconds=0)
+                    ctx.report(
+                        Phase.STREAM,
+                        f"Přesouvám {move_counter}/{len(tasks)} souborů na finální cesty...",
+                        5,
+                        bytes_transferred=total_stream_bytes,
+                        transfer_speed_bps=0,
+                        eta_seconds=0,
+                    )
                     if moved:
                         # Update dest to final path (status stays COMPLETED)
-                        ckpt.mark_file(ctx.cat, ctx.job.job_id, t_fs.file_hash, t_fs.source_location,
-                                       Phase.STREAM, FileStatus.COMPLETED,
-                                       dest=f"{ctx.config.dest_remote}:{t_dest_path}",
-                                       bytes_transferred=t_file_size or 0)
+                        ckpt.mark_file(
+                            ctx.cat,
+                            ctx.job.job_id,
+                            t_fs.file_hash,
+                            t_fs.source_location,
+                            Phase.STREAM,
+                            FileStatus.COMPLETED,
+                            dest=f"{ctx.config.dest_remote}:{t_dest_path}",
+                            bytes_transferred=t_file_size or 0,
+                        )
                     else:
                         logger.warning("Server-side move failed: %s → %s (file stays in staging)", t_staging, t_dest_path)
                     if move_counter % 500 == 0:
@@ -1444,23 +1591,20 @@ def _phase_6_retry_failed(ctx: PhaseContext) -> None:
                 continue
             # Cache reachability per remote
             if src_remote not in reachable_cache:
-                reachable_cache[src_remote] = (
-                    rclone_is_reachable(src_remote, timeout=DEST_CONNECTIVITY_TIMEOUT)
-                    or wait_for_connectivity(src_remote, timeout=RETRY_CONNECTIVITY_WAIT)
+                reachable_cache[src_remote] = rclone_is_reachable(src_remote, timeout=DEST_CONNECTIVITY_TIMEOUT) or wait_for_connectivity(
+                    src_remote, timeout=RETRY_CONNECTIVITY_WAIT
                 )
             if not reachable_cache[src_remote]:
                 continue
 
-            file_row = conn.execute("SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1",
-                                    (fs.file_hash,)).fetchone()
+            file_row = conn.execute("SELECT date_original, size FROM files WHERE sha256 = ? LIMIT 1", (fs.file_hash,)).fetchone()
             file_size = file_row["size"] if file_row else None
             if fs.dest_location and ":" in fs.dest_location:
                 dest_path = fs.dest_location.split(":", 1)[1]
             else:
                 filename = PurePosixPath(src_path).name
                 mod_time = file_row["date_original"] if file_row else None
-                dest_path = _build_dest_path(ctx.config.dest_path, filename, fs.file_hash, mod_time,
-                                             ctx.config.structure_pattern)
+                dest_path = _build_dest_path(ctx.config.dest_path, filename, fs.file_hash, mod_time, ctx.config.structure_pattern)
             retry_tasks.append((fs, src_remote, src_path, dest_path, file_size))
 
         # Parallel retry transfers
@@ -1469,11 +1613,19 @@ def _phase_6_retry_failed(ctx: PhaseContext) -> None:
         def _do_retry(args):
             r_fs, r_src_remote, r_src_path, r_dest_path, r_file_size = args
             try:
-                retry_timeout = (int(_dynamic_timeout(r_file_size) * ctx.config.retry_timeout_multiplier)
-                                 if r_file_size else DEFAULT_RETRY_TIMEOUT)
-                result = rclone_copyto(r_src_remote, r_src_path, ctx.config.dest_remote, r_dest_path,
-                                       file_size=r_file_size, timeout=retry_timeout,
-                                       bwlimit=ctx.config.bwlimit, checksum=True)
+                retry_timeout = (
+                    int(_dynamic_timeout(r_file_size) * ctx.config.retry_timeout_multiplier) if r_file_size else DEFAULT_RETRY_TIMEOUT
+                )
+                result = rclone_copyto(
+                    r_src_remote,
+                    r_src_path,
+                    ctx.config.dest_remote,
+                    r_dest_path,
+                    file_size=r_file_size,
+                    timeout=retry_timeout,
+                    bwlimit=ctx.config.bwlimit,
+                    checksum=True,
+                )
                 return (r_fs, r_dest_path, r_file_size, result, None)
             except Exception as exc:
                 return (r_fs, r_dest_path, r_file_size, None, exc)
@@ -1482,23 +1634,40 @@ def _phase_6_retry_failed(ctx: PhaseContext) -> None:
             for future in as_completed([pool.submit(_do_retry, t) for t in retry_tasks]):
                 r_fs, r_dest_path, r_file_size, result, exc = future.result()
                 if exc is not None:
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, r_fs.file_hash, r_fs.source_location,
-                                   Phase.STREAM, FileStatus.FAILED,
-                                   error=f"Retry exception: {str(exc)[:ERROR_TRUNCATE_SHORT]}")
+                    ckpt.mark_file(
+                        ctx.cat,
+                        ctx.job.job_id,
+                        r_fs.file_hash,
+                        r_fs.source_location,
+                        Phase.STREAM,
+                        FileStatus.FAILED,
+                        error=f"Retry exception: {str(exc)[:ERROR_TRUNCATE_SHORT]}",
+                    )
                     retried_fail += 1
                 elif result and result["success"]:
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, r_fs.file_hash, r_fs.source_location,
-                                   Phase.STREAM, FileStatus.COMPLETED,
-                                   dest=f"{ctx.config.dest_remote}:{r_dest_path}",
-                                   bytes_transferred=result["bytes"] or r_file_size or 0)
+                    ckpt.mark_file(
+                        ctx.cat,
+                        ctx.job.job_id,
+                        r_fs.file_hash,
+                        r_fs.source_location,
+                        Phase.STREAM,
+                        FileStatus.COMPLETED,
+                        dest=f"{ctx.config.dest_remote}:{r_dest_path}",
+                        bytes_transferred=result["bytes"] or r_file_size or 0,
+                    )
                     retried_ok += 1
                 else:
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, r_fs.file_hash, r_fs.source_location,
-                                   Phase.STREAM, FileStatus.FAILED,
-                                   error=(result.get("error", "retry failed") if result else "unknown")[:ERROR_TRUNCATE_LEN])
+                    ckpt.mark_file(
+                        ctx.cat,
+                        ctx.job.job_id,
+                        r_fs.file_hash,
+                        r_fs.source_location,
+                        Phase.STREAM,
+                        FileStatus.FAILED,
+                        error=(result.get("error", "retry failed") if result else "unknown")[:ERROR_TRUNCATE_LEN],
+                    )
                     retried_fail += 1
-                ctx.report(Phase.RETRY_FAILED, f"Retry: {retried_ok} OK, {retried_fail} fail", 6,
-                           files_retried=retried_ok)
+                ctx.report(Phase.RETRY_FAILED, f"Retry: {retried_ok} OK, {retried_fail} fail", 6, files_retried=retried_ok)
 
         ctx.results["retry"] = {"retried_ok": retried_ok, "retried_fail": retried_fail}
     else:
@@ -1576,8 +1745,13 @@ def _phase_7_verify(ctx: PhaseContext) -> None:
                 return (row["file_hash"], dest_loc, "fail", "verify_missing: file not found on destination", False)
 
             if check.get("size_match") is False:
-                return (row["file_hash"], dest_loc, "fail",
-                        f"verify_size_mismatch: expected={expected_bytes}, got={check.get('size')}", False)
+                return (
+                    row["file_hash"],
+                    dest_loc,
+                    "fail",
+                    f"verify_size_mismatch: expected={expected_bytes}, got={check.get('size')}",
+                    False,
+                )
 
             # Step 2: Hash check — ONLY when source natively supports dest hash type
             # Cross-remote hash comparison (e.g. pcloud SHA-1 vs Google MD5) is unreliable
@@ -1595,8 +1769,13 @@ def _phase_7_verify(ctx: PhaseContext) -> None:
                         if dest_hash.lower() == source_hash.lower():
                             return (row["file_hash"], dest_loc, "ok", None, True)
                         else:
-                            return (row["file_hash"], dest_loc, "fail",
-                                    f"verify_hash_mismatch: src={source_hash[:16]}..., dest={dest_hash[:16]}...", False)
+                            return (
+                                row["file_hash"],
+                                dest_loc,
+                                "fail",
+                                f"verify_hash_mismatch: src={source_hash[:16]}..., dest={dest_hash[:16]}...",
+                                False,
+                            )
                     logger.debug("Hash unavailable for %s, relying on size check", dest_loc)
 
             # Size check passed (hash not comparable across different remotes)
@@ -1624,15 +1803,13 @@ def _phase_7_verify(ctx: PhaseContext) -> None:
             elif status in ("fail", "fail_exc"):
                 verified_fail += 1
                 if error and status == "fail":
-                    ckpt.mark_file(ctx.cat, ctx.job.job_id, file_hash, dest_loc,
-                                   Phase.STREAM, FileStatus.FAILED, error=error)
+                    ckpt.mark_file(ctx.cat, ctx.job.job_id, file_hash, dest_loc, Phase.STREAM, FileStatus.FAILED, error=error)
                     logger.error("VERIFY FAIL: %s — %s", dest_loc, error)
                 else:
                     logger.warning("Verify failed for %s: %s", dest_loc, error)
 
             if (idx + 1) % VERIFY_REPORT_INTERVAL == 0:
-                ctx.report(Phase.VERIFY, f"Overeno {idx + 1}/{total_to_verify}...", 7,
-                           files_verified=verified_ok, errors=verified_fail)
+                ctx.report(Phase.VERIFY, f"Overeno {idx + 1}/{total_to_verify}...", 7, files_verified=verified_ok, errors=verified_fail)
 
     ctx.results["verify"] = {
         "total_checked": total_to_verify,
@@ -1744,7 +1921,8 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 # Download archive to temp dir
                 local_archive = os.path.join(tmpdir, PurePosixPath(archive_path).name)
                 dl_cmd = [
-                    _resolve_rclone(), "copyto",
+                    _resolve_rclone(),
+                    "copyto",
                     f"{ctx.config.dest_remote}:{ctx.config.dest_path}/{archive_path}",
                     local_archive,
                 ]
@@ -1760,7 +1938,7 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                         # Zip Slip + zip bomb protection
                         total_uncompressed = 0
                         archive_size = os.path.getsize(local_archive) or 1
-                        max_uncompressed = 100 * 1024 ** 3  # 100 GB absolute limit
+                        max_uncompressed = 100 * 1024**3  # 100 GB absolute limit
                         for info in zf.infolist():
                             member_path = os.path.realpath(os.path.join(extract_dir, info.filename))
                             real_extract = os.path.realpath(extract_dir)
@@ -1768,7 +1946,7 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                                 raise ValueError(f"Zip Slip: {info.filename} escapes extraction directory")
                             total_uncompressed += info.file_size
                         if total_uncompressed > max_uncompressed or (
-                            total_uncompressed > archive_size * 100 and total_uncompressed > 10 * 1024 ** 3
+                            total_uncompressed > archive_size * 100 and total_uncompressed > 10 * 1024**3
                         ):
                             raise ValueError(
                                 f"Zip bomb detected: {total_uncompressed} bytes uncompressed "
@@ -1787,12 +1965,18 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 elif lower_path.endswith(".7z"):
                     subprocess.run(
                         ["7z", "x", local_archive, f"-o{extract_dir}", "-y"],
-                        capture_output=True, text=True, timeout=1800, check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=1800,
+                        check=True,
                     )
                 elif lower_path.endswith(".rar"):
                     subprocess.run(
                         ["unrar", "x", "-o+", local_archive, extract_dir + "/"],
-                        capture_output=True, text=True, timeout=1800, check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=1800,
+                        check=True,
                     )
                 else:
                     return (archive_path, False, 0, f"Unsupported format: {archive_path}")
@@ -1816,26 +2000,30 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                 upload_base = f"{ctx.config.dest_path}/{archive_parent}" if archive_parent else ctx.config.dest_path
 
                 upload_cmd = [
-                    _resolve_rclone(), "copy",
+                    _resolve_rclone(),
+                    "copy",
                     extract_dir,
                     f"{ctx.config.dest_remote}:{upload_base}",
-                    "--transfers", "8", "--checkers", "16",
+                    "--transfers",
+                    "8",
+                    "--checkers",
+                    "16",
                 ]
                 upload_result = subprocess.run(upload_cmd, capture_output=True, text=True, timeout=3600)
 
                 if upload_result.returncode != 0:
-                    return (archive_path, False, 0,
-                            f"Upload failed (rc={upload_result.returncode}): {(upload_result.stderr or '')[:150]}")
+                    return (archive_path, False, 0, f"Upload failed (rc={upload_result.returncode}): {(upload_result.stderr or '')[:150]}")
 
                 # Verify upload by checking file count on destination
                 verify_cmd = [
-                    _resolve_rclone(), "size", "--json",
+                    _resolve_rclone(),
+                    "size",
+                    "--json",
                     f"{ctx.config.dest_remote}:{upload_base}",
                 ]
                 verify_result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=300)
                 if verify_result.returncode != 0:
-                    return (archive_path, False, 0,
-                            f"Cannot verify upload: {(verify_result.stderr or '')[:150]}")
+                    return (archive_path, False, 0, f"Cannot verify upload: {(verify_result.stderr or '')[:150]}")
 
                 try:
                     size_info = json.loads(verify_result.stdout)
@@ -1844,19 +2032,15 @@ def _phase_8_extract_archives(ctx: PhaseContext) -> None:
                     remote_count = 0
 
                 local_total_size = sum(
-                    os.path.getsize(os.path.join(extract_dir, f))
-                    for f in extracted_files
-                    if os.path.exists(os.path.join(extract_dir, f))
+                    os.path.getsize(os.path.join(extract_dir, f)) for f in extracted_files if os.path.exists(os.path.join(extract_dir, f))
                 )
                 remote_total_size = size_info.get("bytes", 0) if isinstance(size_info, dict) else 0
 
                 if remote_count < len(extracted_files):
-                    return (archive_path, False, 0,
-                            f"File count mismatch: expected {len(extracted_files)}, found {remote_count}")
+                    return (archive_path, False, 0, f"File count mismatch: expected {len(extracted_files)}, found {remote_count}")
 
                 if local_total_size > 0 and remote_total_size < local_total_size * 0.95:
-                    return (archive_path, False, 0,
-                            f"Size mismatch: local={local_total_size}, remote={remote_total_size}")
+                    return (archive_path, False, 0, f"Size mismatch: local={local_total_size}, remote={remote_total_size}")
 
                 # Delete the archive from destination only after verified upload
                 delete_result = _rclone_delete(ctx.config.dest_remote, f"{ctx.config.dest_path}/{archive_path}")
@@ -2443,8 +2627,7 @@ def run_consolidation(
             _pause_events[job.job_id] = (threading.Event(), time.time())
             # Purge stale events from crashed jobs that bypassed finally cleanup
             _now = time.time()
-            _stale = [k for k, (_, ts) in _pause_events.items()
-                       if k != job.job_id and _now - ts > _PAUSE_EVENT_MAX_AGE]
+            _stale = [k for k, (_, ts) in _pause_events.items() if k != job.job_id and _now - ts > _PAUSE_EVENT_MAX_AGE]
             for k in _stale:
                 logger.warning("Purging stale pause event for job %s (age > %ds)", k, _PAUSE_EVENT_MAX_AGE)
                 del _pause_events[k]
@@ -2513,8 +2696,7 @@ def get_consolidation_status(catalog_path: str | Path) -> dict[str, Any]:
         for j in consolidation_jobs:
             if j.status == JobStatus.RUNNING and j.job_id not in live_job_ids:
                 logger.warning("Orphaned job %s detected (running in DB, no live process) — marking paused for resume", j.job_id)
-                ckpt.update_job(cat, j.job_id, status=JobStatus.PAUSED,
-                                error="Server restart — automaticky pokračuje při dalším spuštění")
+                ckpt.update_job(cat, j.job_id, status=JobStatus.PAUSED, error="Server restart — automaticky pokračuje při dalším spuštění")
                 j.status = JobStatus.PAUSED
 
         active = [j for j in consolidation_jobs if j.status in (JobStatus.CREATED, JobStatus.RUNNING, JobStatus.PAUSED)]

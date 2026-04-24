@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -116,11 +115,13 @@ class TestCRUD:
         assert delete_scenario("ghost") is False
 
     def test_duplicate_scenario(self):
-        created = create_scenario({
-            "name": "Original",
-            "description": "desc",
-            "steps": [{"type": "scan", "config": {"workers": 2}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Original",
+                "description": "desc",
+                "steps": [{"type": "scan", "config": {"workers": 2}, "enabled": True}],
+            }
+        )
         duped = duplicate_scenario(created["id"])
         assert duped is not None
         assert duped["id"] != created["id"]
@@ -197,10 +198,12 @@ class TestPersistence:
         assert bak_path.read_text() == "{CORRUPT JSON HERE!!!"
 
     def test_roundtrip_with_trigger(self):
-        created = create_scenario({
-            "name": "Triggered",
-            "trigger": {"type": "volume_mount", "volume_name": "MyDisk", "schedule_cron": ""},
-        })
+        created = create_scenario(
+            {
+                "name": "Triggered",
+                "trigger": {"type": "volume_mount", "volume_name": "MyDisk", "schedule_cron": ""},
+            }
+        )
         loaded = get_scenario(created["id"])
         assert loaded["trigger"]["type"] == "volume_mount"
         assert loaded["trigger"]["volume_name"] == "MyDisk"
@@ -227,9 +230,8 @@ class TestPersistence:
         assert len(list_scenarios()) == 1
 
         # Simulate os.replace failure
-        with patch("os.replace", side_effect=OSError("disk full")):
-            with pytest.raises(OSError):
-                create_scenario({"name": "Should Fail"})
+        with patch("os.replace", side_effect=OSError("disk full")), pytest.raises(OSError):
+            create_scenario({"name": "Should Fail"})
 
         # Original data should still be readable
         assert len(list_scenarios()) == 1
@@ -237,14 +239,16 @@ class TestPersistence:
 
     def test_save_load_preserves_all_fields(self):
         """All Scenario fields survive a save/load round-trip."""
-        created = create_scenario({
-            "name": "Full",
-            "description": "desc",
-            "icon": "X",
-            "color": "#aabbcc",
-            "steps": [{"type": "deep_scan", "config": {"key": "val"}, "enabled": False}],
-            "trigger": {"type": "schedule", "volume_name": "", "schedule_cron": "0 * * * *"},
-        })
+        created = create_scenario(
+            {
+                "name": "Full",
+                "description": "desc",
+                "icon": "X",
+                "color": "#aabbcc",
+                "steps": [{"type": "deep_scan", "config": {"key": "val"}, "enabled": False}],
+                "trigger": {"type": "schedule", "volume_name": "", "schedule_cron": "0 * * * *"},
+            }
+        )
         loaded = get_scenario(created["id"])
         assert loaded["description"] == "desc"
         assert loaded["icon"] == "X"
@@ -267,10 +271,12 @@ class TestExecution:
 
     def test_execute_with_unknown_step_type(self):
         """Unknown step types should not crash, _execute_step returns a note."""
-        created = create_scenario({
-            "name": "Unknown Step",
-            "steps": [{"type": "totally_fake_step", "config": {}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Unknown Step",
+                "steps": [{"type": "totally_fake_step", "config": {}, "enabled": True}],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert result["completed"] == 1
         assert result["failed"] == 0
@@ -278,22 +284,26 @@ class TestExecution:
         assert "Neznámý typ kroku" in result["step_results"][0]["result"]["note"]
 
     def test_execute_skips_disabled_steps(self):
-        created = create_scenario({
-            "name": "Partial",
-            "steps": [
-                {"type": "totally_fake_step", "config": {}, "enabled": False},
-                {"type": "another_fake", "config": {}, "enabled": True},
-            ],
-        })
+        created = create_scenario(
+            {
+                "name": "Partial",
+                "steps": [
+                    {"type": "totally_fake_step", "config": {}, "enabled": False},
+                    {"type": "another_fake", "config": {}, "enabled": True},
+                ],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         # Only the enabled step should run
         assert result["total_steps"] == 1
 
     def test_execute_calls_progress_fn(self):
-        created = create_scenario({
-            "name": "Progress",
-            "steps": [{"type": "cloud_backup", "config": {"remote_name": ""}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Progress",
+                "steps": [{"type": "cloud_backup", "config": {"remote_name": ""}, "enabled": True}],
+            }
+        )
         progress_calls = []
         execute_scenario(created["id"], "/fake/catalog.db", progress_fn=progress_calls.append)
         # Should have at least a "step" call and a "complete" call
@@ -303,13 +313,15 @@ class TestExecution:
 
     @patch("godmode_media_library.scenarios._execute_step", side_effect=RuntimeError("boom"))
     def test_execute_continues_after_step_failure(self, mock_step):
-        created = create_scenario({
-            "name": "Failover",
-            "steps": [
-                {"type": "deep_scan", "config": {}, "enabled": True},
-                {"type": "scan", "config": {}, "enabled": True},
-            ],
-        })
+        created = create_scenario(
+            {
+                "name": "Failover",
+                "steps": [
+                    {"type": "deep_scan", "config": {}, "enabled": True},
+                    {"type": "scan", "config": {}, "enabled": True},
+                ],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert result["failed"] == 2
         assert result["completed"] == 0
@@ -317,10 +329,12 @@ class TestExecution:
         assert len(result["step_results"]) == 2
 
     def test_execute_marks_run_after_completion(self):
-        created = create_scenario({
-            "name": "Marked",
-            "steps": [{"type": "photorec", "config": {}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Marked",
+                "steps": [{"type": "photorec", "config": {}, "enabled": True}],
+            }
+        )
         execute_scenario(created["id"], "/fake/catalog.db")
         updated = get_scenario(created["id"])
         assert updated["run_count"] == 1
@@ -334,54 +348,66 @@ class TestExecution:
 
 class TestExecuteStepTypes:
     def test_photorec_returns_note(self):
-        created = create_scenario({
-            "name": "Photorec",
-            "steps": [{"type": "photorec", "config": {}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Photorec",
+                "steps": [{"type": "photorec", "config": {}, "enabled": True}],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert result["step_results"][0]["result"]["note"] == "PhotoRec vyžaduje ruční výběr disku"
 
     def test_reorganize_returns_note(self):
-        created = create_scenario({
-            "name": "Reorg",
-            "steps": [{"type": "reorganize", "config": {}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Reorg",
+                "steps": [{"type": "reorganize", "config": {}, "enabled": True}],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert "vyžaduje" in result["step_results"][0]["result"]["note"]
 
     def test_cloud_backup_without_remote_returns_note(self):
-        created = create_scenario({
-            "name": "Backup",
-            "steps": [{"type": "cloud_backup", "config": {}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Backup",
+                "steps": [{"type": "cloud_backup", "config": {}, "enabled": True}],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert "vyžaduje" in result["step_results"][0]["result"]["note"]
 
     def test_cloud_backup_with_remote_returns_note(self):
-        created = create_scenario({
-            "name": "Backup",
-            "steps": [{"type": "cloud_backup", "config": {"remote_name": "gdrive"}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Backup",
+                "steps": [{"type": "cloud_backup", "config": {"remote_name": "gdrive"}, "enabled": True}],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert "gdrive" in result["step_results"][0]["result"]["note"]
 
     @patch("godmode_media_library.scenarios._execute_step")
     def test_execute_deep_scan_step(self, mock_step):
         mock_step.return_value = {"files_found": 42, "total_size": 1000}
-        created = create_scenario({
-            "name": "DeepScan",
-            "steps": [{"type": "deep_scan", "config": {}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "DeepScan",
+                "steps": [{"type": "deep_scan", "config": {}, "enabled": True}],
+            }
+        )
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert result["completed"] == 1
         assert result["step_results"][0]["result"]["files_found"] == 42
 
     def test_generate_report_step_returns_note(self):
         """generate_report step with ImportError should return note."""
-        created = create_scenario({
-            "name": "Report",
-            "steps": [{"type": "generate_report", "config": {}, "enabled": True}],
-        })
+        created = create_scenario(
+            {
+                "name": "Report",
+                "steps": [{"type": "generate_report", "config": {}, "enabled": True}],
+            }
+        )
         # This will try to import report module which may or may not be available
         result = execute_scenario(created["id"], "/fake/catalog.db")
         assert result["completed"] + result["failed"] == 1
@@ -389,6 +415,7 @@ class TestExecuteStepTypes:
     @patch("godmode_media_library.scenarios.deep_scan", create=True)
     def test_deep_scan_step_direct(self, mock_scan):
         from godmode_media_library.scenarios import _execute_step
+
         mock_result = MagicMock()
         mock_result.files_found = 10
         mock_result.total_size = 5000
@@ -399,6 +426,7 @@ class TestExecuteStepTypes:
 
     def test_cloud_connect_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         mock_remotes = [MagicMock(name="gdrive"), MagicMock(name="s3")]
         for r in mock_remotes:
             r.name = r._mock_name
@@ -408,6 +436,7 @@ class TestExecuteStepTypes:
 
     def test_cloud_download_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         mock_remotes = [{"name": "r1", "mounted": True}, {"name": "r2"}]
         cloud_mod = MagicMock()
         cloud_mod.list_remotes.return_value = mock_remotes
@@ -417,6 +446,7 @@ class TestExecuteStepTypes:
 
     def test_app_mine_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         mock_result = MagicMock(files_found=5, total_size=1000)
         recovery_mod = MagicMock()
         recovery_mod.mine_app_media.return_value = [mock_result]
@@ -426,6 +456,7 @@ class TestExecuteStepTypes:
 
     def test_signal_decrypt_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         recovery_mod = MagicMock()
         recovery_mod.decrypt_signal_attachments.return_value = {"decrypted": 3, "total_size": 500, "errors": []}
         with patch.dict("sys.modules", {"godmode_media_library.recovery": recovery_mod}):
@@ -434,6 +465,7 @@ class TestExecuteStepTypes:
 
     def test_integrity_check_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         mock_result = MagicMock(total_checked=100, corrupted=2, healthy=98)
         recovery_mod = MagicMock()
         recovery_mod.check_integrity.return_value = mock_result
@@ -443,21 +475,26 @@ class TestExecuteStepTypes:
 
     def test_scan_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         mock_stats = MagicMock(total_files=50)
         mock_stats.files_scanned = 50  # The actual attribute used
         scanner_mod = MagicMock()
         scanner_mod.incremental_scan.return_value = mock_stats
         config_mod = MagicMock()
         config_mod.load_config.return_value = MagicMock(prefer_roots=["/tmp"])
-        with patch.dict("sys.modules", {
-            "godmode_media_library.scanner": scanner_mod,
-            "godmode_media_library.config": config_mod,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "godmode_media_library.scanner": scanner_mod,
+                "godmode_media_library.config": config_mod,
+            },
+        ):
             result = _execute_step("scan", {"workers": 2}, "/fake/catalog.db", None)
         assert "scanned" in result
 
     def test_dedup_resolve_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         mock_cat = MagicMock()
         mock_cat.query_duplicates.return_value = [("g1", [1, 2]), ("g2", [3])]
         with patch("godmode_media_library.scenarios.Catalog", return_value=mock_cat, create=True):
@@ -467,6 +504,7 @@ class TestExecuteStepTypes:
 
     def test_quarantine_cleanup_step_no_old(self):
         from godmode_media_library.scenarios import _execute_step
+
         recovery_mod = MagicMock()
         recovery_mod.list_quarantine.return_value = []
         with patch.dict("sys.modules", {"godmode_media_library.recovery": recovery_mod}):
@@ -475,20 +513,25 @@ class TestExecuteStepTypes:
 
     def test_metadata_enrich_step(self):
         from godmode_media_library.scenarios import _execute_step
+
         mock_cat = MagicMock()
         exiftool_mod = MagicMock()
         exiftool_mod.extract_all_metadata.return_value = {"extracted": 15}
         catalog_mod = MagicMock()
         catalog_mod.Catalog.return_value = mock_cat
-        with patch.dict("sys.modules", {
-            "godmode_media_library.catalog": catalog_mod,
-            "godmode_media_library.exiftool_extract": exiftool_mod,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "godmode_media_library.catalog": catalog_mod,
+                "godmode_media_library.exiftool_extract": exiftool_mod,
+            },
+        ):
             result = _execute_step("metadata_enrich", {}, "/fake/catalog.db", None)
         assert result["enriched"] == 15
 
     def test_quality_analyze_step_import_error(self):
         from godmode_media_library.scenarios import _execute_step
+
         catalog_mod = MagicMock()
         with patch.dict("sys.modules", {"godmode_media_library.catalog": catalog_mod}):
             with patch.dict("sys.modules", {"godmode_media_library.quality": None}):
@@ -511,10 +554,12 @@ class TestVolumeTriggers:
 
     def test_check_volume_triggers_dot_dirs_ignored(self, tmp_path, monkeypatch):
         """Hidden volume directories (starting with .) are ignored."""
-        create_scenario({
-            "name": "HiddenVol",
-            "trigger": {"type": "volume_mount", "volume_name": ".hidden", "schedule_cron": ""},
-        })
+        create_scenario(
+            {
+                "name": "HiddenVol",
+                "trigger": {"type": "volume_mount", "volume_name": ".hidden", "schedule_cron": ""},
+            }
+        )
         with patch("godmode_media_library.scenarios.Path") as mock_path:
             mock_volumes_dir = MagicMock()
             mock_volumes_dir.exists.return_value = True
@@ -528,14 +573,20 @@ class TestVolumeTriggers:
         assert result == []
 
     def test_check_volume_triggers_with_match(self, tmp_path, monkeypatch):
-        create_scenario({
-            "name": "USB Trigger",
-            "trigger": {"type": "volume_mount", "volume_name": "MYUSB", "schedule_cron": ""},
-        })
+        create_scenario(
+            {
+                "name": "USB Trigger",
+                "trigger": {"type": "volume_mount", "volume_name": "MYUSB", "schedule_cron": ""},
+            }
+        )
         fake_volumes = tmp_path / "Volumes"
         fake_volumes.mkdir()
         (fake_volumes / "MYUSB").mkdir()
-        monkeypatch.setattr(scenarios, "Path", lambda p: Path(str(p).replace("/Volumes", str(fake_volumes))) if p == "/Volumes" else Path(p))
+        monkeypatch.setattr(
+            scenarios,
+            "Path",
+            lambda p: Path(str(p).replace("/Volumes", str(fake_volumes))) if p == "/Volumes" else Path(p),
+        )
         # Directly call with patched Path for /Volumes
         with patch("godmode_media_library.scenarios.Path") as mock_path:
             mock_volumes_dir = MagicMock()

@@ -7,7 +7,6 @@ key read endpoints, path safety on delete, input validation, security headers.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -127,9 +126,7 @@ class TestAuth:
         assert "Invalid or missing" in resp.json()["detail"]
 
     def test_wrong_token_returns_401(self, client_no_token):
-        resp = client_no_token.get(
-            "/api/stats", headers={"Authorization": "Bearer wrong"}
-        )
+        resp = client_no_token.get("/api/stats", headers={"Authorization": "Bearer wrong"})
         assert resp.status_code == 401
 
     def test_valid_bearer_token(self, authed_client):
@@ -137,9 +134,7 @@ class TestAuth:
         assert resp.status_code == 200
 
     def test_valid_x_api_token_header(self, client_no_token):
-        resp = client_no_token.get(
-            "/api/stats", headers={"X-API-Token": "test-secret-token"}
-        )
+        resp = client_no_token.get("/api/stats", headers={"X-API-Token": "test-secret-token"})
         assert resp.status_code == 200
 
     def test_valid_query_param_token(self, client_no_token):
@@ -154,24 +149,18 @@ class TestAuth:
     def test_auth_failure_rate_limit_after_10(self, client_no_token):
         """After 10 bad attempts within the window the IP gets 429."""
         for _ in range(10):
-            resp = client_no_token.get(
-                "/api/stats", headers={"Authorization": "Bearer bad"}
-            )
+            resp = client_no_token.get("/api/stats", headers={"Authorization": "Bearer bad"})
             assert resp.status_code == 401
 
         # 11th attempt should be rate-limited
-        resp = client_no_token.get(
-            "/api/stats", headers={"Authorization": "Bearer bad"}
-        )
+        resp = client_no_token.get("/api/stats", headers={"Authorization": "Bearer bad"})
         assert resp.status_code == 429
         assert "Retry-After" in resp.headers
 
     def test_valid_token_works_after_some_failures(self, client_no_token):
         """A few failures below the threshold don't block valid requests."""
         for _ in range(5):
-            client_no_token.get(
-                "/api/stats", headers={"Authorization": "Bearer x"}
-            )
+            client_no_token.get("/api/stats", headers={"Authorization": "Bearer x"})
         resp = client_no_token.get(
             "/api/stats",
             headers={"Authorization": "Bearer test-secret-token"},
@@ -316,9 +305,7 @@ class TestDeleteSafety:
         assert data["skipped"] == 1
 
     def test_delete_null_byte_path(self, client):
-        resp = client.post(
-            "/api/files/delete", json={"paths": ["/tmp/evil\x00.txt"]}
-        )
+        resp = client.post("/api/files/delete", json={"paths": ["/tmp/evil\x00.txt"]})
         data = resp.json()
         assert data["deleted"] == 0
         assert data["skipped"] >= 1
@@ -871,9 +858,7 @@ class TestTags:
         files_resp = client.get("/api/files")
         path = files_resp.json()["files"][0]["path"]
         client.post("/api/files/tag", json={"paths": [path], "tag_id": tag_id})
-        resp = client.request(
-            "DELETE", "/api/files/tag", json={"paths": [path], "tag_id": tag_id}
-        )
+        resp = client.request("DELETE", "/api/files/tag", json={"paths": [path], "tag_id": tag_id})
         assert resp.status_code == 200
 
 
@@ -923,9 +908,7 @@ class TestRootsManagement:
         assert resp.json()["removed"] is True
 
     def test_save_roots_filters_nonexistent(self, client):
-        resp = client.post(
-            "/api/roots", json={"roots": ["/nonexistent_path_xyz_123"]}
-        )
+        resp = client.post("/api/roots", json={"roots": ["/nonexistent_path_xyz_123"]})
         assert resp.status_code == 200
         # Nonexistent path should be filtered out
         assert len(resp.json()["roots"]) == 0

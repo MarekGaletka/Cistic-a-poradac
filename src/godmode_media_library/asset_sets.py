@@ -4,7 +4,28 @@ from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
-IMAGE_EXTS = {"heic", "heif", "jpg", "jpeg", "png", "tif", "tiff", "bmp", "gif", "webp", "dng", "cr2", "cr3", "nef", "arw", "raw", "orf", "rw2", "raf", "svg"}
+IMAGE_EXTS = {
+    "heic",
+    "heif",
+    "jpg",
+    "jpeg",
+    "png",
+    "tif",
+    "tiff",
+    "bmp",
+    "gif",
+    "webp",
+    "dng",
+    "cr2",
+    "cr3",
+    "nef",
+    "arw",
+    "raw",
+    "orf",
+    "rw2",
+    "raf",
+    "svg",
+}
 # Dot-prefixed variant for suffix matching (e.g. Path.suffix == ".jpg")
 IMAGE_EXTS_DOTTED = {"." + e for e in IMAGE_EXTS}
 # Subset of IMAGE_EXTS that Pillow can decode natively (or via pillow-heif).

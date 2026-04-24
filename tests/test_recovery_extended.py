@@ -4,10 +4,10 @@ Covers: _validate_quarantine_path, _sanitize_subprocess_path, _categorize_ext,
 list_quarantine, restore_from_quarantine, delete_from_quarantine,
 QuarantineEntry, DeepScanResult, IntegrityResult, PhotoRecResult data classes.
 """
+
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -23,15 +23,17 @@ from godmode_media_library.recovery import (
     restore_from_quarantine,
 )
 
-
 # ── Data classes ───────────────────────────────────────────────────
 
 
 class TestDataClasses:
     def test_quarantine_entry(self):
         e = QuarantineEntry(
-            path="/q/photo.jpg", original_path="/orig/photo.jpg",
-            size=1024, ext=".jpg", quarantine_date="2024-01-01",
+            path="/q/photo.jpg",
+            original_path="/orig/photo.jpg",
+            size=1024,
+            ext=".jpg",
+            quarantine_date="2024-01-01",
             category="image",
         )
         assert e.size == 1024
@@ -158,9 +160,7 @@ class TestRestoreFromQuarantine:
         restore_dir = tmp_path / "restored"
         restore_dir.mkdir()
 
-        result = restore_from_quarantine(
-            paths=[str(f)], quarantine_root=q, restore_to=str(restore_dir)
-        )
+        result = restore_from_quarantine(paths=[str(f)], quarantine_root=q, restore_to=str(restore_dir))
         assert result["restored"] == 1
         assert (restore_dir / "photo.jpg").exists()
         assert not f.exists()
@@ -182,18 +182,14 @@ class TestRestoreFromQuarantine:
     def test_restore_nonexistent_file(self, tmp_path):
         q = tmp_path / "quarantine"
         q.mkdir()
-        result = restore_from_quarantine(
-            paths=[str(q / "nonexistent.jpg")], quarantine_root=q
-        )
+        result = restore_from_quarantine(paths=[str(q / "nonexistent.jpg")], quarantine_root=q)
         assert result["restored"] == 0
         assert len(result["errors"]) == 1
 
     def test_restore_path_traversal(self, tmp_path):
         q = tmp_path / "quarantine"
         q.mkdir()
-        result = restore_from_quarantine(
-            paths=[str(tmp_path / "escape.txt")], quarantine_root=q
-        )
+        result = restore_from_quarantine(paths=[str(tmp_path / "escape.txt")], quarantine_root=q)
         assert result["restored"] == 0
         assert any("Path traversal" in e for e in result["errors"])
 
@@ -219,9 +215,7 @@ class TestRestoreFromQuarantine:
         f = q / "photo.jpg"
         f.write_bytes(b"quarantined")
 
-        result = restore_from_quarantine(
-            paths=[str(f)], quarantine_root=q, restore_to=str(restore_dir)
-        )
+        result = restore_from_quarantine(paths=[str(f)], quarantine_root=q, restore_to=str(restore_dir))
         assert result["restored"] == 1
         # Original should remain, restored should have suffix
         assert (restore_dir / "photo.jpg").read_bytes() == b"existing"
@@ -243,18 +237,14 @@ class TestDeleteFromQuarantine:
     def test_delete_nonexistent(self, tmp_path):
         q = tmp_path / "quarantine"
         q.mkdir()
-        result = delete_from_quarantine(
-            paths=[str(q / "nonexistent.jpg")], quarantine_root=q
-        )
+        result = delete_from_quarantine(paths=[str(q / "nonexistent.jpg")], quarantine_root=q)
         assert result["deleted"] == 0
         assert len(result["errors"]) == 1
 
     def test_delete_path_traversal(self, tmp_path):
         q = tmp_path / "quarantine"
         q.mkdir()
-        result = delete_from_quarantine(
-            paths=[str(tmp_path / "escape.txt")], quarantine_root=q
-        )
+        result = delete_from_quarantine(paths=[str(tmp_path / "escape.txt")], quarantine_root=q)
         assert result["deleted"] == 0
 
 
@@ -264,6 +254,7 @@ class TestDeleteFromQuarantine:
 class TestDetectTypeByMagic:
     def test_jpeg(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 28)
         result = _detect_type_by_magic(str(f))
@@ -272,6 +263,7 @@ class TestDetectTypeByMagic:
 
     def test_png(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
         result = _detect_type_by_magic(str(f))
@@ -280,6 +272,7 @@ class TestDetectTypeByMagic:
 
     def test_ftyp_mp4(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         # ftyp box: size(4) + "ftyp" + brand
         f.write_bytes(b"\x00\x00\x00\x14" + b"ftyp" + b"isom" + b"\x00" * 20)
@@ -289,6 +282,7 @@ class TestDetectTypeByMagic:
 
     def test_ftyp_quicktime(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"\x00\x00\x00\x14" + b"ftyp" + b"qt  " + b"\x00" * 20)
         result = _detect_type_by_magic(str(f))
@@ -297,6 +291,7 @@ class TestDetectTypeByMagic:
 
     def test_riff_webp(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 20)
         result = _detect_type_by_magic(str(f))
@@ -305,6 +300,7 @@ class TestDetectTypeByMagic:
 
     def test_riff_wav(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"RIFF\x00\x00\x00\x00WAVE" + b"\x00" * 20)
         result = _detect_type_by_magic(str(f))
@@ -313,6 +309,7 @@ class TestDetectTypeByMagic:
 
     def test_riff_avi(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"RIFF\x00\x00\x00\x00AVI " + b"\x00" * 20)
         result = _detect_type_by_magic(str(f))
@@ -321,18 +318,21 @@ class TestDetectTypeByMagic:
 
     def test_too_small(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"\x00\x01")
         assert _detect_type_by_magic(str(f)) is None
 
     def test_unknown_format(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         f = tmp_path / "file"
         f.write_bytes(b"\x00" * 32)
         assert _detect_type_by_magic(str(f)) is None
 
     def test_nonexistent_file(self, tmp_path):
         from godmode_media_library.recovery import _detect_type_by_magic
+
         assert _detect_type_by_magic(str(tmp_path / "nofile")) is None
 
 
@@ -342,20 +342,24 @@ class TestDetectTypeByMagic:
 class TestCategorizeExt:
     def test_image(self):
         from godmode_media_library.recovery import _categorize_ext
+
         assert _categorize_ext(".jpg") == "image"
         assert _categorize_ext(".png") == "image"
 
     def test_video(self):
         from godmode_media_library.recovery import _categorize_ext
+
         assert _categorize_ext(".mp4") == "video"
         assert _categorize_ext(".mov") == "video"
 
     def test_audio(self):
         from godmode_media_library.recovery import _categorize_ext
+
         assert _categorize_ext(".mp3") == "audio"
 
     def test_other(self):
         from godmode_media_library.recovery import _categorize_ext
+
         assert _categorize_ext(".xyz") == "other"
 
 
@@ -365,12 +369,14 @@ class TestCategorizeExt:
 class TestCheckJpeg:
     def test_valid_jpeg(self, tmp_path):
         from godmode_media_library.recovery import _check_jpeg
+
         f = tmp_path / "photo.jpg"
         f.write_bytes(b"\xff\xd8" + b"\x00" * 100 + b"\xff\xd9")
         assert _check_jpeg(f) is None
 
     def test_truncated_jpeg(self, tmp_path):
         from godmode_media_library.recovery import _check_jpeg
+
         f = tmp_path / "photo.jpg"
         f.write_bytes(b"\xff\xd8" + b"\x00" * 100)  # missing EOI
         result = _check_jpeg(f)
@@ -380,6 +386,7 @@ class TestCheckJpeg:
 
     def test_invalid_header(self, tmp_path):
         from godmode_media_library.recovery import _check_jpeg
+
         f = tmp_path / "photo.jpg"
         f.write_bytes(b"\x00\x00" + b"\x00" * 100)
         result = _check_jpeg(f)
@@ -387,6 +394,7 @@ class TestCheckJpeg:
 
     def test_too_small(self, tmp_path):
         from godmode_media_library.recovery import _check_jpeg
+
         f = tmp_path / "photo.jpg"
         f.write_bytes(b"\xff\xd8")
         result = _check_jpeg(f)
@@ -399,12 +407,14 @@ class TestCheckJpeg:
 class TestCheckPng:
     def test_valid_png(self, tmp_path):
         from godmode_media_library.recovery import _check_png
+
         f = tmp_path / "image.png"
         f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         assert _check_png(f) is None
 
     def test_invalid_png(self, tmp_path):
         from godmode_media_library.recovery import _check_png
+
         f = tmp_path / "image.png"
         f.write_bytes(b"\x00" * 100)
         result = _check_png(f)
@@ -412,6 +422,7 @@ class TestCheckPng:
 
     def test_too_small_png(self, tmp_path):
         from godmode_media_library.recovery import _check_png
+
         f = tmp_path / "image.png"
         f.write_bytes(b"\x89PNG")
         result = _check_png(f)
@@ -424,18 +435,21 @@ class TestCheckPng:
 class TestCheckGif:
     def test_valid_gif87(self, tmp_path):
         from godmode_media_library.recovery import _check_gif
+
         f = tmp_path / "image.gif"
         f.write_bytes(b"GIF87a" + b"\x00" * 100)
         assert _check_gif(f) is None
 
     def test_valid_gif89(self, tmp_path):
         from godmode_media_library.recovery import _check_gif
+
         f = tmp_path / "image.gif"
         f.write_bytes(b"GIF89a" + b"\x00" * 100)
         assert _check_gif(f) is None
 
     def test_invalid_gif(self, tmp_path):
         from godmode_media_library.recovery import _check_gif
+
         f = tmp_path / "image.gif"
         f.write_bytes(b"NOTGIF" + b"\x00" * 100)
         result = _check_gif(f)
@@ -448,7 +462,9 @@ class TestCheckGif:
 class TestCheckMp4:
     def test_valid_mp4_with_moov(self, tmp_path):
         import struct
+
         from godmode_media_library.recovery import _check_mp4
+
         f = tmp_path / "video.mp4"
         # Build: ftyp box + moov box
         ftyp = struct.pack(">I", 16) + b"ftyp" + b"isom" + b"\x00" * 4
@@ -458,7 +474,9 @@ class TestCheckMp4:
 
     def test_mp4_missing_moov(self, tmp_path):
         import struct
+
         from godmode_media_library.recovery import _check_mp4
+
         f = tmp_path / "video.mp4"
         ftyp = struct.pack(">I", 16) + b"ftyp" + b"isom" + b"\x00" * 4
         mdat = struct.pack(">I", 16) + b"mdat" + b"\x00" * 8
@@ -470,6 +488,7 @@ class TestCheckMp4:
 
     def test_mp4_invalid_header(self, tmp_path):
         from godmode_media_library.recovery import _check_mp4
+
         f = tmp_path / "video.mp4"
         f.write_bytes(b"\x00" * 4 + b"XXXX" + b"\x00" * 100)
         result = _check_mp4(f)
@@ -478,6 +497,7 @@ class TestCheckMp4:
 
     def test_mp4_too_small(self, tmp_path):
         from godmode_media_library.recovery import _check_mp4
+
         f = tmp_path / "video.mp4"
         f.write_bytes(b"\x00\x00\x00")
         result = _check_mp4(f)
@@ -490,7 +510,9 @@ class TestCheckMp4:
 class TestCheckVideoFfprobe:
     def test_ffprobe_not_found(self, tmp_path):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _check_video_ffprobe
+
         f = tmp_path / "video.webm"
         f.write_bytes(b"\x1a\x45\xdf\xa3" + b"\x00" * 100)
         with patch("subprocess.run", side_effect=FileNotFoundError):
@@ -500,7 +522,9 @@ class TestCheckVideoFfprobe:
 
     def test_ffprobe_error(self, tmp_path):
         from unittest.mock import MagicMock, patch
+
         from godmode_media_library.recovery import _check_video_ffprobe
+
         f = tmp_path / "video.webm"
         f.write_bytes(b"\x00" * 100)
         mock_result = MagicMock()
@@ -515,7 +539,9 @@ class TestCheckVideoFfprobe:
     def test_ffprobe_timeout(self, tmp_path):
         import subprocess
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _check_video_ffprobe
+
         f = tmp_path / "video.webm"
         f.write_bytes(b"\x00" * 100)
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 30)):
@@ -531,6 +557,7 @@ class TestCheckVideoFfprobe:
 class TestCheckIntegrity:
     def test_with_paths(self, tmp_path):
         from godmode_media_library.recovery import check_integrity
+
         # Create a valid JPEG
         jpg = tmp_path / "ok.jpg"
         jpg.write_bytes(b"\xff\xd8" + b"\x00" * 100 + b"\xff\xd9")
@@ -545,12 +572,14 @@ class TestCheckIntegrity:
 
     def test_missing_file(self, tmp_path):
         from godmode_media_library.recovery import check_integrity
+
         result = check_integrity(paths=[str(tmp_path / "missing.jpg")])
         assert result.corrupted == 1
         assert result.errors[0]["issue"] == "missing"
 
     def test_with_progress_fn(self, tmp_path):
         from godmode_media_library.recovery import check_integrity
+
         jpg = tmp_path / "ok.jpg"
         jpg.write_bytes(b"\xff\xd8\x00\x00\xff\xd9")
         progress_calls = []
@@ -560,6 +589,7 @@ class TestCheckIntegrity:
 
     def test_png_check(self, tmp_path):
         from godmode_media_library.recovery import check_integrity
+
         f = tmp_path / "image.png"
         f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         result = check_integrity(paths=[str(f)])
@@ -567,6 +597,7 @@ class TestCheckIntegrity:
 
     def test_gif_check(self, tmp_path):
         from godmode_media_library.recovery import check_integrity
+
         f = tmp_path / "image.gif"
         f.write_bytes(b"GIF89a" + b"\x00" * 100)
         result = check_integrity(paths=[str(f)])
@@ -579,6 +610,7 @@ class TestCheckIntegrity:
 class TestDeepScan:
     def test_scan_with_roots(self, tmp_path):
         from godmode_media_library.recovery import deep_scan
+
         media_dir = tmp_path / "media"
         media_dir.mkdir()
         (media_dir / "photo.jpg").write_bytes(b"\xff\xd8" + b"\x00" * 200 + b"\xff\xd9")
@@ -590,6 +622,7 @@ class TestDeepScan:
 
     def test_scan_empty_dir(self, tmp_path):
         from godmode_media_library.recovery import deep_scan
+
         empty = tmp_path / "empty"
         empty.mkdir()
         result = deep_scan(roots=[str(empty)])
@@ -597,20 +630,23 @@ class TestDeepScan:
 
     def test_scan_nonexistent_root(self, tmp_path):
         from godmode_media_library.recovery import deep_scan
+
         result = deep_scan(roots=[str(tmp_path / "nonexistent")])
         assert result.locations_scanned == 0
 
     def test_scan_with_progress(self, tmp_path):
         from godmode_media_library.recovery import deep_scan
+
         d = tmp_path / "scan"
         d.mkdir()
         (d / "video.mp4").write_bytes(b"\x00" * 200)
         calls = []
-        result = deep_scan(roots=[str(d)], progress_fn=calls.append)
+        deep_scan(roots=[str(d)], progress_fn=calls.append)
         assert len(calls) >= 1  # At least start + complete
 
     def test_scan_skips_tiny_files(self, tmp_path):
         from godmode_media_library.recovery import deep_scan
+
         d = tmp_path / "scan"
         d.mkdir()
         (d / "tiny.jpg").write_bytes(b"\xff\xd8")  # < 100 bytes
@@ -624,6 +660,7 @@ class TestDeepScan:
 class TestRecoverFiles:
     def test_basic_recovery(self, tmp_path):
         from godmode_media_library.recovery import recover_files
+
         src = tmp_path / "source"
         src.mkdir()
         (src / "photo.jpg").write_bytes(b"JPEG data")
@@ -636,6 +673,7 @@ class TestRecoverFiles:
 
     def test_collision_handling(self, tmp_path):
         from godmode_media_library.recovery import recover_files
+
         src = tmp_path / "source"
         src.mkdir()
         (src / "photo.jpg").write_bytes(b"new data")
@@ -649,6 +687,7 @@ class TestRecoverFiles:
 
     def test_missing_source(self, tmp_path):
         from godmode_media_library.recovery import recover_files
+
         dest = tmp_path / "dest"
         dest.mkdir()
         result = recover_files([str(tmp_path / "missing.jpg")], str(dest))
@@ -657,6 +696,7 @@ class TestRecoverFiles:
 
     def test_delete_source(self, tmp_path):
         from godmode_media_library.recovery import recover_files
+
         src = tmp_path / "source"
         src.mkdir()
         f = src / "photo.jpg"
@@ -675,6 +715,7 @@ class TestRecoverFiles:
 class TestMineAppMedia:
     def test_mine_specific_app(self, tmp_path):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import mine_app_media
 
         # Mock _APP_SOURCES with a test source pointing to tmp_path
@@ -697,6 +738,7 @@ class TestMineAppMedia:
 
     def test_mine_encrypted_app(self, tmp_path):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import mine_app_media
 
         test_source = {
@@ -718,6 +760,7 @@ class TestMineAppMedia:
 
     def test_mine_nonexistent_path(self, tmp_path):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import mine_app_media
 
         test_source = {
@@ -736,6 +779,7 @@ class TestMineAppMedia:
 
     def test_mine_with_progress(self, tmp_path):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import mine_app_media
 
         test_source = {
@@ -759,33 +803,38 @@ class TestMineAppMedia:
 class TestSignalHelpers:
     def test_get_signal_key_not_found(self):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _get_signal_key
+
         with patch("godmode_media_library.recovery.subprocess.run", side_effect=FileNotFoundError):
             assert _get_signal_key() is None
 
     def test_find_sqlcipher_bin_default(self):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _find_sqlcipher_bin
+
         with patch("shutil.which", return_value="/usr/bin/sqlcipher"):
             result = _find_sqlcipher_bin()
         assert result == "/usr/bin/sqlcipher"
 
     def test_find_sqlcipher_bin_homebrew(self):
-        import os
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _find_sqlcipher_bin
-        with patch("shutil.which", return_value=None):
-            with patch("os.path.isfile", return_value=True):
-                with patch("os.access", return_value=True):
-                    result = _find_sqlcipher_bin()
+
+        with patch("shutil.which", return_value=None), patch("os.path.isfile", return_value=True):
+            with patch("os.access", return_value=True):
+                result = _find_sqlcipher_bin()
         assert "sqlcipher" in result
 
     def test_find_sqlcipher_bin_fallback(self):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _find_sqlcipher_bin
-        with patch("shutil.which", return_value=None):
-            with patch("os.path.isfile", return_value=False):
-                result = _find_sqlcipher_bin()
+
+        with patch("shutil.which", return_value=None), patch("os.path.isfile", return_value=False):
+            result = _find_sqlcipher_bin()
         assert result == "sqlcipher"
 
 
@@ -797,7 +846,9 @@ class TestRepairJpeg:
         """When PIL is not installed, _repair_jpeg should return failure."""
         import sys
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _repair_jpeg
+
         f = tmp_path / "photo.jpg"
         f.write_bytes(b"\xff\xd8" + b"\x00" * 100)
         # _repair_jpeg has a try/except around PIL import
@@ -810,6 +861,7 @@ class TestRepairJpeg:
     def test_repair_jpeg_valid_file(self, tmp_path):
         """Repair a valid JPEG that has EOI — should succeed if PIL is available."""
         from godmode_media_library.recovery import _repair_jpeg
+
         f = tmp_path / "photo.jpg"
         # Minimal valid JPEG with EOI marker
         f.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 100 + b"\xff\xd9")
@@ -825,7 +877,9 @@ class TestRepairJpeg:
 class TestRepairVideo:
     def test_repair_no_ffmpeg(self, tmp_path):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import _repair_video
+
         f = tmp_path / "video.mp4"
         f.write_bytes(b"\x00" * 100)
         with patch("subprocess.run", side_effect=FileNotFoundError):
@@ -837,7 +891,9 @@ class TestRepairVideo:
     def test_repair_ffmpeg_timeout(self, tmp_path):
         import subprocess as _sp
         from unittest.mock import MagicMock, patch
+
         from godmode_media_library.recovery import _repair_video
+
         f = tmp_path / "video.mp4"
         f.write_bytes(b"\x00" * 100)
         call_count = [0]
@@ -848,9 +904,8 @@ class TestRepairVideo:
                 return MagicMock(returncode=0)  # ffmpeg -version succeeds
             raise _sp.TimeoutExpired("cmd", 300)
 
-        with patch("subprocess.run", side_effect=mock_run):
-            with patch("godmode_media_library.deps.resolve_bin", return_value="ffmpeg"):
-                result = _repair_video(f)
+        with patch("subprocess.run", side_effect=mock_run), patch("godmode_media_library.deps.resolve_bin", return_value="ffmpeg"):
+            result = _repair_video(f)
         assert result["success"] is False
         assert "timeout" in result["error"].lower()
 
@@ -861,7 +916,9 @@ class TestRepairVideo:
 class TestCheckSignalDecrypt:
     def test_no_db(self):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import check_signal_decrypt
+
         with patch("godmode_media_library.recovery._SIGNAL_DB_PATH") as mock_path:
             mock_path.exists.return_value = False
             with patch("godmode_media_library.recovery._SIGNAL_ATTACH_DIR") as mock_att:
@@ -882,7 +939,9 @@ class TestCheckSignalDecrypt:
 class TestDecryptSignalAttachments:
     def test_no_key(self, tmp_path):
         from unittest.mock import patch
+
         from godmode_media_library.recovery import decrypt_signal_attachments
+
         with patch("godmode_media_library.recovery._get_signal_key", return_value=None):
             result = decrypt_signal_attachments(str(tmp_path))
         assert result["decrypted"] == 0
@@ -890,7 +949,9 @@ class TestDecryptSignalAttachments:
 
     def test_no_attachments(self, tmp_path):
         from unittest.mock import MagicMock, patch
+
         from godmode_media_library.recovery import decrypt_signal_attachments
+
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.__iter__ = MagicMock(return_value=iter([]))

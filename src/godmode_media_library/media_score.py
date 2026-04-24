@@ -210,8 +210,9 @@ def _score_camera(make: str | None, model: str | None) -> float:
 
     # Check exact and prefix matches with word boundary
     import re
+
     for key, score in _CAMERA_TIERS.items():
-        if re.search(r'(?<!\S)' + re.escape(key) + r'(?:\s|$)', identifier):
+        if re.search(r"(?<!\S)" + re.escape(key) + r"(?:\s|$)", identifier):
             return score
 
     # Known brand but unknown model
@@ -418,6 +419,7 @@ def score_catalog(
 
     # Score files using a bounded heap
     import heapq
+
     heap: list[tuple[float, int, MediaScore]] = []  # (score, tiebreak, MediaScore)
     tiebreak = 0
     for row in cursor:

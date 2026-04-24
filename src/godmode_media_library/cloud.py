@@ -212,10 +212,7 @@ def _cleanup_stale_oauth() -> None:
     import time as _time
 
     now = _time.monotonic()
-    stale = [
-        name for name, (start, proc) in _oauth_processes.items()
-        if (now - start) > _OAUTH_TIMEOUT
-    ]
+    stale = [name for name, (start, proc) in _oauth_processes.items() if (now - start) > _OAUTH_TIMEOUT]
     for name in stale:
         _, proc = _oauth_processes.pop(name)
         with contextlib.suppress(Exception):
@@ -1333,7 +1330,7 @@ def rclone_bulk_copy(
     if not check_rclone() or not file_paths:
         return {"success": True, "files_transferred": 0, "bytes": 0, "error": None}
 
-    is_local_source = (not src_remote or src_remote == "local")
+    is_local_source = not src_remote or src_remote == "local"
     if not is_local_source:
         _validate_remote_name(src_remote)
     _validate_remote_name(dst_remote)
@@ -1349,21 +1346,30 @@ def rclone_bulk_copy(
     try:
         source = "/" if is_local_source else f"{src_remote}:"
         cmd = [
-            _rclone_bin(), "copy",
+            _rclone_bin(),
+            "copy",
             source,
             f"{dst_remote}:{dst_base_path}",
-            "--files-from", files_from_path,
-            "--transfers", str(transfers),
-            "--checkers", str(checkers),
+            "--files-from",
+            files_from_path,
+            "--transfers",
+            str(transfers),
+            "--checkers",
+            str(checkers),
             "--no-traverse",
-            "--stats", "2s",
+            "--stats",
+            "2s",
             "--stats-one-line",
             "--use-json-log",
             "-v",
-            "--drive-chunk-size", "256M",
-            "--drive-upload-cutoff", "256M",
-            "--multi-thread-streams", "16",
-            "--buffer-size", "128M",
+            "--drive-chunk-size",
+            "256M",
+            "--drive-upload-cutoff",
+            "256M",
+            "--multi-thread-streams",
+            "16",
+            "--buffer-size",
+            "128M",
             "--fast-list",
             "--size-only",
             "--server-side-across-configs",
@@ -1371,8 +1377,7 @@ def rclone_bulk_copy(
         if bwlimit:
             cmd.extend(["--bwlimit", bwlimit])
 
-        logger.info("bulk_copy: %s → %s:%s (%d files, %d transfers)",
-                     src_remote, dst_remote, dst_base_path, len(file_paths), transfers)
+        logger.info("bulk_copy: %s → %s:%s (%d files, %d transfers)", src_remote, dst_remote, dst_base_path, len(file_paths), transfers)
 
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
@@ -1431,7 +1436,8 @@ def rclone_server_side_move(
         return False
     _validate_remote_name(remote)
     cmd = [
-        _rclone_bin(), "moveto",
+        _rclone_bin(),
+        "moveto",
         f"{remote}:{src_path}",
         f"{remote}:{dst_path}",
     ]
@@ -1497,13 +1503,18 @@ def rclone_copyto(
         "copyto",
         src_path if not src_remote else f"{src_remote}:{src_path}",
         dst_path if not dst_remote else f"{dst_remote}:{dst_path}",
-        "--retries", "3",
-        "--low-level-retries", "10",
+        "--retries",
+        "3",
+        "--low-level-retries",
+        "10",
         "--stats-one-line",
         "-v",
-        "--multi-thread-streams", "4",
-        "--drive-chunk-size", "256M",
-        "--drive-upload-cutoff", "256M",
+        "--multi-thread-streams",
+        "4",
+        "--drive-chunk-size",
+        "256M",
+        "--drive-upload-cutoff",
+        "256M",
         "--server-side-across-configs",
     ]
     if bwlimit:
@@ -1514,8 +1525,8 @@ def rclone_copyto(
     # Stuck-process watchdog: every STALL_CHECK_INTERVAL seconds, verify the
     # rclone process still has TCP connections.  After STALL_CHECKS_BEFORE_KILL
     # consecutive checks with zero TCP, kill it.
-    STALL_CHECK_INTERVAL = 60   # seconds between checks
-    STALL_CHECKS_BEFORE_KILL = 5   # consecutive zero-TCP checks → kill (5 min)
+    STALL_CHECK_INTERVAL = 60  # seconds between checks
+    STALL_CHECKS_BEFORE_KILL = 5  # consecutive zero-TCP checks → kill (5 min)
     MAX_UPLOAD_TIME = max(effective_timeout, 1800)  # at least 30 min per file
 
     try:
@@ -1529,8 +1540,7 @@ def rclone_copyto(
                 proc.kill()
                 proc.wait()
                 logger.warning("rclone PID %d killed: exceeded %ds max upload time", proc.pid, MAX_UPLOAD_TIME)
-                fail = {"success": False, "bytes": 0, "elapsed": elapsed,
-                        "error": f"Exceeded max upload time {MAX_UPLOAD_TIME}s"}
+                fail = {"success": False, "bytes": 0, "elapsed": elapsed, "error": f"Exceeded max upload time {MAX_UPLOAD_TIME}s"}
                 if raise_on_failure:
                     raise RcloneTransferError(fail) from None
                 return fail
@@ -1545,7 +1555,9 @@ def rclone_copyto(
             try:
                 lsof_result = subprocess.run(
                     ["lsof", "-p", str(proc.pid)],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 tcp_count = lsof_result.stdout.lower().count("tcp")
             except Exception:
@@ -1553,15 +1565,17 @@ def rclone_copyto(
 
             if tcp_count == 0:
                 no_tcp_count += 1
-                logger.debug("rclone PID %d: no TCP (%d/%d), elapsed %.0fs",
-                             proc.pid, no_tcp_count, STALL_CHECKS_BEFORE_KILL, elapsed)
+                logger.debug("rclone PID %d: no TCP (%d/%d), elapsed %.0fs", proc.pid, no_tcp_count, STALL_CHECKS_BEFORE_KILL, elapsed)
                 if no_tcp_count >= STALL_CHECKS_BEFORE_KILL:
                     proc.kill()
                     proc.wait()
-                    logger.warning("rclone PID %d killed: stuck (no TCP for %ds)",
-                                   proc.pid, no_tcp_count * STALL_CHECK_INTERVAL)
-                    fail = {"success": False, "bytes": 0, "elapsed": elapsed,
-                            "error": f"Stuck: no TCP for {no_tcp_count * STALL_CHECK_INTERVAL}s"}
+                    logger.warning("rclone PID %d killed: stuck (no TCP for %ds)", proc.pid, no_tcp_count * STALL_CHECK_INTERVAL)
+                    fail = {
+                        "success": False,
+                        "bytes": 0,
+                        "elapsed": elapsed,
+                        "error": f"Stuck: no TCP for {no_tcp_count * STALL_CHECK_INTERVAL}s",
+                    }
                     if raise_on_failure:
                         raise RcloneTransferError(fail) from None
                     return fail
@@ -1570,7 +1584,7 @@ def rclone_copyto(
 
         # Process finished — read output
         elapsed = time.monotonic() - start
-        stdout_bytes, stderr_bytes = proc.stdout.read(), proc.stderr.read()
+        _stdout_bytes, stderr_bytes = proc.stdout.read(), proc.stderr.read()
         stderr = stderr_bytes.decode("utf-8", errors="replace")
 
         if proc.returncode != 0:
@@ -1731,7 +1745,8 @@ def rclone_lsjson_hashes(
         return []
 
     cmd = [
-        _rclone_bin(), "lsjson",
+        _rclone_bin(),
+        "lsjson",
         f"{remote}:{path}",
         "--hash",
         "--no-modtime",
@@ -1753,13 +1768,15 @@ def rclone_lsjson_hashes(
             if entry.get("IsDir"):
                 continue
             hashes = entry.get("Hashes", {})
-            out.append({
-                "name": entry["Name"],
-                "path": entry["Path"],
-                "size": entry["Size"],
-                "md5": hashes.get("md5"),
-                "sha256": hashes.get("sha256"),
-            })
+            out.append(
+                {
+                    "name": entry["Name"],
+                    "path": entry["Path"],
+                    "size": entry["Size"],
+                    "md5": hashes.get("md5"),
+                    "sha256": hashes.get("sha256"),
+                }
+            )
         return out
 
     except subprocess.TimeoutExpired:
@@ -1811,14 +1828,16 @@ def enrich_catalog_hashes(
             md5 = entry.get("md5")
 
             if progress_fn and i % 500 == 0:
-                progress_fn({
-                    "phase": "enriching",
-                    "current": i,
-                    "total": len(entries),
-                    "updated_sha256": updated_sha256,
-                    "updated_md5": updated_md5,
-                    "inserted": inserted,
-                })
+                progress_fn(
+                    {
+                        "phase": "enriching",
+                        "current": i,
+                        "total": len(entries),
+                        "updated_sha256": updated_sha256,
+                        "updated_md5": updated_md5,
+                        "inserted": inserted,
+                    }
+                )
 
             # Try to update existing entry
             row = conn.execute("SELECT id, sha256, md5 FROM files WHERE path = ?", (full_path,)).fetchone()
@@ -1842,6 +1861,7 @@ def enrich_catalog_hashes(
             else:
                 # File not in catalog — insert basic entry
                 from .utils import utc_stamp
+
                 now = utc_stamp()
                 ext = os.path.splitext(entry["name"])[1].lower()
                 conn.execute(
@@ -1987,9 +2007,16 @@ def rclone_dedupe(
                 if size_m:
                     val = float(size_m.group(1))
                     unit = size_m.group(2).lower()
-                    multipliers = {"byte": 1, "bytes": 1, "kb": 1000, "kib": 1024,
-                                   "mb": 1_000_000, "mib": 1_048_576,
-                                   "gb": 1_000_000_000, "gib": 1_073_741_824}
+                    multipliers = {
+                        "byte": 1,
+                        "bytes": 1,
+                        "kb": 1000,
+                        "kib": 1024,
+                        "mb": 1_000_000,
+                        "mib": 1_048_576,
+                        "gb": 1_000_000_000,
+                        "gib": 1_073_741_824,
+                    }
                     bytes_freed += int(val * multipliers.get(unit, 1))
             # Also detect duplicate group headers for progress reporting
             if "duplicate" in line_lower and "files" in line_lower:

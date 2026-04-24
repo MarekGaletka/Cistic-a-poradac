@@ -4,13 +4,11 @@ Covers: ensure_path, iter_files symlink loop detection, safe_stat_birthtime
 OSError path, meaningful_xattr_count OSError, write_tsv, read_tsv_dict,
 path_startswith.
 """
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from godmode_media_library.utils import (
     ensure_dir,
@@ -23,7 +21,6 @@ from godmode_media_library.utils import (
     sha256_file,
     write_tsv,
 )
-
 
 # ── ensure_path ────────────────────────────────────────────────────
 

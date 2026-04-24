@@ -29,7 +29,6 @@ from godmode_media_library.distributed_backup import (
     verify_backups,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -118,8 +117,12 @@ class TestBackupStats:
 class TestBackupManifestEntry:
     def test_creation(self):
         entry = BackupManifestEntry(
-            file_id=42, path="/a.jpg", sha256="abc", size=1024,
-            remote_name="gdrive", remote_path="GML-Backup/2023",
+            file_id=42,
+            path="/a.jpg",
+            sha256="abc",
+            size=1024,
+            remote_name="gdrive",
+            remote_path="GML-Backup/2023",
             backed_up_at="2023-06-15T10:00:00",
         )
         assert entry.file_id == 42
@@ -127,9 +130,15 @@ class TestBackupManifestEntry:
 
     def test_verified_entry(self):
         entry = BackupManifestEntry(
-            file_id=1, path="/a.jpg", sha256="def", size=100,
-            remote_name="s3", remote_path="backup/",
-            backed_up_at="2023-01-01", verified=True, verified_at="2023-02-01",
+            file_id=1,
+            path="/a.jpg",
+            sha256="def",
+            size=100,
+            remote_name="s3",
+            remote_path="backup/",
+            backed_up_at="2023-01-01",
+            verified=True,
+            verified_at="2023-02-01",
         )
         assert entry.verified is True
 
@@ -142,25 +151,34 @@ class TestBackupManifestEntry:
 class TestComputeFilePriority:
     def test_raw_photo_with_gps_is_high_priority(self):
         row = {
-            "ext": "cr2", "metadata_richness": 0.9,
-            "gps_latitude": 50.0, "gps_longitude": 14.0,
-            "date_original": "2023-06-15", "quality_category": "",
+            "ext": "cr2",
+            "metadata_richness": 0.9,
+            "gps_latitude": 50.0,
+            "gps_longitude": 14.0,
+            "date_original": "2023-06-15",
+            "quality_category": "",
         }
         assert _compute_file_priority(row) < 50
 
     def test_screenshot_is_low_priority(self):
         row = {
-            "ext": "png", "metadata_richness": 0.0,
-            "gps_latitude": None, "gps_longitude": None,
-            "date_original": None, "quality_category": "screenshot",
+            "ext": "png",
+            "metadata_richness": 0.0,
+            "gps_latitude": None,
+            "gps_longitude": None,
+            "date_original": None,
+            "quality_category": "screenshot",
         }
         assert _compute_file_priority(row) >= 300
 
     def test_blurry_photo_penalized(self):
         row = {
-            "ext": "jpg", "metadata_richness": 0.1,
-            "gps_latitude": None, "gps_longitude": None,
-            "date_original": None, "quality_category": "blurry",
+            "ext": "jpg",
+            "metadata_richness": 0.1,
+            "gps_latitude": None,
+            "gps_longitude": None,
+            "date_original": None,
+            "quality_category": "blurry",
         }
         assert _compute_file_priority(row) > 100
 
@@ -169,9 +187,12 @@ class TestComputeFilePriority:
 
     def test_meme_is_low_priority(self):
         row = {
-            "ext": "jpg", "metadata_richness": 0.0,
-            "gps_latitude": None, "gps_longitude": None,
-            "date_original": None, "quality_category": "meme",
+            "ext": "jpg",
+            "metadata_richness": 0.0,
+            "gps_latitude": None,
+            "gps_longitude": None,
+            "date_original": None,
+            "quality_category": "meme",
         }
         assert _compute_file_priority(row) >= 250
 
@@ -197,9 +218,7 @@ class TestEnsureBackupTables:
     def test_creates_tables(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
         # Verify tables exist
-        tables = mock_catalog.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        tables = mock_catalog.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         table_names = {t[0] for t in tables}
         assert "backup_targets" in table_names
         assert "backup_manifest" in table_names
@@ -237,9 +256,7 @@ class TestTargetManagement:
 
     def test_set_target_enabled(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
-        mock_catalog.conn.execute(
-            "INSERT INTO backup_targets (remote_name) VALUES (?)", ("gdrive",)
-        )
+        mock_catalog.conn.execute("INSERT INTO backup_targets (remote_name) VALUES (?)", ("gdrive",))
         mock_catalog.conn.commit()
 
         set_target_enabled(mock_catalog, "gdrive", False)
@@ -252,9 +269,7 @@ class TestTargetManagement:
 
     def test_set_target_priority(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
-        mock_catalog.conn.execute(
-            "INSERT INTO backup_targets (remote_name) VALUES (?)", ("gdrive",)
-        )
+        mock_catalog.conn.execute("INSERT INTO backup_targets (remote_name) VALUES (?)", ("gdrive",))
         mock_catalog.conn.commit()
 
         set_target_priority(mock_catalog, "gdrive", 5)
@@ -335,8 +350,7 @@ class TestGetFilesForBackup:
         )
         # Low priority: screenshot
         mock_catalog.conn.execute(
-            "INSERT INTO files (path, sha256, size, ext, quality_category) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO files (path, sha256, size, ext, quality_category) VALUES (?, ?, ?, ?, ?)",
             ("/tmp/screen.png", "sha2", 512, "png", "screenshot"),
         )
         mock_catalog.conn.commit()
@@ -361,8 +375,7 @@ class TestCreateBackupPlan:
     def test_no_files(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
         mock_catalog.conn.execute(
-            "INSERT INTO backup_targets (remote_name, enabled, free_bytes, total_bytes) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO backup_targets (remote_name, enabled, free_bytes, total_bytes) VALUES (?, ?, ?, ?)",
             ("gdrive", 1, 10_000_000_000, 15_000_000_000),
         )
         mock_catalog.conn.commit()
@@ -373,8 +386,7 @@ class TestCreateBackupPlan:
     def test_basic_plan(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
         mock_catalog.conn.execute(
-            "INSERT INTO backup_targets (remote_name, enabled, free_bytes, total_bytes) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO backup_targets (remote_name, enabled, free_bytes, total_bytes) VALUES (?, ?, ?, ?)",
             ("gdrive", 1, 10_000_000_000, 15_000_000_000),
         )
         mock_catalog.conn.execute(
@@ -391,8 +403,7 @@ class TestCreateBackupPlan:
         ensure_backup_tables(mock_catalog)
         # Target with very little free space
         mock_catalog.conn.execute(
-            "INSERT INTO backup_targets (remote_name, enabled, free_bytes, total_bytes) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO backup_targets (remote_name, enabled, free_bytes, total_bytes) VALUES (?, ?, ?, ?)",
             ("gdrive", 1, 500_000_001, 1_000_000_000),  # 1 byte available after reserve
         )
         # File bigger than available
@@ -408,8 +419,7 @@ class TestCreateBackupPlan:
     def test_date_based_path(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
         mock_catalog.conn.execute(
-            "INSERT INTO backup_targets (remote_name, remote_path, enabled, free_bytes, total_bytes) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO backup_targets (remote_name, remote_path, enabled, free_bytes, total_bytes) VALUES (?, ?, ?, ?, ?)",
             ("gdrive", "GML-Backup", 1, 10_000_000_000, 15_000_000_000),
         )
         mock_catalog.conn.execute(
@@ -424,8 +434,7 @@ class TestCreateBackupPlan:
     def test_unsorted_path_no_date(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
         mock_catalog.conn.execute(
-            "INSERT INTO backup_targets (remote_name, remote_path, enabled, free_bytes, total_bytes) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO backup_targets (remote_name, remote_path, enabled, free_bytes, total_bytes) VALUES (?, ?, ?, ?, ?)",
             ("gdrive", "GML-Backup", 1, 10_000_000_000, 15_000_000_000),
         )
         mock_catalog.conn.execute(
@@ -455,12 +464,20 @@ class TestExecuteBackupPlan:
         f.write_bytes(b"test")
 
         plan = BackupPlan(
-            entries=[{
-                "file_id": 1, "path": str(f), "size": 4,
-                "sha256": "abc", "priority": 100,
-                "target_remote": "gdrive", "target_path": "GML-Backup/2023-06",
-            }],
-            total_files=1, total_bytes=4, targets_used=["gdrive"],
+            entries=[
+                {
+                    "file_id": 1,
+                    "path": str(f),
+                    "size": 4,
+                    "sha256": "abc",
+                    "priority": 100,
+                    "target_remote": "gdrive",
+                    "target_path": "GML-Backup/2023-06",
+                }
+            ],
+            total_files=1,
+            total_bytes=4,
+            targets_used=["gdrive"],
         )
 
         result = execute_backup_plan(mock_catalog, plan=plan, dry_run=True)
@@ -470,12 +487,20 @@ class TestExecuteBackupPlan:
     def test_file_not_found_skipped(self, mock_catalog):
         ensure_backup_tables(mock_catalog)
         plan = BackupPlan(
-            entries=[{
-                "file_id": 1, "path": "/nonexistent/photo.jpg", "size": 1024,
-                "sha256": "abc", "priority": 100,
-                "target_remote": "gdrive", "target_path": "GML-Backup/2023-06",
-            }],
-            total_files=1, total_bytes=1024, targets_used=["gdrive"],
+            entries=[
+                {
+                    "file_id": 1,
+                    "path": "/nonexistent/photo.jpg",
+                    "size": 1024,
+                    "sha256": "abc",
+                    "priority": 100,
+                    "target_remote": "gdrive",
+                    "target_path": "GML-Backup/2023-06",
+                }
+            ],
+            total_files=1,
+            total_bytes=1024,
+            targets_used=["gdrive"],
         )
 
         result = execute_backup_plan(mock_catalog, plan=plan)
@@ -488,12 +513,20 @@ class TestExecuteBackupPlan:
         f.write_bytes(b"test_content")
 
         plan = BackupPlan(
-            entries=[{
-                "file_id": 1, "path": str(f), "size": 12,
-                "sha256": "abc123", "priority": 100,
-                "target_remote": "gdrive", "target_path": "GML-Backup/2023-06",
-            }],
-            total_files=1, total_bytes=12, targets_used=["gdrive"],
+            entries=[
+                {
+                    "file_id": 1,
+                    "path": str(f),
+                    "size": 12,
+                    "sha256": "abc123",
+                    "priority": 100,
+                    "target_remote": "gdrive",
+                    "target_path": "GML-Backup/2023-06",
+                }
+            ],
+            total_files=1,
+            total_bytes=12,
+            targets_used=["gdrive"],
         )
 
         mock_proc = MagicMock()
@@ -510,9 +543,7 @@ class TestExecuteBackupPlan:
         assert result["errors"] == 0
 
         # Verify manifest entry was created
-        row = mock_catalog.conn.execute(
-            "SELECT * FROM backup_manifest WHERE file_id = 1"
-        ).fetchone()
+        row = mock_catalog.conn.execute("SELECT * FROM backup_manifest WHERE file_id = 1").fetchone()
         assert row is not None
 
     def test_upload_failure(self, mock_catalog, tmp_path):
@@ -521,12 +552,20 @@ class TestExecuteBackupPlan:
         f.write_bytes(b"test")
 
         plan = BackupPlan(
-            entries=[{
-                "file_id": 1, "path": str(f), "size": 4,
-                "sha256": "abc", "priority": 100,
-                "target_remote": "gdrive", "target_path": "GML-Backup/2023-06",
-            }],
-            total_files=1, total_bytes=4, targets_used=["gdrive"],
+            entries=[
+                {
+                    "file_id": 1,
+                    "path": str(f),
+                    "size": 4,
+                    "sha256": "abc",
+                    "priority": 100,
+                    "target_remote": "gdrive",
+                    "target_path": "GML-Backup/2023-06",
+                }
+            ],
+            total_files=1,
+            total_bytes=4,
+            targets_used=["gdrive"],
         )
 
         mock_proc = MagicMock()
@@ -548,12 +587,20 @@ class TestExecuteBackupPlan:
         f.write_bytes(b"test")
 
         plan = BackupPlan(
-            entries=[{
-                "file_id": 1, "path": str(f), "size": 4,
-                "sha256": "abc", "priority": 100,
-                "target_remote": "gdrive", "target_path": "GML-Backup/2023-06",
-            }],
-            total_files=1, total_bytes=4, targets_used=["gdrive"],
+            entries=[
+                {
+                    "file_id": 1,
+                    "path": str(f),
+                    "size": 4,
+                    "sha256": "abc",
+                    "priority": 100,
+                    "target_remote": "gdrive",
+                    "target_path": "GML-Backup/2023-06",
+                }
+            ],
+            total_files=1,
+            total_bytes=4,
+            targets_used=["gdrive"],
         )
 
         with (
@@ -578,12 +625,20 @@ class TestExecuteBackupPlan:
         f.write_bytes(b"test")
 
         plan = BackupPlan(
-            entries=[{
-                "file_id": 1, "path": str(f), "size": 4,
-                "sha256": "abc", "priority": 100,
-                "target_remote": "gdrive", "target_path": "GML-Backup/2023-06",
-            }],
-            total_files=1, total_bytes=4, targets_used=["gdrive"],
+            entries=[
+                {
+                    "file_id": 1,
+                    "path": str(f),
+                    "size": 4,
+                    "sha256": "abc",
+                    "priority": 100,
+                    "target_remote": "gdrive",
+                    "target_path": "GML-Backup/2023-06",
+                }
+            ],
+            total_files=1,
+            total_bytes=4,
+            targets_used=["gdrive"],
         )
 
         mock_proc = MagicMock()
@@ -607,12 +662,20 @@ class TestExecuteBackupPlan:
         f.write_bytes(b"test")
 
         plan = BackupPlan(
-            entries=[{
-                "file_id": 1, "path": str(f), "size": 4,
-                "sha256": "abc", "priority": 100,
-                "target_remote": "gdrive", "target_path": "GML-Backup/2023-06",
-            }],
-            total_files=1, total_bytes=4, targets_used=["gdrive"],
+            entries=[
+                {
+                    "file_id": 1,
+                    "path": str(f),
+                    "size": 4,
+                    "sha256": "abc",
+                    "priority": 100,
+                    "target_remote": "gdrive",
+                    "target_path": "GML-Backup/2023-06",
+                }
+            ],
+            total_files=1,
+            total_bytes=4,
+            targets_used=["gdrive"],
         )
 
         progress_calls = []
@@ -624,7 +687,8 @@ class TestExecuteBackupPlan:
             patch("subprocess.run", return_value=mock_proc),
         ):
             execute_backup_plan(
-                mock_catalog, plan=plan,
+                mock_catalog,
+                plan=plan,
                 progress_fn=lambda p: progress_calls.append(p),
             )
 

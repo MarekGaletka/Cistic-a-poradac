@@ -90,6 +90,7 @@ def apply_plan(
     # Transaction log: write intent before each operation so that on crash+restart
     # an operator can inspect this file to understand what was completed vs. pending.
     tx_log_path = executed_log_path.parent / "plan_execution.log"
+
     def _tx_log(event: str, details: dict) -> None:
         entry = {"ts": time.time(), "event": event, **details}
         try:

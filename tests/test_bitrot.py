@@ -4,8 +4,6 @@ import hashlib
 import sqlite3
 from unittest.mock import MagicMock
 
-import pytest
-
 from godmode_media_library.bitrot import (
     CHUNK_SIZE,
     BitrotResult,
@@ -13,7 +11,6 @@ from godmode_media_library.bitrot import (
     get_verification_stats,
     scan_bitrot,
 )
-
 
 # ── _sha256_file ─────────────────────────────────────────────────────
 
@@ -177,7 +174,7 @@ class TestScanBitrot:
 
         catalog = _make_catalog(tmp_path, [(1, str(f), h, 4)])
         progress_calls = []
-        result = scan_bitrot(catalog, progress_fn=lambda p: progress_calls.append(p))
+        scan_bitrot(catalog, progress_fn=lambda p: progress_calls.append(p))
 
         # Should get at least the initial call and the completion call
         assert len(progress_calls) >= 1
@@ -202,14 +199,15 @@ class TestScanBitrot:
 
 class TestGetVerificationStats:
     def test_basic_stats(self, tmp_path):
-        catalog = _make_catalog(tmp_path, [
-            (1, "/a.jpg", "hash1", 100),
-            (2, "/b.jpg", "hash2", 200),
-        ])
-        # Mark one as verified
-        catalog.conn.execute(
-            "UPDATE files SET last_verified = '2023-01-01T00:00:00', verify_count = 1 WHERE id = 1"
+        catalog = _make_catalog(
+            tmp_path,
+            [
+                (1, "/a.jpg", "hash1", 100),
+                (2, "/b.jpg", "hash2", 200),
+            ],
         )
+        # Mark one as verified
+        catalog.conn.execute("UPDATE files SET last_verified = '2023-01-01T00:00:00', verify_count = 1 WHERE id = 1")
         catalog.conn.commit()
 
         stats = get_verification_stats(catalog)

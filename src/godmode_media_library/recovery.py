@@ -39,10 +39,7 @@ def _validate_quarantine_path(path: str | Path, quarantine_root: Path) -> Path:
     """
     resolved = Path(path).resolve()
     if not resolved.is_relative_to(quarantine_root.resolve()):
-        raise ValueError(
-            f"Path traversal blocked: {path!r} resolves to {resolved} "
-            f"which is outside quarantine root {quarantine_root}"
-        )
+        raise ValueError(f"Path traversal blocked: {path!r} resolves to {resolved} which is outside quarantine root {quarantine_root}")
     return resolved
 
 
@@ -53,11 +50,9 @@ def _sanitize_subprocess_path(path: str, label: str = "path") -> str:
     """
     bad = _SHELL_METACHARACTERS.intersection(path)
     if bad:
-        raise ValueError(
-            f"Invalid characters in {label}: {bad!r} — "
-            f"refusing to pass to subprocess"
-        )
+        raise ValueError(f"Invalid characters in {label}: {bad!r} — refusing to pass to subprocess")
     return path
+
 
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp"}
 _AUDIO_EXTS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a", ".opus"}
@@ -1390,12 +1385,7 @@ def _query_signal_attachments_cli(key: str) -> list[dict]:
     # Pass commands via stdin instead of CLI arguments to avoid leaking
     # the SQLCipher key in the process table (visible via ps).
     try:
-        sqlcipher_input = (
-            f"PRAGMA key = \"x'{key}'\";\n"
-            "PRAGMA cipher_compatibility = 4;\n"
-            ".mode json\n"
-            f"{query}\n"
-        )
+        sqlcipher_input = f"PRAGMA key = \"x'{key}'\";\nPRAGMA cipher_compatibility = 4;\n.mode json\n{query}\n"
         proc = subprocess.run(
             [
                 _find_sqlcipher_bin(),
@@ -1603,6 +1593,7 @@ def decrypt_signal_attachments(
                     if hmac_key:
                         import hashlib as _hashlib
                         import hmac as _hmac_mod
+
                         expected_hmac = _hmac_mod.new(hmac_key, iv + ciphertext, _hashlib.sha256).digest()
                         if not _hmac_mod.compare_digest(stored_hmac, expected_hmac):
                             raise ValueError("HMAC verification failed — data may be corrupted or tampered")
@@ -1753,7 +1744,7 @@ def _check_mp4(path: Path) -> dict | None:
             # Check for ftyp box (bytes 4-7 should be 'ftyp')
             has_ftyp = header[4:8] == b"ftyp"
             if not has_ftyp and header[4:8] not in (b"wide", b"mdat", b"moov", b"free", b"skip"):
-                    return {"issue": "invalid_header", "description": "Chybí MP4 ftyp box", "repairable": False}
+                return {"issue": "invalid_header", "description": "Chybí MP4 ftyp box", "repairable": False}
 
             # Scan for moov atom (needed for playback)
             f.seek(0)

@@ -5,7 +5,6 @@ Targets coverage from ~25% to 60%+.
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -269,9 +268,7 @@ class TestIPhoneResume:
                     "godmode_media_library.iphone_import.get_progress",
                     return_value={"phase": "paused"},
                 ),
-                patch(
-                    "godmode_media_library.iphone_import.resume_import"
-                ) as mock_resume,
+                patch("godmode_media_library.iphone_import.resume_import") as mock_resume,
                 patch("godmode_media_library.iphone_import.IPhoneImportConfig"),
                 patch("godmode_media_library.iphone_import.run_import"),
             ):

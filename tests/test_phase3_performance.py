@@ -6,11 +6,8 @@ Each test verifies that a specific N+1 query or memory issue has been resolved.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from godmode_media_library.catalog import Catalog, CatalogFileRow
 
@@ -61,9 +58,7 @@ def test_backfill_metadata_no_n_plus_1(tmp_path: Path) -> None:
         cat.commit()
 
         # Get the file ID
-        file_id = cat.conn.execute(
-            "SELECT id FROM files WHERE path = ?", ("/tmp/test/photo1.jpg",)
-        ).fetchone()[0]
+        file_id = cat.conn.execute("SELECT id FROM files WHERE path = ?", ("/tmp/test/photo1.jpg",)).fetchone()[0]
 
         # Insert metadata with a date
         meta = {"EXIF:DateTimeOriginal": "2024:01:15 10:30:00"}
@@ -83,13 +78,11 @@ def test_backfill_metadata_no_n_plus_1(tmp_path: Path) -> None:
 
         with patch.object(cat, "get_file_by_path", side_effect=tracked_get):
             from godmode_media_library.scanner import backfill_metadata_from_stored
+
             result = backfill_metadata_from_stored(cat)
 
         # The fix eliminates get_file_by_path calls entirely
-        assert call_count[0] == 0, (
-            f"get_file_by_path was called {call_count[0]} times; "
-            "should be 0 after N+1 fix"
-        )
+        assert call_count[0] == 0, f"get_file_by_path was called {call_count[0]} times; should be 0 after N+1 fix"
         assert result["dates_filled"] == 1
     finally:
         cat.close()
@@ -110,9 +103,7 @@ def test_backfill_metadata_fills_date_and_gps(tmp_path: Path) -> None:
         cat.upsert_file(row)
         cat.commit()
 
-        file_id = cat.conn.execute(
-            "SELECT id FROM files WHERE path = ?", ("/tmp/test/photo_gps.jpg",)
-        ).fetchone()[0]
+        file_id = cat.conn.execute("SELECT id FROM files WHERE path = ?", ("/tmp/test/photo_gps.jpg",)).fetchone()[0]
 
         meta = {
             "EXIF:DateTimeOriginal": "2024:06:15 14:00:00",
@@ -126,6 +117,7 @@ def test_backfill_metadata_fills_date_and_gps(tmp_path: Path) -> None:
         cat.commit()
 
         from godmode_media_library.scanner import backfill_metadata_from_stored
+
         result = backfill_metadata_from_stored(cat)
 
         assert result["dates_filled"] == 1
@@ -181,6 +173,7 @@ def test_fernet_instance_is_cached() -> None:
     try:
         # Need a keystore to exist
         from godmode_media_library.face_crypto import _load_keystore
+
         _load_keystore()
 
         f1 = _get_fernet(0)
@@ -198,12 +191,12 @@ def test_fernet_instance_is_cached() -> None:
 
 def test_cluster_faces_uses_batch_query(tmp_path: Path) -> None:
     """cluster_faces should use batch IN(...) queries for face_person_map."""
-    import re
-
-    from godmode_media_library.face_detect import cluster_faces
 
     # Verify the source code uses batch query pattern
     import inspect
+
+    from godmode_media_library.face_detect import cluster_faces
+
     source = inspect.getsource(cluster_faces)
     # Should contain "IN" query pattern for batch loading
     assert "IN ({placeholders})" in source or "IN (" in source
@@ -214,6 +207,7 @@ def test_match_face_uses_batch_query() -> None:
     import inspect
 
     from godmode_media_library.face_detect import match_face_to_known
+
     source = inspect.getsource(match_face_to_known)
     # Should contain batch IN query pattern
     assert "IN ({placeholders})" in source or "IN (" in source
@@ -228,6 +222,7 @@ def test_rate_limit_eviction() -> None:
 
     d: dict[str, list[float]] = {}
     import time
+
     now = time.monotonic()
 
     # Add stale entries (very old timestamps)
@@ -254,10 +249,8 @@ def test_reorganize_plans_eviction() -> None:
     import time
 
     from godmode_media_library.web.shared import (
-        _REORGANIZE_PLAN_MAX,
         _evict_old_plans,
         _reorganize_plans,
-        _reorganize_plans_lock,
     )
 
     # Save original state
@@ -288,6 +281,7 @@ def test_bitrot_uses_cursor_iteration(tmp_path: Path) -> None:
     import inspect
 
     from godmode_media_library.bitrot import scan_bitrot
+
     source = inspect.getsource(scan_bitrot)
     # Should use enumerate(cursor) not fetchall()
     assert "fetchall()" not in source
@@ -302,6 +296,7 @@ def test_media_score_uses_sql_limit() -> None:
     import inspect
 
     from godmode_media_library.media_score import score_catalog
+
     source = inspect.getsource(score_catalog)
     assert "LIMIT ?" in source
 
@@ -335,6 +330,7 @@ def test_create_tree_plan_passes_reserved_norm() -> None:
     import inspect
 
     from godmode_media_library.tree_ops import create_tree_plan
+
     source = inspect.getsource(create_tree_plan)
     # Should initialize and pass reserved_norm
     assert "reserved_norm" in source
@@ -348,6 +344,7 @@ def test_apply_tree_plan_collision_tracking_persists() -> None:
     import inspect
 
     from godmode_media_library.tree_ops import apply_tree_plan
+
     source = inspect.getsource(apply_tree_plan)
     # The collision sets should be defined BEFORE the loop, not inside it
     assert "_collision_reserved: set[Path] = set()" in source
@@ -362,6 +359,7 @@ def test_consolidation_stream_batches_file_metadata() -> None:
     import inspect
 
     from godmode_media_library.consolidation import _phase_5_stream
+
     source = inspect.getsource(_phase_5_stream)
     # Should contain batch metadata cache pattern
     assert "_file_meta_cache" in source
@@ -374,7 +372,8 @@ def test_consolidation_stream_batches_file_metadata() -> None:
 
 def test_oauth_cleanup_exists() -> None:
     """cloud.py should have _cleanup_stale_oauth function."""
-    from godmode_media_library.cloud import _cleanup_stale_oauth, _OAUTH_TIMEOUT
+    from godmode_media_library.cloud import _OAUTH_TIMEOUT, _cleanup_stale_oauth
+
     assert callable(_cleanup_stale_oauth)
     assert _OAUTH_TIMEOUT == 600
 
@@ -387,6 +386,7 @@ def test_scanner_preloads_mtime_size(tmp_path: Path) -> None:
     import inspect
 
     from godmode_media_library.scanner import incremental_scan
+
     source = inspect.getsource(incremental_scan)
     # Should use batch pre-load
     assert "get_all_mtime_size_for_root" in source

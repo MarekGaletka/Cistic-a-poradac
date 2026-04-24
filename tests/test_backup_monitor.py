@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from godmode_media_library import backup_monitor as bm
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -103,9 +100,7 @@ def test_load_state_handles_corrupt_json(state_path):
 @patch.object(bm, "_send_notification")
 @patch.object(bm, "check_remote_health")
 def test_first_failure_sends_warning(mock_check, mock_notify, state_path):
-    mock_check.return_value = bm.HealthCheck(
-        remote_name="gdrive", timestamp="t1", accessible=False, error="timeout"
-    )
+    mock_check.return_value = bm.HealthCheck(remote_name="gdrive", timestamp="t1", accessible=False, error="timeout")
     bm.run_health_checks(remote_names=["gdrive"])
 
     # First failure => warning notification
@@ -116,9 +111,7 @@ def test_first_failure_sends_warning(mock_check, mock_notify, state_path):
 @patch.object(bm, "_send_notification")
 @patch.object(bm, "check_remote_health")
 def test_three_consecutive_failures_sends_critical(mock_check, mock_notify, state_path):
-    mock_check.return_value = bm.HealthCheck(
-        remote_name="gdrive", timestamp="t1", accessible=False, error="down"
-    )
+    mock_check.return_value = bm.HealthCheck(remote_name="gdrive", timestamp="t1", accessible=False, error="down")
     # Simulate 3 consecutive failures via pre-set state
     pre_state = bm.MonitorState(consecutive_failures={"gdrive": 2})
     bm._save_state(pre_state)
@@ -137,8 +130,12 @@ def test_success_resets_failure_counter(mock_check, mock_notify, state_path):
     bm._save_state(pre_state)
 
     mock_check.return_value = bm.HealthCheck(
-        remote_name="gdrive", timestamp="t1", accessible=True,
-        write_ok=True, read_ok=True, free_bytes=10_000_000_000,
+        remote_name="gdrive",
+        timestamp="t1",
+        accessible=True,
+        write_ok=True,
+        read_ok=True,
+        free_bytes=10_000_000_000,
     )
     bm.run_health_checks(remote_names=["gdrive"])
 

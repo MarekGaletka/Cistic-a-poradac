@@ -52,6 +52,7 @@ def catalog_with_files(tmp_path):
     # Register tmp_path as a configured root so move destinations
     # under tmp_path pass the _check_path_within_roots security check.
     import json
+
     cat.conn.execute(
         "INSERT INTO meta (key, value) VALUES ('configured_roots', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (json.dumps([str(tmp_path)]),),
@@ -465,7 +466,7 @@ class TestXSSPrevention:
         """HTML in tag name should not execute."""
         resp = client.post(
             "/api/tags",
-            json={"name": '<img src=x onerror=alert(1)>', "color": "#ff0000"},
+            json={"name": "<img src=x onerror=alert(1)>", "color": "#ff0000"},
         )
         # Tag creation should either accept (stored as plain text) or reject
         assert resp.status_code in (200, 400, 409, 422)
@@ -491,7 +492,7 @@ class TestXSSPrevention:
                 "renames": [
                     {
                         "path": f"{media_root}/photo2.jpg",
-                        "new_name": '<script>alert(1)</script>.jpg',
+                        "new_name": "<script>alert(1)</script>.jpg",
                     }
                 ]
             },

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -79,18 +79,14 @@ def client(catalog_with_files):
 def isolate_scenarios(tmp_path, monkeypatch):
     """Redirect scenario storage to a temp directory so tests are isolated."""
     scenarios_file = tmp_path / "scenarios.json"
-    monkeypatch.setattr(
-        "godmode_media_library.scenarios._SCENARIOS_PATH", scenarios_file
-    )
+    monkeypatch.setattr("godmode_media_library.scenarios._SCENARIOS_PATH", scenarios_file)
 
 
 @pytest.fixture(autouse=True)
 def isolate_monitor_state(tmp_path, monkeypatch):
     """Redirect backup monitor state to a temp directory."""
     state_file = tmp_path / "backup_monitor_state.json"
-    monkeypatch.setattr(
-        "godmode_media_library.backup_monitor._MONITOR_STATE_PATH", state_file
-    )
+    monkeypatch.setattr("godmode_media_library.backup_monitor._MONITOR_STATE_PATH", state_file)
 
 
 def _ensure_full_backup_schema(cat):
@@ -284,7 +280,7 @@ class TestScenarioCRUD:
         assert "deep_scan" in step_types
         assert "reorganize" in step_types
         # Each step type has label_key and icon
-        for key, val in step_types.items():
+        for _key, val in step_types.items():
             assert "label_key" in val
             assert "icon" in val
 
@@ -389,7 +385,7 @@ class TestScenarioExecution:
             },
         ).json()
 
-        with patch("godmode_media_library.scenarios.execute_scenario", return_value={"ok": True}) as mock_exec:
+        with patch("godmode_media_library.scenarios.execute_scenario", return_value={"ok": True}):
             resp = client.post(f"/api/scenarios/{created['id']}/run")
         assert resp.status_code == 200
         assert "task_id" in resp.json()
@@ -561,9 +557,7 @@ class TestBackupPlan:
 
     def test_backup_plan_no_targets(self, client):
         """POST /api/backup/plan with no configured targets returns empty plan."""
-        with patch(
-            "godmode_media_library.distributed_backup.get_targets", return_value=[]
-        ):
+        with patch("godmode_media_library.distributed_backup.get_targets", return_value=[]):
             resp = client.post("/api/backup/plan")
         assert resp.status_code == 200
         data = resp.json()
@@ -572,8 +566,6 @@ class TestBackupPlan:
     def test_backup_plan_creates_distribution(self, client, catalog_with_files):
         """POST /api/backup/plan returns a plan with distribution info."""
         from godmode_media_library.distributed_backup import (
-            BackupPlan,
-            BackupTarget,
             ensure_backup_tables,
         )
 
@@ -582,8 +574,7 @@ class TestBackupPlan:
         cat.open()
         ensure_backup_tables(cat)
         cat.conn.execute(
-            "INSERT INTO backup_targets (remote_name, enabled, priority, free_bytes, total_bytes) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO backup_targets (remote_name, enabled, priority, free_bytes, total_bytes) VALUES (?, ?, ?, ?, ?)",
             ("gdrive", 1, 0, 10_000_000_000, 15_000_000_000),
         )
         cat.conn.commit()

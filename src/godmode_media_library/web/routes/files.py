@@ -669,13 +669,7 @@ def rename_files(request: Request, body: RenameRequest) -> dict:
                 continue
             # Validate new_name: no path separators or traversal sequences
             basename = os.path.basename(item.new_name)
-            if (
-                "/" in item.new_name
-                or "\\" in item.new_name
-                or ".." in item.new_name
-                or not basename
-                or basename != item.new_name
-            ):
+            if "/" in item.new_name or "\\" in item.new_name or ".." in item.new_name or not basename or basename != item.new_name:
                 skipped += 1
                 errors.append(f"Invalid new name (path separators or traversal not allowed): {item.new_name[:200]}")
                 continue

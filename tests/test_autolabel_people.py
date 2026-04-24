@@ -5,22 +5,19 @@ Expands coverage from ~35% to 60%+.
 
 from __future__ import annotations
 
-import json
-from collections import defaultdict
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from godmode_media_library.autolabel_people import (
+    PEOPLE_EXTS,
     AutoPeopleResult,
     FaceRecord,
-    PEOPLE_EXTS,
     _load_face_libs,
     _resize_if_needed,
     auto_people_labels,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper mocks
@@ -159,9 +156,8 @@ def test_people_exts_contains_expected():
 
 def test_load_face_libs_missing():
     """Missing dependencies should raise RuntimeError."""
-    with patch.dict("sys.modules", {"face_recognition": None}):
-        with pytest.raises(RuntimeError, match="optional dependencies"):
-            _load_face_libs()
+    with patch.dict("sys.modules", {"face_recognition": None}), pytest.raises(RuntimeError, match="optional dependencies"):
+        _load_face_libs()
 
 
 # ---------------------------------------------------------------------------

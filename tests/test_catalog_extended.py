@@ -8,11 +8,10 @@ export_inventory_tsv, update_file_path, delete_file_by_path,
 get_files_by_paths, mark_removed with inode decrement, vacuum,
 concurrent open (exclusive lock), schema migrations from old versions.
 """
+
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -247,9 +246,7 @@ class TestSchemaMigration:
         cat = Catalog(db)
         cat.open()
         # Verify latest schema has all tables
-        tables = cat.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        ).fetchall()
+        tables = cat.conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
         table_names = {t[0] for t in tables}
         assert "files" in table_names
         assert "tags" in table_names

@@ -1,7 +1,5 @@
 """Tests for checkpoint/resume system (Session 5, item 5.1)."""
 
-import sqlite3
-
 import pytest
 
 from godmode_media_library.catalog import Catalog
@@ -9,7 +7,6 @@ from godmode_media_library.checkpoint import (
     check_db_integrity,
     complete_job,
     create_job,
-    ensure_tables,
     get_job,
     get_job_progress,
     get_resumable_jobs,
@@ -150,9 +147,7 @@ class TestStaleReset:
         mark_file(catalog, job.job_id, "hash1", "remote:path1", "stream", "in_progress")
 
         # Simulate a dead worker by setting worker_pid to a non-existent PID
-        catalog.conn.execute(
-            "UPDATE consolidation_file_state SET worker_pid = 999999999 WHERE file_hash = 'hash1'"
-        )
+        catalog.conn.execute("UPDATE consolidation_file_state SET worker_pid = 999999999 WHERE file_hash = 'hash1'")
         catalog.conn.commit()
 
         # With dead PID, it should be reset regardless of stale threshold

@@ -400,8 +400,8 @@ def _render_html(data: dict) -> str:
     # Overview section
     sources_html = ""
     for src in overview["sources"]:
-        path_esc = html.escape(str(src['path']))
-        scan_esc = html.escape(str(src.get('last_scan', '-')))
+        path_esc = html.escape(str(src["path"]))
+        scan_esc = html.escape(str(src.get("last_scan", "-")))
         sources_html += f"<tr><td>{path_esc}</td><td>{src['file_count']:,}</td><td>{scan_esc}</td></tr>"
 
     date_range = ""

@@ -88,9 +88,7 @@ def _allocate_dest(dest: Path) -> Path:
     while candidate.exists():
         suffix += 1
         if suffix > max_attempts:
-            raise RuntimeError(
-                f"Failed to allocate quarantine destination after {max_attempts} attempts: {dest}"
-            )
+            raise RuntimeError(f"Failed to allocate quarantine destination after {max_attempts} attempts: {dest}")
         candidate = parent / f"{stem}.dup{suffix}{ext}"
     return candidate
 

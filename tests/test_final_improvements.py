@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 # ---------------------------------------------------------------------------
 # 1. _format_output helper in cli.py
 # ---------------------------------------------------------------------------
-
 from godmode_media_library.cli import _format_output
 
 
@@ -169,9 +165,11 @@ class TestSendNotification:
 
 try:
     from starlette.testclient import TestClient
-    from godmode_media_library.web.app import create_app
+
     from godmode_media_library.catalog import Catalog
     from godmode_media_library.scanner import incremental_scan
+    from godmode_media_library.web.app import create_app
+
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
@@ -218,7 +216,7 @@ class TestRangeRequests:
         resp = client.get(f"/api/stream{video}", headers={"Range": "bytes=0-99"})
         assert resp.status_code == 206
         assert len(resp.content) == 100
-        assert resp.headers["content-range"] == f"bytes 0-99/10240"
+        assert resp.headers["content-range"] == "bytes 0-99/10240"
         assert resp.content == b"V" * 100
 
     def test_range_request_middle_segment(self, stream_client):

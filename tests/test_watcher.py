@@ -18,7 +18,6 @@ from godmode_media_library.watcher import (
     watch_roots,
 )
 
-
 # ── _ChangeCollector ─────────────────────────────────────────────────
 
 
@@ -161,7 +160,7 @@ class TestIsMediaFile:
 class TestWatchRoots:
     def test_missing_watchdog_prints_error(self, capsys):
         """When watchdog is not importable, watch_roots logs error and returns."""
-        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
 
         def fake_import(name, *args, **kwargs):
             if "watchdog" in name:
@@ -184,12 +183,16 @@ class TestWatchRoots:
         mock_observer_cls = MagicMock(return_value=mock_observer_instance)
         mock_events = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "watchdog": MagicMock(),
-            "watchdog.events": mock_events,
-            "watchdog.observers": MagicMock(Observer=mock_observer_cls),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "watchdog": MagicMock(),
+                "watchdog.events": mock_events,
+                "watchdog.observers": MagicMock(Observer=mock_observer_cls),
+            },
+        ):
             from godmode_media_library import watcher
+
             importlib.reload(watcher)
 
             watcher.watch_roots(
@@ -208,12 +211,16 @@ class TestWatchRoots:
         mock_observer_cls = MagicMock(return_value=mock_observer_instance)
         mock_events = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "watchdog": MagicMock(),
-            "watchdog.events": mock_events,
-            "watchdog.observers": MagicMock(Observer=mock_observer_cls),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "watchdog": MagicMock(),
+                "watchdog.events": mock_events,
+                "watchdog.observers": MagicMock(Observer=mock_observer_cls),
+            },
+        ):
             from godmode_media_library import watcher
+
             importlib.reload(watcher)
 
             watcher.watch_roots(
@@ -235,12 +242,16 @@ class TestWatchRoots:
         # Create a mock for FileSystemEventHandler that captures the class
         mock_events_module = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "watchdog": MagicMock(),
-            "watchdog.events": mock_events_module,
-            "watchdog.observers": MagicMock(Observer=mock_observer_cls),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "watchdog": MagicMock(),
+                "watchdog.events": mock_events_module,
+                "watchdog.observers": MagicMock(Observer=mock_observer_cls),
+            },
+        ):
             from godmode_media_library import watcher
+
             importlib.reload(watcher)
 
             watcher.watch_roots(
@@ -268,12 +279,16 @@ class TestWatchRoots:
             result.files_changed = 0
             return result
 
-        with patch.dict("sys.modules", {
-            "watchdog": MagicMock(),
-            "watchdog.events": mock_events_module,
-            "watchdog.observers": MagicMock(Observer=mock_observer_cls),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "watchdog": MagicMock(),
+                "watchdog.events": mock_events_module,
+                "watchdog.observers": MagicMock(Observer=mock_observer_cls),
+            },
+        ):
             from godmode_media_library import watcher
+
             importlib.reload(watcher)
 
             # Patch _ChangeCollector to return changes on first flush
@@ -319,12 +334,16 @@ class TestWatchRoots:
         mock_observer_cls = MagicMock(return_value=mock_observer_instance)
         mock_events = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "watchdog": MagicMock(),
-            "watchdog.events": mock_events,
-            "watchdog.observers": MagicMock(Observer=mock_observer_cls),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "watchdog": MagicMock(),
+                "watchdog.events": mock_events,
+                "watchdog.observers": MagicMock(Observer=mock_observer_cls),
+            },
+        ):
             from godmode_media_library import watcher
+
             importlib.reload(watcher)
 
             # Patch threading.Event so the internal stop_event.wait raises KeyboardInterrupt

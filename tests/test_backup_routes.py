@@ -122,11 +122,14 @@ def _mock_backup_target(name="gdrive", **overrides):
 class TestBackupStats:
     def test_backup_stats(self, client):
         mock_stats = _mock_backup_stats()
-        with patch(
-            "godmode_media_library.distributed_backup.get_backup_stats",
-            return_value=mock_stats,
-        ), patch(
-            "godmode_media_library.distributed_backup.ensure_backup_tables",
+        with (
+            patch(
+                "godmode_media_library.distributed_backup.get_backup_stats",
+                return_value=mock_stats,
+            ),
+            patch(
+                "godmode_media_library.distributed_backup.ensure_backup_tables",
+            ),
         ):
             resp = client.get("/api/backup/stats")
         assert resp.status_code == 200
@@ -148,11 +151,14 @@ class TestBackupStats:
             last_backup_at=None,
             files_by_remote={},
         )
-        with patch(
-            "godmode_media_library.distributed_backup.get_backup_stats",
-            return_value=mock_stats,
-        ), patch(
-            "godmode_media_library.distributed_backup.ensure_backup_tables",
+        with (
+            patch(
+                "godmode_media_library.distributed_backup.get_backup_stats",
+                return_value=mock_stats,
+            ),
+            patch(
+                "godmode_media_library.distributed_backup.ensure_backup_tables",
+            ),
         ):
             resp = client.get("/api/backup/stats")
         assert resp.status_code == 200
@@ -167,11 +173,14 @@ class TestBackupStats:
 class TestBackupTargets:
     def test_backup_targets(self, client):
         targets = [_mock_backup_target("gdrive"), _mock_backup_target("s3")]
-        with patch(
-            "godmode_media_library.distributed_backup.get_targets",
-            return_value=targets,
-        ), patch(
-            "godmode_media_library.distributed_backup.ensure_backup_tables",
+        with (
+            patch(
+                "godmode_media_library.distributed_backup.get_targets",
+                return_value=targets,
+            ),
+            patch(
+                "godmode_media_library.distributed_backup.ensure_backup_tables",
+            ),
         ):
             resp = client.get("/api/backup/targets")
         assert resp.status_code == 200
@@ -180,11 +189,14 @@ class TestBackupTargets:
         assert data["targets"][0]["remote_name"] == "gdrive"
 
     def test_backup_targets_empty(self, client):
-        with patch(
-            "godmode_media_library.distributed_backup.get_targets",
-            return_value=[],
-        ), patch(
-            "godmode_media_library.distributed_backup.ensure_backup_tables",
+        with (
+            patch(
+                "godmode_media_library.distributed_backup.get_targets",
+                return_value=[],
+            ),
+            patch(
+                "godmode_media_library.distributed_backup.ensure_backup_tables",
+            ),
         ):
             resp = client.get("/api/backup/targets")
         assert resp.status_code == 200
@@ -217,27 +229,29 @@ class TestBackupProbe:
 
 class TestUpdateBackupTarget:
     def test_update_target_enabled(self, client):
-        with patch(
-            "godmode_media_library.distributed_backup.ensure_backup_tables",
-        ), patch(
-            "godmode_media_library.distributed_backup.set_target_enabled",
-        ) as mock_enable:
-            resp = client.put(
-                "/api/backup/targets/gdrive", json={"enabled": False}
-            )
+        with (
+            patch(
+                "godmode_media_library.distributed_backup.ensure_backup_tables",
+            ),
+            patch(
+                "godmode_media_library.distributed_backup.set_target_enabled",
+            ) as mock_enable,
+        ):
+            resp = client.put("/api/backup/targets/gdrive", json={"enabled": False})
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
         mock_enable.assert_called_once()
 
     def test_update_target_priority(self, client):
-        with patch(
-            "godmode_media_library.distributed_backup.ensure_backup_tables",
-        ), patch(
-            "godmode_media_library.distributed_backup.set_target_priority",
-        ) as mock_prio:
-            resp = client.put(
-                "/api/backup/targets/gdrive", json={"priority": 5}
-            )
+        with (
+            patch(
+                "godmode_media_library.distributed_backup.ensure_backup_tables",
+            ),
+            patch(
+                "godmode_media_library.distributed_backup.set_target_priority",
+            ) as mock_prio,
+        ):
+            resp = client.put("/api/backup/targets/gdrive", json={"priority": 5})
         assert resp.status_code == 200
         mock_prio.assert_called_once()
 
@@ -247,11 +261,11 @@ class TestUpdateBackupTarget:
         cat = Catalog(catalog_db)
         cat.open()
         from godmode_media_library.distributed_backup import ensure_backup_tables
+
         ensure_backup_tables(cat)
         # Insert a target row to update
         cat.conn.execute(
-            "INSERT OR IGNORE INTO backup_targets (remote_name, remote_path, enabled, priority) "
-            "VALUES ('gdrive', 'gdrive:backup', 1, 1)"
+            "INSERT OR IGNORE INTO backup_targets (remote_name, remote_path, enabled, priority) VALUES ('gdrive', 'gdrive:backup', 1, 1)"
         )
         cat.conn.commit()
         cat.close()
@@ -359,6 +373,7 @@ class TestBackupManifest:
         cat = Catalog(catalog_db)
         cat.open()
         from godmode_media_library.distributed_backup import ensure_backup_tables
+
         ensure_backup_tables(cat)
         # Insert dummy files first so we have valid file_ids
         now_iso = "2024-01-15T12:00:00+00:00"
@@ -377,6 +392,7 @@ class TestBackupManifest:
         cat.close()
 
         from godmode_media_library.web.app import create_app
+
         app = create_app(catalog_path=catalog_db)
         cl = TestClient(app)
 
@@ -391,6 +407,7 @@ class TestBackupManifest:
         cat = Catalog(catalog_db)
         cat.open()
         from godmode_media_library.distributed_backup import ensure_backup_tables
+
         ensure_backup_tables(cat)
         now_iso = "2024-01-15T12:00:00+00:00"
         cat.conn.execute(
@@ -415,6 +432,7 @@ class TestBackupManifest:
         cat.close()
 
         from godmode_media_library.web.app import create_app
+
         app = create_app(catalog_path=catalog_db)
         cl = TestClient(app)
 

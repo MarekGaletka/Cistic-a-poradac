@@ -5,9 +5,7 @@ Targets coverage improvement for web/routes/system.py from ~59% to 75%+.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -290,12 +288,8 @@ class TestTimelineGaps:
         cat = Catalog(catalog_with_files)
         cat.open()
         # Set dates spanning multiple months with a gap
-        cat.conn.execute(
-            "UPDATE files SET date_original = '2023:01:15 10:00:00' WHERE path LIKE '%photo1%'"
-        )
-        cat.conn.execute(
-            "UPDATE files SET date_original = '2023:03:20 12:00:00' WHERE path LIKE '%photo2%'"
-        )
+        cat.conn.execute("UPDATE files SET date_original = '2023:01:15 10:00:00' WHERE path LIKE '%photo1%'")
+        cat.conn.execute("UPDATE files SET date_original = '2023:03:20 12:00:00' WHERE path LIKE '%photo2%'")
         cat.conn.commit()
         cat.close()
 
@@ -360,13 +354,11 @@ class TestQualityStats:
         cat.open()
         # Mark one file as blurry (blur < 50) and dark (brightness < 40)
         cat.conn.execute(
-            "UPDATE files SET quality_blur = 30, quality_brightness = 25, quality_category = 'poor' "
-            "WHERE path LIKE '%photo1%'"
+            "UPDATE files SET quality_blur = 30, quality_brightness = 25, quality_category = 'poor' WHERE path LIKE '%photo1%'"
         )
         # Mark one file as overexposed (brightness > 220)
         cat.conn.execute(
-            "UPDATE files SET quality_blur = 80, quality_brightness = 240, quality_category = 'good' "
-            "WHERE path LIKE '%photo2%'"
+            "UPDATE files SET quality_blur = 80, quality_brightness = 240, quality_category = 'good' WHERE path LIKE '%photo2%'"
         )
         cat.conn.commit()
         cat.close()
@@ -428,13 +420,9 @@ class TestReportDownload:
         instead of bare filename="..." to prevent header injection."""
         resp = client.get("/api/report/download")
         cd = resp.headers.get("content-disposition", "")
-        assert "filename*=UTF-8''" in cd, (
-            f"Content-Disposition should use RFC 5987 encoding, got: {cd}"
-        )
+        assert "filename*=UTF-8''" in cd, f"Content-Disposition should use RFC 5987 encoding, got: {cd}"
         # Must NOT contain bare filename="..." pattern (injection-vulnerable)
-        assert 'filename="' not in cd, (
-            f"Content-Disposition should not use bare filename=, got: {cd}"
-        )
+        assert 'filename="' not in cd, f"Content-Disposition should not use bare filename=, got: {cd}"
 
 
 # ---------------------------------------------------------------------------
@@ -581,12 +569,8 @@ class TestTimelineGapsTrailing:
         cat = Catalog(catalog_with_files)
         cat.open()
         # Jan has data, Feb-Apr are empty (trailing gap)
-        cat.conn.execute(
-            "UPDATE files SET date_original = '2022:01:10 08:00:00' WHERE path LIKE '%photo1%'"
-        )
-        cat.conn.execute(
-            "UPDATE files SET date_original = '2022:04:15 08:00:00' WHERE path LIKE '%video1%'"
-        )
+        cat.conn.execute("UPDATE files SET date_original = '2022:01:10 08:00:00' WHERE path LIKE '%photo1%'")
+        cat.conn.execute("UPDATE files SET date_original = '2022:04:15 08:00:00' WHERE path LIKE '%video1%'")
         # Make sure Apr has data too so Feb-Mar is a mid gap, not trailing
         # Actually let's make Jan and Apr have data, so Feb-Mar is a gap
         cat.conn.commit()

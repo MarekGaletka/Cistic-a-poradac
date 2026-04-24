@@ -137,8 +137,7 @@ def read_exif(path: Path) -> ExifMeta | None:
             if gps_ifd:
                 _parse_gps(gps_ifd, meta)
 
-    except (OSError, ValueError, KeyError, AttributeError, TypeError,
-            IndexError, OverflowError, struct.error) as exc:
+    except (OSError, ValueError, KeyError, AttributeError, TypeError, IndexError, OverflowError, struct.error) as exc:
         logger.debug("Cannot read EXIF from %s: %s", path, exc)
         return None
     except Exception as exc:

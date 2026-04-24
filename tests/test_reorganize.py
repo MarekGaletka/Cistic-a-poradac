@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from godmode_media_library.reorganize import (
     ReorganizeConfig,
     ReorganizeFileEntry,
     ReorganizePlan,
-    ReorganizeResult,
     _compute_destination,
     _human_size,
     _icon_for,
@@ -23,8 +19,8 @@ from godmode_media_library.reorganize import (
     plan_reorganization,
 )
 
-
 # ── _should_exclude ──────────────────────────────────────────────────
+
 
 class TestShouldExclude:
     def test_dotfile_pattern(self):
@@ -45,6 +41,7 @@ class TestShouldExclude:
 
 # ── _icon_for ────────────────────────────────────────────────────────
 
+
 class TestIconFor:
     def test_mac(self):
         assert _icon_for("mac") == "folder"
@@ -64,6 +61,7 @@ class TestIconFor:
 
 # ── _looks_like_iphone ──────────────────────────────────────────────
 
+
 class TestLooksLikeIphone:
     def test_has_dcim(self, tmp_path):
         (tmp_path / "DCIM").mkdir()
@@ -74,6 +72,7 @@ class TestLooksLikeIphone:
 
 
 # ── _human_size ──────────────────────────────────────────────────────
+
 
 class TestHumanSize:
     def test_bytes(self):
@@ -90,6 +89,7 @@ class TestHumanSize:
 
 
 # ── _resolve_collision ───────────────────────────────────────────────
+
 
 class TestResolveCollision:
     def test_no_collision(self, tmp_path):
@@ -120,6 +120,7 @@ class TestResolveCollision:
 
 
 # ── _compute_destination ─────────────────────────────────────────────
+
 
 class TestComputeDestination:
     def _make_entry(self, name="photo.jpg", category="images"):
@@ -155,6 +156,7 @@ class TestComputeDestination:
 
 
 # ── plan_reorganization (mocked filesystem) ──────────────────────────
+
 
 class TestPlanReorganization:
     @patch("godmode_media_library.reorganize.sha256_file", return_value="abc123")
@@ -222,12 +224,13 @@ class TestPlanReorganization:
             deduplicate=False,
             workers=1,
         )
-        plan = plan_reorganization(config, progress_fn=lambda d: progress_calls.append(d))
+        plan_reorganization(config, progress_fn=lambda d: progress_calls.append(d))
         assert len(progress_calls) > 0
         assert progress_calls[0]["phase"] == "discovery"
 
 
 # ── execute_reorganization ───────────────────────────────────────────
+
 
 class TestExecuteReorganization:
     def test_dry_run_no_copies(self, tmp_path):

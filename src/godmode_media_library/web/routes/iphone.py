@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import time
 
@@ -103,6 +102,7 @@ async def iphone_start(req: IPhoneStartRequest, request: Request, bg: Background
 
     def _run():
         try:
+
             def _on_progress(prog):
                 _update_progress(task.id, prog)
                 _notify_ws(task.id, {"type": "iphone_progress", **prog})
@@ -158,6 +158,7 @@ async def iphone_resume(request: Request, bg: BackgroundTasks):
 
     def _run():
         try:
+
             def _on_progress(prog):
                 _update_progress(task.id, prog)
                 _notify_ws(task.id, {"type": "iphone_progress", **prog})
@@ -178,6 +179,7 @@ async def iphone_resume(request: Request, bg: BackgroundTasks):
 async def iphone_progress():
     """Get real-time import progress."""
     from ...iphone_import import get_progress
+
     return get_progress()
 
 
@@ -191,6 +193,7 @@ async def iphone_reorganize(request: Request, bg: BackgroundTasks):
 
     def _run():
         try:
+
             def _on_progress(prog):
                 _update_progress(task.id, prog)
                 _notify_ws(task.id, {"type": "iphone_reorganize", **prog})
@@ -246,9 +249,9 @@ def _auto_import_loop():
 
             task = _create_task("iphone_auto_import")
 
-            def _on_progress(prog):
-                _update_progress(task.id, prog)
-                _notify_ws(task.id, {"type": "iphone_progress", **prog})
+            def _on_progress(prog, _task=task):
+                _update_progress(_task.id, prog)
+                _notify_ws(_task.id, {"type": "iphone_progress", **prog})
 
             try:
                 result = run_import(_auto_import_catalog_path, config, progress_fn=_on_progress)
@@ -289,9 +292,7 @@ async def iphone_auto_import_toggle(request: Request):
         _auto_import_catalog_path = str(request.app.state.catalog_path)
 
         if _auto_import_thread is None or not _auto_import_thread.is_alive():
-            _auto_import_thread = threading.Thread(
-                target=_auto_import_loop, daemon=True, name="iphone-auto-import"
-            )
+            _auto_import_thread = threading.Thread(target=_auto_import_loop, daemon=True, name="iphone-auto-import")
             _auto_import_thread.start()
 
         logger.info("Auto-import enabled")

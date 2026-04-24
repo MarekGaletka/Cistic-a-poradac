@@ -48,8 +48,7 @@ def check_disk_space(dest_dir: Path, file_size: int, margin: float = 1.1) -> boo
     needed = int(file_size * margin)
     if usage.free < needed:
         logger.warning(
-            "Insufficient disk space for quarantine move: need %d bytes "
-            "(file %d + margin), only %d bytes free on %s",
+            "Insufficient disk space for quarantine move: need %d bytes (file %d + margin), only %d bytes free on %s",
             needed,
             file_size,
             usage.free,

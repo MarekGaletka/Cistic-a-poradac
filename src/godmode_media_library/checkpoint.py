@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_cfs_status ON consolidation_file_state(status);
 CREATE INDEX IF NOT EXISTS idx_cfs_job_step_status ON consolidation_file_state(job_id, step_name, status);
 """
 
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -591,7 +592,11 @@ def reset_stale_in_progress(
     if total_reset:
         logger.info(
             "Reset %d stale in_progress files (dead PIDs: %s, stale >%ds) for job %s step %s",
-            total_reset, dead_pids or "none", stale_after_seconds, job_id, step,
+            total_reset,
+            dead_pids or "none",
+            stale_after_seconds,
+            job_id,
+            step,
         )
     return total_reset
 

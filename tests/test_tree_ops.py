@@ -355,6 +355,7 @@ def test_apply_tree_plan_copy(tmp_path: Path):
 # ── Collision tracking & reserved set accumulation ───────────────────
 
 import pytest
+
 from godmode_media_library.tree_ops import (
     _allocate_destination,
     _bucket_for,
@@ -364,7 +365,6 @@ from godmode_media_library.tree_ops import (
     _pick_anchor,
     _unit_id,
 )
-from godmode_media_library.models import FileRecord
 
 
 class TestAllocateDestination:
@@ -452,8 +452,7 @@ class TestLoadLabels:
     def test_with_labels_file(self, tmp_path: Path):
         labels_file = tmp_path / "labels.tsv"
         labels_file.write_text(
-            "path\tpeople\tplace\n"
-            f"{tmp_path}/photo.jpg\tJohn\tPrague\n",
+            f"path\tpeople\tplace\n{tmp_path}/photo.jpg\tJohn\tPrague\n",
             encoding="utf-8",
         )
         result = _load_labels(labels_file)
@@ -569,6 +568,7 @@ class TestApplyTreePlanOverwrite:
 
         plan_path = tmp_path / "plan.tsv"
         from godmode_media_library.utils import write_tsv
+
         write_tsv(
             plan_path,
             ["unit_id", "source_path", "destination_path", "mode", "bucket", "asset_key", "is_asset_component"],
@@ -577,8 +577,11 @@ class TestApplyTreePlanOverwrite:
 
         log_path = tmp_path / "log.tsv"
         applied, skipped = apply_tree_plan(
-            plan_path=plan_path, operation="copy", dry_run=False,
-            collision_policy="overwrite", log_path=log_path,
+            plan_path=plan_path,
+            operation="copy",
+            dry_run=False,
+            collision_policy="overwrite",
+            log_path=log_path,
         )
         assert applied == 1
         assert dst_file.read_bytes() == b"NEW_DATA" * 50
@@ -591,6 +594,7 @@ class TestApplyTreePlanOverwrite:
 
         plan_path = tmp_path / "plan.tsv"
         from godmode_media_library.utils import write_tsv
+
         write_tsv(
             plan_path,
             ["unit_id", "source_path", "destination_path", "mode", "bucket", "asset_key", "is_asset_component"],
@@ -600,8 +604,11 @@ class TestApplyTreePlanOverwrite:
         log_path = tmp_path / "log.tsv"
         with pytest.raises(ValueError, match="Unsupported operation"):
             apply_tree_plan(
-                plan_path=plan_path, operation="invalid_op", dry_run=False,
-                collision_policy="skip", log_path=log_path,
+                plan_path=plan_path,
+                operation="invalid_op",
+                dry_run=False,
+                collision_policy="skip",
+                log_path=log_path,
             )
 
     def test_dry_run_no_changes(self, tmp_path: Path):
@@ -612,6 +619,7 @@ class TestApplyTreePlanOverwrite:
 
         plan_path = tmp_path / "plan.tsv"
         from godmode_media_library.utils import write_tsv
+
         write_tsv(
             plan_path,
             ["unit_id", "source_path", "destination_path", "mode", "bucket", "asset_key", "is_asset_component"],
@@ -620,8 +628,11 @@ class TestApplyTreePlanOverwrite:
 
         log_path = tmp_path / "log.tsv"
         applied, skipped = apply_tree_plan(
-            plan_path=plan_path, operation="move", dry_run=True,
-            collision_policy="skip", log_path=log_path,
+            plan_path=plan_path,
+            operation="move",
+            dry_run=True,
+            collision_policy="skip",
+            log_path=log_path,
         )
         assert applied == 1
         assert src_file.exists()  # not actually moved
@@ -640,7 +651,9 @@ class TestCreateTreePlanModes:
         )
         target = tmp_path / "target"
         rows = create_tree_plan(
-            roots=[src], target_root=target, mode="people",
+            roots=[src],
+            target_root=target,
+            mode="people",
             labels_tsv=labels,
         )
         assert len(rows) >= 1
@@ -652,7 +665,10 @@ class TestCreateTreePlanModes:
         (src / "photo.jpg").write_bytes(b"JPEG" * 100)
         target = tmp_path / "target"
         rows = create_tree_plan(
-            roots=[src], target_root=target, mode="modified", granularity="year",
+            roots=[src],
+            target_root=target,
+            mode="modified",
+            granularity="year",
         )
         assert len(rows) >= 1
         for r in rows:

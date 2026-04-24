@@ -1,7 +1,5 @@
 """Tests for _build_dest_path() and _make_collision_safe() helpers (Session 5, item 5.3)."""
 
-import pytest
-
 from godmode_media_library.consolidation import _build_dest_path, _make_collision_safe
 from godmode_media_library.consolidation_types import StructurePattern
 

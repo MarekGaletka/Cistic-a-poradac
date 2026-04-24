@@ -193,6 +193,7 @@ class TestWriteTags:
 
     def test_write_timeout(self):
         import subprocess as sp
+
         with (
             patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
             patch("godmode_media_library.exiftool_extract.subprocess.run", side_effect=sp.TimeoutExpired("exiftool", 30)),
@@ -238,10 +239,12 @@ class TestBatchWriteTags:
             patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
             patch("godmode_media_library.exiftool_extract.subprocess.run", return_value=mock_proc),
         ):
-            results = batch_write_tags({
-                Path("/tmp/a.jpg"): {"EXIF:Make": "Canon"},
-                Path("/tmp/b.jpg"): {"EXIF:Make": "Nikon"},
-            })
+            results = batch_write_tags(
+                {
+                    Path("/tmp/a.jpg"): {"EXIF:Make": "Canon"},
+                    Path("/tmp/b.jpg"): {"EXIF:Make": "Nikon"},
+                }
+            )
             assert len(results) == 2
             assert all(ok for ok, _ in results.values())
 
@@ -259,10 +262,12 @@ class TestBatchWriteTags:
             patch("godmode_media_library.exiftool_extract.exiftool_available", return_value="/usr/bin/exiftool"),
             patch("godmode_media_library.exiftool_extract.subprocess.run", side_effect=side_effect),
         ):
-            results = batch_write_tags({
-                Path("/tmp/a.jpg"): {"EXIF:Make": "Canon"},
-                Path("/tmp/b.jpg"): {"EXIF:Make": "Nikon"},
-            })
+            results = batch_write_tags(
+                {
+                    Path("/tmp/a.jpg"): {"EXIF:Make": "Canon"},
+                    Path("/tmp/b.jpg"): {"EXIF:Make": "Nikon"},
+                }
+            )
             successes = sum(1 for ok, _ in results.values() if ok)
             failures = sum(1 for ok, _ in results.values() if not ok)
             assert successes == 1

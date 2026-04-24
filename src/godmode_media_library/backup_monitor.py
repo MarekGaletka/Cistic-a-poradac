@@ -318,9 +318,7 @@ def _is_duplicate_notification(message: str) -> bool:
     now = time.monotonic()
     # Prune old entries
     cutoff = now - _DEDUP_WINDOW_SECONDS
-    _recent_notifications[:] = [
-        (msg, ts) for msg, ts in _recent_notifications if ts >= cutoff
-    ]
+    _recent_notifications[:] = [(msg, ts) for msg, ts in _recent_notifications if ts >= cutoff]
     for msg, _ts in _recent_notifications:
         if msg == message:
             return True

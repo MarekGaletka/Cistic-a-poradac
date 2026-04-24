@@ -335,9 +335,7 @@ class Catalog:
             except OSError:
                 os.close(self._lock_fd)
                 self._lock_fd = None
-                raise RuntimeError(
-                    "Another gml process is writing to the catalog. Try again later."
-                ) from None
+                raise RuntimeError("Another gml process is writing to the catalog. Try again later.") from None
             except BaseException:
                 os.close(self._lock_fd)
                 self._lock_fd = None
@@ -1507,8 +1505,7 @@ class Catalog:
         """Return all smart albums."""
         cur = self.conn.execute("SELECT id, name, icon, filters_json, created_at, updated_at FROM smart_albums ORDER BY id")
         return [
-            {"id": r[0], "name": r[1], "icon": r[2], "filters_json": r[3], "created_at": r[4], "updated_at": r[5]}
-            for r in cur.fetchall()
+            {"id": r[0], "name": r[1], "icon": r[2], "filters_json": r[3], "created_at": r[4], "updated_at": r[5]} for r in cur.fetchall()
         ]
 
     def get_smart_album(self, album_id: int) -> dict | None:
@@ -1522,7 +1519,14 @@ class Catalog:
             return None
         return {"id": r[0], "name": r[1], "icon": r[2], "filters_json": r[3], "created_at": r[4], "updated_at": r[5]}
 
-    def update_smart_album(self, album_id: int, *, name: str | None = None, icon: str | None = None, filters_json: str | None = None) -> bool:
+    def update_smart_album(
+        self,
+        album_id: int,
+        *,
+        name: str | None = None,
+        icon: str | None = None,
+        filters_json: str | None = None,
+    ) -> bool:
         """Update a smart album. Returns True if found and updated."""
         import json as _json
 
@@ -1906,9 +1910,7 @@ class Catalog:
     def upsert_person(self, name: str, sample_face_id: int | None = None) -> int:
         """Find existing person by name (case-insensitive) or create new. Returns person id."""
         # Check for existing person with same name
-        row = self.conn.execute(
-            "SELECT id FROM persons WHERE LOWER(name) = LOWER(?)", (name,)
-        ).fetchone()
+        row = self.conn.execute("SELECT id FROM persons WHERE LOWER(name) = LOWER(?)", (name,)).fetchone()
         if row:
             return row[0]
         now = utc_stamp()
@@ -2196,11 +2198,15 @@ class Catalog:
             "LIMIT ? OFFSET ?"
         )
         search_params: list[object] = [
-            filename_exact,    # relevance 0: exact filename
-            f"%/{escaped}%",   # relevance 1: filename contains
-            like_pat,          # relevance 2: path contains
-            like_pat, like_pat, like_pat, like_pat,  # WHERE clause
-            limit, offset,
+            filename_exact,  # relevance 0: exact filename
+            f"%/{escaped}%",  # relevance 1: filename contains
+            like_pat,  # relevance 2: path contains
+            like_pat,
+            like_pat,
+            like_pat,
+            like_pat,  # WHERE clause
+            limit,
+            offset,
         ]
 
         cur = self.conn.execute(search_sql, search_params)
@@ -2259,8 +2265,7 @@ class Catalog:
     def query_duplicate_group(self, group_id: str) -> list[CatalogFileRow] | None:
         """Return file rows for a single duplicate group, or None if not found."""
         cur = self.conn.execute(
-            "SELECT f.* FROM duplicates d JOIN files f ON d.file_id = f.id "
-            "WHERE d.group_id = ? ORDER BY f.path",
+            "SELECT f.* FROM duplicates d JOIN files f ON d.file_id = f.id WHERE d.group_id = ? ORDER BY f.path",
             (group_id,),
         )
         rows = cur.fetchall()
@@ -2305,36 +2310,25 @@ class Catalog:
         quality_count = files_row[7]
 
         # 2) Single pass over `duplicates` (was 2 queries)
-        dup_row = conn.execute(
-            "SELECT COUNT(DISTINCT group_id), COUNT(*) FROM duplicates"
-        ).fetchone()
+        dup_row = conn.execute("SELECT COUNT(DISTINCT group_id), COUNT(*) FROM duplicates").fetchone()
         dup_groups = dup_row[0]
         dup_files = dup_row[1]
 
         # 3) Labels
-        labeled_files = conn.execute(
-            "SELECT COUNT(*) FROM labels WHERE people != '' OR place != ''"
-        ).fetchone()[0]
+        labeled_files = conn.execute("SELECT COUNT(*) FROM labels WHERE people != '' OR place != ''").fetchone()[0]
 
         # 4) Single pass over `scans` (was 3 queries)
-        scan_row = conn.execute(
-            "SELECT COUNT(*), MAX(finished_at) FROM scans"
-        ).fetchone()
+        scan_row = conn.execute("SELECT COUNT(*), MAX(finished_at) FROM scans").fetchone()
         scans = scan_row[0]
         last_scan = scan_row[1]
 
-        last_scan_root_row = conn.execute(
-            "SELECT root FROM scans ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        last_scan_root_row = conn.execute("SELECT root FROM scans ORDER BY id DESC LIMIT 1").fetchone()
         last_scan_root = last_scan_root_row[0] if last_scan_root_row else ""
 
         # 5) Top extensions & cameras (GROUP BY, kept as separate queries)
         ext_counts = [
             [row[0] or "(noext)", row[1]]
-            for row in conn.execute(
-                "SELECT ext, COUNT(*) as cnt FROM files"
-                " GROUP BY ext ORDER BY cnt DESC LIMIT 20"
-            )
+            for row in conn.execute("SELECT ext, COUNT(*) as cnt FROM files GROUP BY ext ORDER BY cnt DESC LIMIT 20")
         ]
 
         camera_counts = [
@@ -2348,11 +2342,7 @@ class Catalog:
 
         # 6) Face stats (safe — tables may not exist in older catalogs)
         try:
-            face_row = conn.execute(
-                "SELECT"
-                "  (SELECT COUNT(*) FROM faces),"
-                "  (SELECT COUNT(*) FROM persons)"
-            ).fetchone()
+            face_row = conn.execute("SELECT  (SELECT COUNT(*) FROM faces),  (SELECT COUNT(*) FROM persons)").fetchone()
             total_faces = face_row[0]
             total_persons = face_row[1]
         except (sqlite3.OperationalError, sqlite3.DatabaseError):

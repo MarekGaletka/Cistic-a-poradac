@@ -61,12 +61,24 @@ def _insert_file(db: sqlite3.Connection, **kwargs) -> int:
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            d["path"], d["size"], d["mtime"], d["ctime"], d["ext"],
-            d["first_seen"], d["last_scanned"],
-            d["width"], d["height"], d["bitrate"],
-            d["date_original"], d["camera_make"], d["camera_model"],
-            d["gps_latitude"], d["gps_longitude"], d["metadata_richness"],
-            d["sha256"], d["phash"],
+            d["path"],
+            d["size"],
+            d["mtime"],
+            d["ctime"],
+            d["ext"],
+            d["first_seen"],
+            d["last_scanned"],
+            d["width"],
+            d["height"],
+            d["bitrate"],
+            d["date_original"],
+            d["camera_make"],
+            d["camera_model"],
+            d["gps_latitude"],
+            d["gps_longitude"],
+            d["metadata_richness"],
+            d["sha256"],
+            d["phash"],
         ),
     )
     db.commit()
@@ -138,7 +150,7 @@ def populated_catalog(tmp_path):
     _add_rating(db, fid1, 5)
 
     # File 2: Decent phone photo, no GPS
-    fid2 = _insert_file(
+    _insert_file(
         db,
         path="/media/phone_pic.jpg",
         size=3_000_000,
@@ -155,7 +167,7 @@ def populated_catalog(tmp_path):
     )
 
     # File 3: Low-quality old screenshot, no metadata
-    fid3 = _insert_file(
+    _insert_file(
         db,
         path="/media/screenshot.png",
         size=200_000,
@@ -335,8 +347,13 @@ class TestGalleryCollections:
         collections = data["collections"]
         # Should return all collection keys even if empty
         expected_keys = {
-            "best_of", "masterpieces", "top_rated", "travel",
-            "pro_shots", "recent", "hidden_gems",
+            "best_of",
+            "masterpieces",
+            "top_rated",
+            "travel",
+            "pro_shots",
+            "recent",
+            "hidden_gems",
         }
         assert set(collections.keys()) == expected_keys
         # All collections should be empty lists
@@ -372,7 +389,7 @@ class TestGalleryCollections:
     def test_collection_items_have_expected_fields(self, client):
         resp = client.get("/api/gallery/collections")
         collections = resp.json()["collections"]
-        for name, items in collections.items():
+        for _name, items in collections.items():
             for item in items:
                 assert "path" in item
                 assert "total" in item
@@ -402,8 +419,14 @@ class TestGalleryFileScore:
         data = resp.json()
         dims = data["dimensions"]
         expected_dims = {
-            "resolution", "metadata_richness", "file_quality",
-            "camera_tier", "geo", "user_signal", "uniqueness", "recency",
+            "resolution",
+            "metadata_richness",
+            "file_quality",
+            "camera_tier",
+            "geo",
+            "user_signal",
+            "uniqueness",
+            "recency",
         }
         assert set(dims.keys()) == expected_dims
         for dim_name, val in dims.items():

@@ -39,6 +39,7 @@ class _DiskKeepAlive:
 
     def _run(self):
         import os
+
         while not self._stop.wait(self._interval):
             for root in self._roots:
                 try:
@@ -101,6 +102,7 @@ def _process_batch(
 
     # Media probe + EXIF
     if paths_for_media:
+
         def _extract(idx: int, p: Path, ext: str) -> tuple[int, MediaMeta | None, ExifMeta | None]:
             mm = probe_file(p) if is_media_ext(ext) else None
             em = read_exif(p) if can_read_exif(ext) else None
@@ -254,8 +256,14 @@ def incremental_scan(
         if cancel_event and cancel_event.is_set():
             logger.info("Scan cancelled by pause signal")
             if batch:
-                _process_batch(batch, effective_workers=effective_workers, extract_media=extract_media,
-                               compute_phash=compute_phash, min_size_bytes=min_size_bytes, stats=stats)
+                _process_batch(
+                    batch,
+                    effective_workers=effective_workers,
+                    extract_media=extract_media,
+                    compute_phash=compute_phash,
+                    min_size_bytes=min_size_bytes,
+                    stats=stats,
+                )
                 _upsert_batch(catalog, batch)
             catalog.commit()
             return stats
@@ -324,8 +332,14 @@ def incremental_scan(
         if len(batch) >= _BATCH_SIZE:
             if progress_callback:
                 progress_callback({"phase": "scanning", "total": total_discovered, "processed": stats.files_scanned})
-            _process_batch(batch, effective_workers=effective_workers, extract_media=extract_media,
-                           compute_phash=compute_phash, min_size_bytes=min_size_bytes, stats=stats)
+            _process_batch(
+                batch,
+                effective_workers=effective_workers,
+                extract_media=extract_media,
+                compute_phash=compute_phash,
+                min_size_bytes=min_size_bytes,
+                stats=stats,
+            )
             _upsert_batch(catalog, batch)
             batches_committed += 1
             logger.info("Batch %d committed (%d files so far)", batches_committed, stats.files_scanned)
@@ -335,8 +349,14 @@ def incremental_scan(
     if batch:
         if progress_callback:
             progress_callback({"phase": "scanning", "total": total_discovered, "processed": stats.files_scanned})
-        _process_batch(batch, effective_workers=effective_workers, extract_media=extract_media,
-                       compute_phash=compute_phash, min_size_bytes=min_size_bytes, stats=stats)
+        _process_batch(
+            batch,
+            effective_workers=effective_workers,
+            extract_media=extract_media,
+            compute_phash=compute_phash,
+            min_size_bytes=min_size_bytes,
+            stats=stats,
+        )
         _upsert_batch(catalog, batch)
         batches_committed += 1
         batch = []
@@ -352,9 +372,7 @@ def incremental_scan(
             logger.warning("Root %s not accessible — skipping removal detection for this root", root)
             continue
         prefix = str(root).rstrip("/") + "/"
-        cur = catalog.conn.execute(
-            "SELECT path FROM files WHERE path LIKE ? || '%'", (prefix,)
-        )
+        cur = catalog.conn.execute("SELECT path FROM files WHERE path LIKE ? || '%'", (prefix,))
         for row in cur:
             catalog_paths_in_scope.add(row[0])
     removed_paths = catalog_paths_in_scope - seen_paths
@@ -364,7 +382,8 @@ def incremental_scan(
         if len(removed_paths) > len(catalog_paths_in_scope) * 0.5 and len(removed_paths) > 1000:
             logger.warning(
                 "Skipping removal of %d/%d files — likely disconnected disk, not actual deletions",
-                len(removed_paths), len(catalog_paths_in_scope),
+                len(removed_paths),
+                len(catalog_paths_in_scope),
             )
         else:
             stats.files_removed = catalog.mark_removed(list(removed_paths))

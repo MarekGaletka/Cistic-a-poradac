@@ -335,10 +335,7 @@ def apply_tree_plan(
             try:
                 if operation == "move":
                     # Handle case-only rename on case-insensitive FS (e.g. Photo.jpg -> photo.JPG)
-                    if (
-                        os.path.normcase(str(src)) == os.path.normcase(str(final_dst))
-                        and str(src) != str(final_dst)
-                    ):
+                    if os.path.normcase(str(src)) == os.path.normcase(str(final_dst)) and str(src) != str(final_dst):
                         # Same inode, different case — two-step rename via temp name
                         tmp = final_dst.parent / (final_dst.name + ".__gml_tmp__")
                         shutil.move(str(src), str(tmp))

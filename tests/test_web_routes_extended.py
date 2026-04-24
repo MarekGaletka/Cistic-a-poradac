@@ -3,10 +3,8 @@
 Covers: iphone auto-import status, faces list, duplicates merge,
 quality scoring endpoint, timeline data, file operations error paths.
 """
-from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
 
 import pytest
 
@@ -17,6 +15,7 @@ from godmode_media_library.catalog import Catalog
 def app_client(tmp_path):
     """Create a test client for the FastAPI app."""
     from fastapi.testclient import TestClient
+
     from godmode_media_library.web.app import create_app
 
     db_path = tmp_path / "test.db"
@@ -28,18 +27,30 @@ def app_client(tmp_path):
 def app_client_with_file(tmp_path):
     """Create a test client with a pre-populated catalog."""
     from fastapi.testclient import TestClient
-    from godmode_media_library.catalog import Catalog, CatalogFileRow
+
+    from godmode_media_library.catalog import CatalogFileRow
     from godmode_media_library.web.app import create_app
 
     db_path = tmp_path / "test.db"
     cat = Catalog(db_path)
     cat.open()
     row = CatalogFileRow(
-        id=None, path=str(tmp_path / "photo.jpg"), size=1024,
-        mtime=1700000000.0, ctime=1700000000.0, birthtime=1699999000.0,
-        ext="jpg", sha256="a" * 64, inode=12345, device=1, nlink=1,
-        asset_key=None, asset_component=False, xattr_count=0,
-        first_seen="20240101_000000", last_scanned="20240101_000000",
+        id=None,
+        path=str(tmp_path / "photo.jpg"),
+        size=1024,
+        mtime=1700000000.0,
+        ctime=1700000000.0,
+        birthtime=1699999000.0,
+        ext="jpg",
+        sha256="a" * 64,
+        inode=12345,
+        device=1,
+        nlink=1,
+        asset_key=None,
+        asset_component=False,
+        xattr_count=0,
+        first_seen="20240101_000000",
+        last_scanned="20240101_000000",
     )
     cat.upsert_file(row)
     cat.commit()

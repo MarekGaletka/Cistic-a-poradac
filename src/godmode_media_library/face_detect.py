@@ -102,7 +102,7 @@ def detect_faces_in_file(
             bottom = int(round(bottom * inv))
             left = int(round(left * inv))
 
-        raw_bytes = enc.tobytes() if hasattr(enc, 'tobytes') else bytes(struct.pack("<128d", *enc))
+        raw_bytes = enc.tobytes() if hasattr(enc, "tobytes") else bytes(struct.pack("<128d", *enc))
         encoding_blob = encrypt_fn(enc) if encrypt_fn else raw_bytes
         catalog.insert_face(
             file_id=file_id,
@@ -214,8 +214,7 @@ def cluster_faces(
             is_new_cluster = cluster_id not in clusters
             if is_new_cluster and len(clusters) >= max_clusters:
                 logger.warning(
-                    "Cluster limit reached (%d). Stopping clustering early; "
-                    "remaining faces will be unassigned.",
+                    "Cluster limit reached (%d). Stopping clustering early; remaining faces will be unassigned.",
                     max_clusters,
                 )
                 cluster_limit_hit = True
@@ -236,19 +235,18 @@ def cluster_faces(
         chunk = face_ids[i : i + chunk_size]
         placeholders = ",".join("?" for _ in chunk)
         rows = catalog.conn.execute(
-            f"SELECT id, person_id FROM faces WHERE id IN ({placeholders})", chunk  # noqa: S608
+            f"SELECT id, person_id FROM faces WHERE id IN ({placeholders})",
+            chunk,  # noqa: S608
         ).fetchall()
         for row in rows:
             face_person_map[row[0]] = row[1]
 
     # ── Build set of "user-named" person IDs (not auto-generated Person_NNN) ──
     import re
+
     auto_name_re = re.compile(rf"^{re.escape(person_prefix)}_\d{{3,}}$")
     all_persons = {p["id"]: p for p in catalog.get_all_persons()}
-    named_person_ids = {
-        pid for pid, p in all_persons.items()
-        if p["name"] and not auto_name_re.match(p["name"])
-    }
+    named_person_ids = {pid for pid, p in all_persons.items() if p["name"] and not auto_name_re.match(p["name"])}
 
     # ── Assign clusters, preserving named persons ──
     auto_counter = 0
@@ -283,9 +281,7 @@ def cluster_faces(
     catalog._refresh_person_counts()
     for pid, p in all_persons.items():
         if auto_name_re.match(p["name"]):
-            cnt = catalog.conn.execute(
-                "SELECT face_count FROM persons WHERE id = ?", (pid,)
-            ).fetchone()
+            cnt = catalog.conn.execute("SELECT face_count FROM persons WHERE id = ?", (pid,)).fetchone()
             if cnt and cnt[0] == 0:
                 catalog.conn.execute("DELETE FROM persons WHERE id = ?", (pid,))
 

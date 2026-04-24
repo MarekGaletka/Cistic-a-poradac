@@ -6,7 +6,6 @@ move, rename, delete, thumbnails, and previews.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -80,6 +79,7 @@ def catalog_db(tmp_path, media_root):
     # Register tmp_path as a configured root so quarantine/move destinations
     # under tmp_path pass the _check_path_within_roots security check.
     import json
+
     cat.conn.execute(
         "INSERT INTO meta (key, value) VALUES ('configured_roots', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (json.dumps([str(tmp_path)]),),

@@ -21,15 +21,14 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass, field
-from pathlib import PurePosixPath
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock, PropertyMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from godmode_media_library.consolidation import (
+    _ATE_RESIDUE_PATTERN,
+    _SURROG_PATTERN,
     ConsolidationConfig,
     ConsolidationProgress,
     PhaseContext,
@@ -38,13 +37,11 @@ from godmode_media_library.consolidation import (
     _get_bundle_root,
     _rclone_copy_dir,
     _rclone_delete,
-    _rclone_lsjson_recursive_fallback,
     _rclone_lsjson_fast,
+    _rclone_lsjson_recursive_fallback,
     _rclone_moveto,
     _software_subcategory,
     _surrog_cleanup,
-    _SURROG_PATTERN,
-    _ATE_RESIDUE_PATTERN,
     get_consolidation_status,
     get_failed_files_report,
     pause_consolidation,
@@ -55,15 +52,12 @@ from godmode_media_library.consolidation import (
     sync_to_disk,
 )
 from godmode_media_library.consolidation_types import (
-    DedupStrategy,
     FileStatus,
     JobStatus,
-    Phase,
-    StructurePattern,
 )
 
-
 # ── Helpers for building mock PhaseContext ─────────────────────────────
+
 
 def _make_mock_job(job_id="test-job-1", status=JobStatus.RUNNING):
     """Create a mock ConsolidationJob."""
@@ -109,6 +103,7 @@ def _make_ctx(
 class TestSignalPause:
     def test_signal_pause_sets_event(self):
         from godmode_media_library.consolidation import _pause_events, _pause_events_lock
+
         evt = threading.Event()
         with _pause_events_lock:
             _pause_events["sp-test-1"] = (evt, time.time())
@@ -131,6 +126,7 @@ class TestSignalPause:
 class TestCheckPause:
     def test_check_pause_from_event(self):
         from godmode_media_library.consolidation import _pause_events, _pause_events_lock
+
         evt = threading.Event()
         evt.set()
         ctx = _make_ctx(job_id="cp-test-1")
@@ -299,6 +295,7 @@ class TestRcloneMoveto:
     @patch("subprocess.run", side_effect=TimeoutError("timeout"))
     def test_timeout(self, mock_run, mock_resolve):
         import subprocess as sp
+
         with patch("subprocess.run", side_effect=sp.TimeoutExpired("cmd", 300)):
             result = _rclone_moveto("r", "a", "r", "b", timeout=300)
             assert result["success"] is False
@@ -429,6 +426,7 @@ class TestRcloneLsjsonFallback:
     @patch("godmode_media_library.consolidation._rclone_bin", return_value="/usr/bin/rclone")
     def test_timeout(self, mock_bin, mock_check):
         import subprocess as sp
+
         with patch("subprocess.run", side_effect=sp.TimeoutExpired("cmd", 1800)):
             result = _rclone_lsjson_recursive_fallback("remote1")
             assert result == []
@@ -451,7 +449,7 @@ class TestRcloneLsjsonFast:
                 # The function catches ImportError and falls back
                 pass
         # Direct test: just call with ijson raising ImportError
-        results = list(_rclone_lsjson_fast.__wrapped__("remote")) if hasattr(_rclone_lsjson_fast, '__wrapped__') else []
+        list(_rclone_lsjson_fast.__wrapped__("remote")) if hasattr(_rclone_lsjson_fast, "__wrapped__") else []
         # Simpler approach: mock the actual import path
         # This is tricky due to generator, let's just verify fallback works
         mock_fallback.return_value = [{"Path": "b.jpg"}]
@@ -506,8 +504,10 @@ class TestSurrogCleanup:
         dest_files = [
             {"Path": "photo_surrog_surrog.jpg", "Name": "photo_surrog_surrog.jpg"},
         ]
-        with patch("godmode_media_library.consolidation._check_pause", return_value=False), \
-             patch("godmode_media_library.consolidation._rclone_moveto", return_value={"success": True}):
+        with (
+            patch("godmode_media_library.consolidation._check_pause", return_value=False),
+            patch("godmode_media_library.consolidation._rclone_moveto", return_value={"success": True}),
+        ):
             result = _surrog_cleanup(ctx, dest_files)
         assert result["renamed"] == 1
 
@@ -516,8 +516,10 @@ class TestSurrogCleanup:
         dest_files = [
             {"Path": "photo_surrog.jpg", "Name": "photo_surrog.jpg"},
         ]
-        with patch("godmode_media_library.consolidation._check_pause", return_value=False), \
-             patch("godmode_media_library.consolidation._rclone_moveto", return_value={"success": False, "error": "err"}):
+        with (
+            patch("godmode_media_library.consolidation._check_pause", return_value=False),
+            patch("godmode_media_library.consolidation._rclone_moveto", return_value={"success": False, "error": "err"}),
+        ):
             result = _surrog_cleanup(ctx, dest_files)
         assert result["failed"] == 1
 
@@ -531,6 +533,7 @@ class TestPhase1WaitForSources:
     @patch("godmode_media_library.consolidation.list_remotes")
     def test_phase_already_done(self, mock_list, mock_reachable, mock_ckpt):
         from godmode_media_library.consolidation import _phase_1_wait_for_sources
+
         ctx = _make_ctx()
         ctx.config.source_remotes = ["remote1"]
         mock_ckpt.is_phase_done.return_value = True
@@ -542,6 +545,7 @@ class TestPhase1WaitForSources:
     @patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=True)
     def test_all_reachable(self, mock_reachable, mock_ckpt):
         from godmode_media_library.consolidation import _phase_1_wait_for_sources
+
         ctx = _make_ctx()
         ctx.config.source_remotes = ["r1", "r2"]
         mock_ckpt.is_phase_done.return_value = False
@@ -555,6 +559,7 @@ class TestPhase1WaitForSources:
     @patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False)
     def test_no_sources_available_pauses(self, mock_reachable, mock_wait, mock_ckpt):
         from godmode_media_library.consolidation import _phase_1_wait_for_sources
+
         ctx = _make_ctx()
         ctx.config.source_remotes = ["r1"]
         mock_ckpt.is_phase_done.return_value = False
@@ -567,6 +572,7 @@ class TestPhase1WaitForSources:
     @patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False)
     def test_source_recovered_after_wait(self, mock_reachable, mock_wait, mock_ckpt):
         from godmode_media_library.consolidation import _phase_1_wait_for_sources
+
         ctx = _make_ctx()
         ctx.config.source_remotes = ["r1"]
         mock_ckpt.is_phase_done.return_value = False
@@ -581,6 +587,7 @@ class TestPhase4RegisterFiles:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_phase_already_done(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_4_register_files
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = True
         # Mock the SQL calls
@@ -595,6 +602,7 @@ class TestPhase4RegisterFiles:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_fresh_register(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_4_register_files
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         mock_row = {"cnt": 100}
@@ -615,6 +623,7 @@ class TestPhase9Dedup:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_dry_run_skips(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_9_dedup
+
         ctx = _make_ctx(config=ConsolidationConfig(dry_run=True))
         _phase_9_dedup(ctx)
         assert ctx.results["dedup"]["dry_run"] is True
@@ -622,6 +631,7 @@ class TestPhase9Dedup:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_phase_already_done(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_9_dedup
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = True
         _phase_9_dedup(ctx)
@@ -632,6 +642,7 @@ class TestPhase9Dedup:
     @patch("godmode_media_library.consolidation._check_pause", return_value=True)
     def test_paused(self, mock_check_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_9_dedup
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         _phase_9_dedup(ctx)
@@ -642,6 +653,7 @@ class TestPhase9Dedup:
     @patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False)
     def test_dest_unreachable(self, mock_reach, mock_check, mock_ckpt):
         from godmode_media_library.consolidation import _phase_9_dedup
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         _phase_9_dedup(ctx)
@@ -653,6 +665,7 @@ class TestPhase9Dedup:
     @patch("godmode_media_library.consolidation.rclone_dedupe")
     def test_success(self, mock_dedupe, mock_reach, mock_check, mock_ckpt):
         from godmode_media_library.consolidation import _phase_9_dedup
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         mock_dedupe.return_value = {"success": True, "duplicates_removed": 5, "bytes_freed": 1000}
@@ -668,6 +681,7 @@ class TestPhase11Report:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_report_completed(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_11_report
+
         ctx = _make_ctx()
         ctx.stream_start_time = time.monotonic() - 100
         ctx.available = ["r1"]
@@ -692,6 +706,7 @@ class TestPhase11Report:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_report_with_failures(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_11_report
+
         ctx = _make_ctx()
         ctx.stream_start_time = time.monotonic() - 10
         ctx.available = []
@@ -724,6 +739,7 @@ class TestPhase6RetryFailed:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_dry_run_skips(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_6_retry_failed
+
         ctx = _make_ctx(config=ConsolidationConfig(dry_run=True))
         _phase_6_retry_failed(ctx)
         # Should return immediately
@@ -731,6 +747,7 @@ class TestPhase6RetryFailed:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_phase_already_done(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_6_retry_failed
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = True
         _phase_6_retry_failed(ctx)
@@ -738,6 +755,7 @@ class TestPhase6RetryFailed:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_no_failed_files(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_6_retry_failed
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         mock_ckpt.get_failed_files.return_value = []
@@ -753,6 +771,7 @@ class TestPhase7Verify:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_dry_run_skips(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_7_verify
+
         ctx = _make_ctx(config=ConsolidationConfig(dry_run=True))
         _phase_7_verify(ctx)
 
@@ -760,6 +779,7 @@ class TestPhase7Verify:
     @patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False)
     def test_dest_unreachable(self, mock_reach, mock_ckpt):
         from godmode_media_library.consolidation import _phase_7_verify
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         _phase_7_verify(ctx)
@@ -772,11 +792,11 @@ class TestPhase7Verify:
     @patch("godmode_media_library.consolidation._check_pause", return_value=False)
     def test_verify_ok(self, mock_pause, mock_check_file, mock_hash_type, mock_reach, mock_ckpt):
         from godmode_media_library.consolidation import _phase_7_verify
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         # Mock completed transfers
-        mock_row = {"file_hash": "abc", "dest_location": "remote:path/f.jpg",
-                     "bytes_transferred": 100, "source_location": "src:a.jpg"}
+        mock_row = {"file_hash": "abc", "dest_location": "remote:path/f.jpg", "bytes_transferred": 100, "source_location": "src:a.jpg"}
         ctx.cat.conn.row_factory = None
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = [mock_row]
@@ -794,6 +814,7 @@ class TestPhase8ExtractArchives:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_dry_run_skips(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_8_extract_archives
+
         ctx = _make_ctx(config=ConsolidationConfig(dry_run=True))
         _phase_8_extract_archives(ctx)
 
@@ -801,6 +822,7 @@ class TestPhase8ExtractArchives:
     @patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False)
     def test_dest_unreachable(self, mock_reach, mock_ckpt):
         from godmode_media_library.consolidation import _phase_8_extract_archives
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         _phase_8_extract_archives(ctx)
@@ -814,6 +836,7 @@ class TestPhase10Organize:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_dry_run_skips(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_10_organize
+
         ctx = _make_ctx(config=ConsolidationConfig(dry_run=True))
         _phase_10_organize(ctx)
 
@@ -821,6 +844,7 @@ class TestPhase10Organize:
     @patch("godmode_media_library.consolidation.rclone_is_reachable", return_value=False)
     def test_dest_unreachable(self, mock_reach, mock_ckpt):
         from godmode_media_library.consolidation import _phase_10_organize
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         _phase_10_organize(ctx)
@@ -834,6 +858,7 @@ class TestPhase10Organize:
     @patch("godmode_media_library.consolidation._check_pause", return_value=False)
     def test_organize_moves_files(self, mock_pause, mock_moveto, mock_surrog, mock_ls, mock_reach, mock_ckpt):
         from godmode_media_library.consolidation import _phase_10_organize
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         # Return a file not yet in a category folder
@@ -918,6 +943,7 @@ class TestGetConsolidationStatus:
         mock_cat_cls.return_value = mock_cat
         # Use a mutable dict-like object so the function can write .status
         from godmode_media_library.consolidation_types import JOB_TYPE_ULTIMATE as _JTU
+
         orphan_data = {
             "job_id": "orphan-1",
             "job_type": _JTU,
@@ -934,6 +960,7 @@ class TestGetConsolidationStatus:
         mock_ckpt.get_job_progress.return_value = {}
         # Clear pause events to simulate no live process
         from godmode_media_library.consolidation import _pause_events, _pause_events_lock
+
         with _pause_events_lock:
             _pause_events.pop("orphan-1", None)
 
@@ -943,11 +970,10 @@ class TestGetConsolidationStatus:
         mock_cursor.fetchone.return_value = {"cnt": 0}
         mock_cat.conn.cursor.return_value = mock_cursor
 
-        result = get_consolidation_status("/tmp/cat.db")
+        get_consolidation_status("/tmp/cat.db")
         # The function should mark orphan as paused and call update_job
         mock_ckpt.update_job.assert_called_once_with(
-            mock_cat, "orphan-1", status=JobStatus.PAUSED,
-            error="Server restart — automaticky pokračuje při dalším spuštění"
+            mock_cat, "orphan-1", status=JobStatus.PAUSED, error="Server restart — automaticky pokračuje při dalším spuštění"
         )
 
 
@@ -957,6 +983,7 @@ class TestGetConsolidationStatus:
 class TestPauseConsolidation:
     def test_pause_with_active_event(self):
         from godmode_media_library.consolidation import _pause_events, _pause_events_lock
+
         evt = threading.Event()
         with _pause_events_lock:
             _pause_events["pause-test-1"] = (evt, time.time())
@@ -988,6 +1015,7 @@ class TestGetFailedFilesReport:
         mock_cat = MagicMock()
         mock_cat_cls.return_value = mock_cat
         from godmode_media_library.consolidation_types import JOB_TYPE_ULTIMATE
+
         job = SimpleNamespace(job_id="j1", job_type=JOB_TYPE_ULTIMATE)
         mock_ckpt.list_jobs.return_value = [job]
         mock_ckpt.get_failed_files.return_value = [
@@ -1020,7 +1048,7 @@ class TestPreviewConsolidation:
     @patch("godmode_media_library.consolidation.run_consolidation")
     def test_preview_sets_dry_run(self, mock_run):
         mock_run.return_value = {"dry_run": True}
-        result = preview_consolidation("/tmp/cat.db")
+        preview_consolidation("/tmp/cat.db")
         # Check that dry_run was set on the config passed to run_consolidation
         call_args = mock_run.call_args
         assert call_args[1]["config"].dry_run is True
@@ -1033,7 +1061,7 @@ class TestResumeConsolidation:
     @patch("godmode_media_library.consolidation.run_consolidation")
     def test_resume_calls_run(self, mock_run):
         mock_run.return_value = {"resumed": True}
-        result = resume_consolidation("/tmp/cat.db")
+        resume_consolidation("/tmp/cat.db")
         mock_run.assert_called_once()
 
 
@@ -1055,8 +1083,20 @@ class TestRunConsolidation:
     @patch("godmode_media_library.consolidation._phase_10_organize")
     @patch("godmode_media_library.consolidation._phase_11_report")
     def test_full_pipeline_new_job(
-        self, mock_p11, mock_p10, mock_p9, mock_p8, mock_p7, mock_p6, mock_p5,
-        mock_p4, mock_p3, mock_p2, mock_p1, mock_cat_cls, mock_ckpt,
+        self,
+        mock_p11,
+        mock_p10,
+        mock_p9,
+        mock_p8,
+        mock_p7,
+        mock_p6,
+        mock_p5,
+        mock_p4,
+        mock_p3,
+        mock_p2,
+        mock_p1,
+        mock_cat_cls,
+        mock_ckpt,
     ):
         mock_cat = MagicMock()
         mock_cat_cls.return_value = mock_cat
@@ -1089,6 +1129,7 @@ class TestRunConsolidation:
         # Simulate phase 1 setting paused
         def set_paused(ctx):
             ctx.progress.paused = True
+
         mock_p1.side_effect = set_paused
 
         result = run_consolidation("/tmp/cat.db")
@@ -1113,6 +1154,7 @@ class TestRunConsolidation:
         mock_ckpt.check_db_integrity.return_value = True
 
         from godmode_media_library.consolidation_types import JOB_TYPE_ULTIMATE
+
         existing_job = SimpleNamespace(
             job_id="existing-1",
             job_type=JOB_TYPE_ULTIMATE,
@@ -1156,6 +1198,7 @@ class TestPhase3LocalScan:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_phase_already_done(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_3_local_scan
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = True
         _phase_3_local_scan(ctx)
@@ -1163,6 +1206,7 @@ class TestPhase3LocalScan:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_no_local_roots(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_3_local_scan
+
         ctx = _make_ctx()
         ctx.config.local_roots = []
         mock_ckpt.is_phase_done.return_value = False
@@ -1173,6 +1217,7 @@ class TestPhase3LocalScan:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_with_local_roots(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_3_local_scan
+
         ctx = _make_ctx()
         ctx.config.local_roots = ["/tmp/test"]
         mock_ckpt.is_phase_done.return_value = False
@@ -1188,6 +1233,7 @@ class TestPhase3LocalScan:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_permission_error(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_3_local_scan
+
         ctx = _make_ctx()
         ctx.config.local_roots = ["/root/forbidden"]
         mock_ckpt.is_phase_done.return_value = False
@@ -1204,6 +1250,7 @@ class TestPhase2CloudCatalogScan:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_phase_already_done(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_2_cloud_catalog_scan
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = True
         _phase_2_cloud_catalog_scan(ctx)
@@ -1213,14 +1260,17 @@ class TestPhase2CloudCatalogScan:
     @patch("godmode_media_library.consolidation._rclone_lsjson_fast")
     def test_catalogs_files(self, mock_lsjson, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_2_cloud_catalog_scan
+
         ctx = _make_ctx()
         ctx.available = ["remote1"]
         ctx.config.dest_remote = "dest_remote"  # different from available
         mock_ckpt.is_phase_done.return_value = False
 
-        mock_lsjson.return_value = iter([
-            {"Path": "photo.jpg", "Size": 1000, "ModTime": "2023-06-15T10:00:00"},
-        ])
+        mock_lsjson.return_value = iter(
+            [
+                {"Path": "photo.jpg", "Size": 1000, "ModTime": "2023-06-15T10:00:00"},
+            ]
+        )
         # Mock the connection execute
         ctx.cat.conn.execute.return_value = MagicMock()
         ctx.cat.conn.commit.return_value = None
@@ -1235,6 +1285,7 @@ class TestPhase2CloudCatalogScan:
     @patch("godmode_media_library.consolidation._rclone_lsjson_fast")
     def test_skips_dest_remote(self, mock_lsjson, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_2_cloud_catalog_scan
+
         ctx = _make_ctx()
         ctx.available = ["gws-backup"]
         ctx.config.dest_remote = "gws-backup"
@@ -1249,16 +1300,19 @@ class TestPhase2CloudCatalogScan:
     @patch("godmode_media_library.consolidation._rclone_lsjson_fast")
     def test_media_only_filter(self, mock_lsjson, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_2_cloud_catalog_scan
+
         ctx = _make_ctx(config=ConsolidationConfig(media_only=True))
         ctx.available = ["remote1"]
         ctx.config.dest_remote = "dest"
         mock_ckpt.is_phase_done.return_value = False
 
         # Use .docx which is definitely NOT in MEDIA_EXTENSIONS
-        mock_lsjson.return_value = iter([
-            {"Path": "document.docx", "Size": 500, "ModTime": "2023-01-01"},
-            {"Path": "photo.jpg", "Size": 1000, "ModTime": "2023-01-01"},
-        ])
+        mock_lsjson.return_value = iter(
+            [
+                {"Path": "document.docx", "Size": 500, "ModTime": "2023-01-01"},
+                {"Path": "photo.jpg", "Size": 1000, "ModTime": "2023-01-01"},
+            ]
+        )
         ctx.cat.conn.execute.return_value = MagicMock()
         ctx.cat.conn.commit.return_value = None
 
@@ -1270,14 +1324,17 @@ class TestPhase2CloudCatalogScan:
     @patch("godmode_media_library.consolidation._rclone_lsjson_fast")
     def test_skips_directories(self, mock_lsjson, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_2_cloud_catalog_scan
+
         ctx = _make_ctx()
         ctx.available = ["remote1"]
         ctx.config.dest_remote = "dest"
         mock_ckpt.is_phase_done.return_value = False
 
-        mock_lsjson.return_value = iter([
-            {"Path": "some_dir", "IsDir": True},
-        ])
+        mock_lsjson.return_value = iter(
+            [
+                {"Path": "some_dir", "IsDir": True},
+            ]
+        )
         ctx.cat.conn.commit.return_value = None
 
         _phase_2_cloud_catalog_scan(ctx)
@@ -1288,6 +1345,7 @@ class TestPhase2CloudCatalogScan:
     @patch("godmode_media_library.consolidation._rclone_lsjson_fast", side_effect=OSError("connection lost"))
     def test_handles_error(self, mock_lsjson, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_2_cloud_catalog_scan
+
         ctx = _make_ctx()
         ctx.available = ["remote1"]
         ctx.config.dest_remote = "dest"
@@ -1308,6 +1366,7 @@ class TestMakeCollisionSafe:
 
     def test_collision_extends_hash(self):
         from godmode_media_library.consolidation import _make_collision_safe
+
         existing = set()
         result = _make_collision_safe("dest/photo.jpg", "abcdef1234567890", existing)
         assert "_abcdef" in result
@@ -1315,6 +1374,7 @@ class TestMakeCollisionSafe:
 
     def test_collision_extends_hash_further(self):
         from godmode_media_library.consolidation import _make_collision_safe
+
         # All short-hash candidates already taken
         file_hash = "abcdef1234567890abcdef1234567890"
         base = "dest/photo.jpg"
@@ -1327,6 +1387,7 @@ class TestMakeCollisionSafe:
 
     def test_collision_counter_fallback(self):
         from godmode_media_library.consolidation import _make_collision_safe
+
         # Hash is short enough that all hash-length variants collide
         file_hash = "aabbcc"
         base = "dest/photo.jpg"
@@ -1337,6 +1398,7 @@ class TestMakeCollisionSafe:
 
     def test_collision_no_existing_paths(self):
         from godmode_media_library.consolidation import _make_collision_safe
+
         result = _make_collision_safe("dest/photo.jpg", "abc123", None)
         assert "_abc123" in result
 
@@ -1349,27 +1411,32 @@ class TestBuildDestPath:
 
     def test_year_month_pattern(self):
         from godmode_media_library.consolidation import _build_dest_path
+
         result = _build_dest_path("base", "photo.jpg", "abc", "2024-06-15T10:00:00", "year_month")
         assert "2024/06/photo.jpg" in result
 
     def test_year_only_pattern(self):
         from godmode_media_library.consolidation import _build_dest_path
+
         result = _build_dest_path("base", "photo.jpg", "abc", "2024-06-15", "year")
         assert "2024" in result
         assert "/06/" not in result
 
     def test_flat_pattern(self):
         from godmode_media_library.consolidation import _build_dest_path
+
         result = _build_dest_path("base", "photo.jpg", "abc", "2024-06-15", "flat")
         assert result == "base/photo.jpg"
 
     def test_empty_filename(self):
         from godmode_media_library.consolidation import _build_dest_path
+
         result = _build_dest_path("base", "", "abcdef123456", None, "year_month")
         assert "unnamed_abcdef123456" in result
 
     def test_no_mod_time(self):
         from godmode_media_library.consolidation import _build_dest_path
+
         result = _build_dest_path("base", "photo.jpg", "abc", None, "year_month")
         assert "unknown/00" in result
 
@@ -1380,19 +1447,23 @@ class TestBuildDestPath:
 class TestCategorizeFile:
     def test_media_file(self):
         from godmode_media_library.consolidation import _categorize_file
+
         assert _categorize_file("photo.jpg") == "Media"
         assert _categorize_file("video.mp4") == "Media"
 
     def test_document_file(self):
         from godmode_media_library.consolidation import _categorize_file
+
         assert _categorize_file("report.pdf") == "Documents"
 
     def test_software_file(self):
         from godmode_media_library.consolidation import _categorize_file
+
         assert _categorize_file("app.dmg") == "Software"
 
     def test_other_file(self):
         from godmode_media_library.consolidation import _categorize_file
+
         assert _categorize_file("data.xyz123") == "Other"
 
 
@@ -1402,14 +1473,17 @@ class TestCategorizeFile:
 class TestIsArchive:
     def test_zip(self):
         from godmode_media_library.consolidation import _is_archive
+
         assert _is_archive("file.zip") is True
 
     def test_tar_gz(self):
         from godmode_media_library.consolidation import _is_archive
+
         assert _is_archive("file.tar.gz") is True
 
     def test_not_archive(self):
         from godmode_media_library.consolidation import _is_archive
+
         assert _is_archive("photo.jpg") is False
 
 
@@ -1419,22 +1493,24 @@ class TestIsArchive:
 class TestSafeTarExtractall:
     def test_path_traversal_blocked(self, tmp_path):
         import tarfile
+
         from godmode_media_library.consolidation import _safe_tar_extractall
 
         # Create a tar with path traversal
         tar_path = tmp_path / "evil.tar"
         with tarfile.open(str(tar_path), "w") as tf:
             import io
+
             info = tarfile.TarInfo(name="../../etc/passwd")
             info.size = 4
             tf.addfile(info, io.BytesIO(b"evil"))
 
-        with tarfile.open(str(tar_path), "r") as tf:
-            with pytest.raises(ValueError, match="Tar path traversal"):
-                _safe_tar_extractall(tf, str(tmp_path / "extract"))
+        with tarfile.open(str(tar_path), "r") as tf, pytest.raises(ValueError, match="Tar path traversal"):
+            _safe_tar_extractall(tf, str(tmp_path / "extract"))
 
     def test_safe_extraction(self, tmp_path):
         import tarfile
+
         from godmode_media_library.consolidation import _safe_tar_extractall
 
         tar_path = tmp_path / "safe.tar"
@@ -1457,6 +1533,7 @@ class TestRcloneLsjsonRecursiveStream:
     @patch("godmode_media_library.consolidation.check_rclone", return_value=False)
     def test_no_rclone(self, mock_check):
         from godmode_media_library.consolidation import _rclone_lsjson_recursive_stream
+
         result = list(_rclone_lsjson_recursive_stream("remote"))
         assert result == []
 
@@ -1467,9 +1544,9 @@ class TestRcloneLsjsonRecursiveStream:
 class TestRcloneLsjsonFastImportError:
     @patch("godmode_media_library.consolidation._rclone_lsjson_recursive_fallback", return_value=[{"Path": "f.jpg"}])
     def test_fallback_when_no_ijson(self, mock_fallback):
-        from godmode_media_library.consolidation import _rclone_lsjson_fast
         # Simulate ijson not available
         import sys
+
         orig = sys.modules.get("ijson")
         sys.modules["ijson"] = None  # type: ignore
         try:
@@ -1493,6 +1570,7 @@ class TestPhase5Stream:
     @patch("godmode_media_library.consolidation._check_pause", return_value=False)
     def test_dry_run(self, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_5_stream
+
         ctx = _make_ctx(config=ConsolidationConfig(dry_run=True))
         mock_ckpt.is_phase_done.return_value = False
         mock_ckpt.get_job_progress.return_value = {
@@ -1520,6 +1598,7 @@ class TestPhase5Stream:
     @patch("godmode_media_library.consolidation.get_native_hash_type", return_value=None)
     def test_no_pending_files(self, mock_hash, mock_reach, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_5_stream
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
         mock_ckpt.get_pending_files.return_value = []
@@ -1540,6 +1619,7 @@ class TestPhase5Stream:
             m.fetchall.return_value = []
             m.rowcount = 0
             return m
+
         conn.execute = _mock_execute
         ctx.cat.conn = conn
 
@@ -1551,7 +1631,7 @@ class TestPhase5Stream:
 # ── Phase 6 _phase_6_retry_failed (lines 1425-1503) ─────────────────
 
 
-class TestPhase6RetryFailed:
+class TestPhase6RetryFailedExtended:
     """Cover the retry logic with actual failed files."""
 
     @patch("godmode_media_library.consolidation.ckpt")
@@ -1562,6 +1642,7 @@ class TestPhase6RetryFailed:
     @patch("godmode_media_library.consolidation._dynamic_timeout", return_value=60)
     def test_retry_with_failed_files(self, mock_dyn, mock_copyto, mock_wait, mock_reach, mock_pause, mock_ckpt):
         from godmode_media_library.consolidation import _phase_6_retry_failed
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
 
@@ -1575,9 +1656,7 @@ class TestPhase6RetryFailed:
 
         conn = MagicMock()
         conn.row_factory = None
-        conn.execute.return_value = MagicMock(
-            fetchone=MagicMock(return_value={"date_original": "2024-01-01", "size": 1000})
-        )
+        conn.execute.return_value = MagicMock(fetchone=MagicMock(return_value={"date_original": "2024-01-01", "size": 1000}))
         ctx.cat.conn = conn
 
         _phase_6_retry_failed(ctx)
@@ -1587,17 +1666,22 @@ class TestPhase6RetryFailed:
     @patch("godmode_media_library.consolidation.ckpt")
     def test_retry_skips_local_and_maxed_out(self, mock_ckpt):
         from godmode_media_library.consolidation import _phase_6_retry_failed
+
         ctx = _make_ctx()
         mock_ckpt.is_phase_done.return_value = False
 
         # One local (skipped), one with max attempts (skipped)
         fs_local = SimpleNamespace(
-            file_hash="abc", source_location="local:/tmp/file.jpg",
-            dest_location=None, attempt_count=1,
+            file_hash="abc",
+            source_location="local:/tmp/file.jpg",
+            dest_location=None,
+            attempt_count=1,
         )
         fs_maxed = SimpleNamespace(
-            file_hash="def", source_location="remote1:file.jpg",
-            dest_location=None, attempt_count=99,
+            file_hash="def",
+            source_location="remote1:file.jpg",
+            dest_location=None,
+            attempt_count=99,
         )
         mock_ckpt.get_failed_files.return_value = [fs_local, fs_maxed]
 
@@ -1628,8 +1712,7 @@ class TestSurrogCleanupDeep:
             {"Path": "surrog_dir", "IsDir": True},
             {"Path": "file_surrog.jpg", "IsDir": False},
         ]
-        with patch("godmode_media_library.consolidation._rclone_moveto",
-                    return_value={"success": True}):
+        with patch("godmode_media_library.consolidation._rclone_moveto", return_value={"success": True}):
             result = _surrog_cleanup(ctx, dest_files)
         assert result["renamed"] == 1
 
@@ -1642,8 +1725,7 @@ class TestSurrogCleanupDeep:
         result = _surrog_cleanup(ctx, dest_files)
         assert result["renamed"] == 0
 
-    @patch("godmode_media_library.consolidation._rclone_moveto",
-           return_value={"success": False, "error": "network error"})
+    @patch("godmode_media_library.consolidation._rclone_moveto", return_value={"success": False, "error": "network error"})
     def test_rename_failure(self, mock_moveto):
         ctx = _make_ctx()
         dest_files = [
@@ -1664,15 +1746,22 @@ class TestGetConsolidationStatusDeep:
     def test_with_active_job_remote_breakdown(self, mock_reach, mock_remotes, mock_cat_cls, mock_ckpt):
         """Cover remote breakdown logic and staging count."""
         job = SimpleNamespace(
-            job_id="j1", job_type="ultimate_consolidation", status=JobStatus.RUNNING,
-            current_step="stream", created_at="2026-01-01", updated_at="2026-01-01",
-            completed_at=None, error=None,
+            job_id="j1",
+            job_type="ultimate_consolidation",
+            status=JobStatus.RUNNING,
+            current_step="stream",
+            created_at="2026-01-01",
+            updated_at="2026-01-01",
+            completed_at=None,
+            error=None,
             config={"source_remotes": ["gdrive"], "local_roots": ["/tmp/test"]},
         )
         mock_ckpt.list_jobs.return_value = [job]
         mock_ckpt.get_job_progress.return_value = {
-            FileStatus.PENDING: 5, FileStatus.COMPLETED: 10,
-            FileStatus.FAILED: 1, "bytes_transferred": 1000,
+            FileStatus.PENDING: 5,
+            FileStatus.COMPLETED: 10,
+            FileStatus.FAILED: 1,
+            "bytes_transferred": 1000,
         }
 
         # Mock catalog and cursor for remote breakdown query
@@ -1699,6 +1788,7 @@ class TestPauseConsolidationDbFallback:
     @patch("godmode_media_library.consolidation.Catalog")
     def test_db_fallback_running_job(self, mock_cat_cls, mock_ckpt):
         from godmode_media_library.consolidation import _pause_events, _pause_events_lock
+
         # Ensure no in-process events
         with _pause_events_lock:
             _pause_events.clear()
@@ -1707,7 +1797,9 @@ class TestPauseConsolidationDbFallback:
         mock_cat_cls.return_value = mock_cat
 
         job = SimpleNamespace(
-            job_id="j1", job_type="ultimate_consolidation", status=JobStatus.RUNNING,
+            job_id="j1",
+            job_type="ultimate_consolidation",
+            status=JobStatus.RUNNING,
         )
         mock_ckpt.get_resumable_jobs.return_value = [job]
 
@@ -1718,6 +1810,7 @@ class TestPauseConsolidationDbFallback:
     @patch("godmode_media_library.consolidation.Catalog", side_effect=Exception("DB error"))
     def test_db_fallback_exception(self, mock_cat_cls, mock_ckpt):
         from godmode_media_library.consolidation import _pause_events, _pause_events_lock
+
         with _pause_events_lock:
             _pause_events.clear()
 
@@ -1731,17 +1824,21 @@ class TestPauseConsolidationDbFallback:
 class TestSpeedEstimation:
     def test_estimate_speed_zero_elapsed(self):
         from godmode_media_library.consolidation import _estimate_speed
+
         assert _estimate_speed(1000, 0) == 0.0
 
     def test_estimate_speed_normal(self):
         from godmode_media_library.consolidation import _estimate_speed
+
         assert _estimate_speed(1000, 2.0) == 500.0
 
     def test_ema_speed_cold_start(self):
         from godmode_media_library.consolidation import _ema_speed
+
         assert _ema_speed(0, 100.0) == 100.0
 
     def test_ema_speed_normal(self):
         from godmode_media_library.consolidation import _ema_speed
+
         result = _ema_speed(100.0, 200.0)
         assert 100 < result < 200

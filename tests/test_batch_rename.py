@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from godmode_media_library.batch_rename import (
     RenameAction,
-    RenameResult,
     apply_renames,
     plan_renames,
 )
-
 
 # ---------------------------------------------------------------------------
 # plan_renames

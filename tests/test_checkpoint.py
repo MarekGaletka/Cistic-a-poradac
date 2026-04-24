@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
-from unittest.mock import MagicMock
 
 import pytest
 
 from godmode_media_library import checkpoint as cp
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,12 +43,7 @@ def catalog(tmp_path):
 
 def test_ensure_tables_creates_schema(catalog):
     cp.ensure_tables(catalog.conn)
-    tables = [
-        r[0]
-        for r in catalog.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    ]
+    tables = [r[0] for r in catalog.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     assert "consolidation_jobs" in tables
     assert "consolidation_file_state" in tables
 
@@ -57,10 +51,8 @@ def test_ensure_tables_creates_schema(catalog):
 def test_ensure_tables_idempotent(catalog):
     cp.ensure_tables(catalog.conn)
     # Clear the flag to allow re-entry for the idempotency test
-    try:
+    with contextlib.suppress(AttributeError):
         delattr(catalog.conn, cp._TABLES_OK_ATTR)
-    except AttributeError:
-        pass
     cp.ensure_tables(catalog.conn)  # should not raise
 
 

@@ -104,9 +104,7 @@ def _write_keystore(keystore: dict[str, Any]) -> None:
     data = json.dumps(keystore, indent=2).encode("utf-8")
 
     # Write to temp file then rename for atomicity
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(ks_path.parent), prefix=".face_keystore_", suffix=".tmp"
-    )
+    fd, tmp_name = tempfile.mkstemp(dir=str(ks_path.parent), prefix=".face_keystore_", suffix=".tmp")
     try:
         if hasattr(os, "fchmod"):
             os.fchmod(fd, 0o600)

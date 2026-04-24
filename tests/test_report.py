@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from godmode_media_library.report import (
     _bar_html,
@@ -19,8 +16,8 @@ from godmode_media_library.report import (
     generate_report_html,
 )
 
-
 # ── _fmt_size ────────────────────────────────────────────────────────
+
 
 class TestFmtSize:
     def test_bytes(self):
@@ -41,6 +38,7 @@ class TestFmtSize:
 
 # ── _pct ─────────────────────────────────────────────────────────────
 
+
 class TestPct:
     def test_zero_total(self):
         assert _pct(10, 0) == "0%"
@@ -53,6 +51,7 @@ class TestPct:
 
 
 # ── _bar_html ────────────────────────────────────────────────────────
+
 
 class TestBarHtml:
     def test_returns_html_string(self):
@@ -67,6 +66,7 @@ class TestBarHtml:
 
 
 # ── _compute_coverage ────────────────────────────────────────────────
+
 
 class TestComputeCoverage:
     def test_empty_months(self):
@@ -100,6 +100,7 @@ class TestComputeCoverage:
 
 
 # ── _build_recommendations ───────────────────────────────────────────
+
 
 class TestBuildRecommendations:
     def test_clean_library(self):
@@ -155,6 +156,7 @@ class TestBuildRecommendations:
 
 
 # ── _render_html ─────────────────────────────────────────────────────
+
 
 class TestRenderHtml:
     @staticmethod
@@ -212,11 +214,14 @@ class TestRenderHtml:
 
 # ── generate_report (mocked Catalog) ────────────────────────────────
 
+
 class TestGenerateReport:
     def test_generate_report_writes_file(self, tmp_path):
         out = tmp_path / "report.html"
-        with patch("godmode_media_library.report._collect_data") as mock_collect, \
-             patch("godmode_media_library.catalog.Catalog") as MockCatalog:
+        with (
+            patch("godmode_media_library.report._collect_data") as mock_collect,
+            patch("godmode_media_library.catalog.Catalog") as MockCatalog,
+        ):
             mock_cat = MagicMock()
             MockCatalog.return_value = mock_cat
             # Patch the local import inside generate_report
@@ -229,8 +234,10 @@ class TestGenerateReport:
         assert "<!DOCTYPE html>" in content
 
     def test_generate_report_html_returns_string(self, tmp_path):
-        with patch("godmode_media_library.report._collect_data") as mock_collect, \
-             patch("godmode_media_library.catalog.Catalog") as MockCatalog:
+        with (
+            patch("godmode_media_library.report._collect_data") as mock_collect,
+            patch("godmode_media_library.catalog.Catalog") as MockCatalog,
+        ):
             mock_cat = MagicMock()
             MockCatalog.return_value = mock_cat
             with patch.dict("sys.modules", {"godmode_media_library.catalog": MagicMock(Catalog=MockCatalog)}):
@@ -241,8 +248,10 @@ class TestGenerateReport:
         assert "<!DOCTYPE html>" in html
 
     def test_generate_report_auto_path(self, tmp_path):
-        with patch("godmode_media_library.report._collect_data") as mock_collect, \
-             patch("godmode_media_library.catalog.Catalog") as MockCatalog:
+        with (
+            patch("godmode_media_library.report._collect_data") as mock_collect,
+            patch("godmode_media_library.catalog.Catalog") as MockCatalog,
+        ):
             mock_cat = MagicMock()
             MockCatalog.return_value = mock_cat
             with patch.dict("sys.modules", {"godmode_media_library.catalog": MagicMock(Catalog=MockCatalog)}):
@@ -254,6 +263,7 @@ class TestGenerateReport:
 
 
 # ── XSS escaping tests ──────────────────────────────────────────────
+
 
 class TestXSSEscaping:
     """Verify that user-controlled data is HTML-escaped in reports."""
@@ -272,14 +282,12 @@ class TestXSSEscaping:
         data["metadata"]["top_cameras"] = [('<img onerror="alert(1)">', 10)]
         result = _render_html(data)
         # The raw <img> tag must not appear unescaped
-        assert '<img onerror=' not in result
+        assert "<img onerror=" not in result
         assert "&lt;img" in result
 
     def test_recommendation_text_xss_escaped(self):
         data = TestRenderHtml._minimal_data()
-        data["recommendations"] = [
-            {"icon": "x", "text": "<b>bold</b>", "detail": "<i>italic</i>", "severity": "ok"}
-        ]
+        data["recommendations"] = [{"icon": "x", "text": "<b>bold</b>", "detail": "<i>italic</i>", "severity": "ok"}]
         result = _render_html(data)
         assert "&lt;b&gt;" in result
         assert "&lt;i&gt;" in result
@@ -292,6 +300,7 @@ class TestXSSEscaping:
 
 
 # ── Render with all sections populated ──────────────────────────────
+
 
 class TestRenderHtmlFullSections:
     """Test rendering with all optional sections populated."""
@@ -367,6 +376,7 @@ class TestRenderHtmlFullSections:
 
 # ── _compute_coverage edge cases ────────────────────────────────────
 
+
 class TestComputeCoverageEdge:
     def test_trailing_gap(self):
         # _compute_coverage uses the months list itself (first/last) to define the range
@@ -386,6 +396,7 @@ class TestComputeCoverageEdge:
 
 
 # ── _build_recommendations edge cases ───────────────────────────────
+
 
 class TestBuildRecommendationsEdge:
     def test_missing_hashes(self):
@@ -412,6 +423,7 @@ class TestBuildRecommendationsEdge:
 
 # ── _bar_html edge cases ────────────────────────────────────────────
 
+
 class TestBarHtmlEdge:
     def test_custom_color(self):
         result = _bar_html("Test", 30, 60, "#ff0000")
@@ -424,6 +436,7 @@ class TestBarHtmlEdge:
 
 
 # ── _fmt_size edge cases ────────────────────────────────────────────
+
 
 class TestFmtSizeEdge:
     def test_boundary_kb(self):
@@ -448,12 +461,14 @@ class TestCollectData:
         from godmode_media_library.catalog import Catalog
         from godmode_media_library.scanner import incremental_scan
 
-        with Catalog(db_path) as cat:
-            with patch("godmode_media_library.scanner.probe_file", return_value=None), \
-                 patch("godmode_media_library.scanner.read_exif", return_value=None), \
-                 patch("godmode_media_library.scanner.dhash", return_value=None), \
-                 patch("godmode_media_library.scanner.video_dhash", return_value=None):
-                incremental_scan(cat, [media])
+        with (
+            Catalog(db_path) as cat,
+            patch("godmode_media_library.scanner.probe_file", return_value=None),
+            patch("godmode_media_library.scanner.read_exif", return_value=None),
+            patch("godmode_media_library.scanner.dhash", return_value=None),
+            patch("godmode_media_library.scanner.video_dhash", return_value=None),
+        ):
+            incremental_scan(cat, [media])
 
     def test_collect_data_basic(self, tmp_path):
         from godmode_media_library.catalog import Catalog
@@ -470,9 +485,8 @@ class TestCollectData:
         # Mock cloud.list_remotes to avoid rclone dependency
         mock_cloud = MagicMock()
         mock_cloud.list_remotes.return_value = {"remotes": []}
-        with Catalog(db_path) as cat:
-            with patch.dict("sys.modules", {"godmode_media_library.cloud": mock_cloud}):
-                data = _collect_data(cat)
+        with Catalog(db_path) as cat, patch.dict("sys.modules", {"godmode_media_library.cloud": mock_cloud}):
+            data = _collect_data(cat)
 
         assert data["overview"]["total_files"] == 3
         assert data["overview"]["total_size"] > 0
@@ -495,9 +509,8 @@ class TestCollectData:
 
         mock_cloud = MagicMock()
         mock_cloud.list_remotes.return_value = {"remotes": []}
-        with Catalog(db_path) as cat:
-            with patch.dict("sys.modules", {"godmode_media_library.cloud": mock_cloud}):
-                data = _collect_data(cat)
+        with Catalog(db_path) as cat, patch.dict("sys.modules", {"godmode_media_library.cloud": mock_cloud}):
+            data = _collect_data(cat)
 
         assert data["duplicates"]["groups"] >= 1
         assert data["duplicates"]["removable"] >= 1
@@ -509,9 +522,8 @@ class TestCollectData:
         db_path = tmp_path / "catalog.db"
         mock_cloud = MagicMock()
         mock_cloud.list_remotes.return_value = {"remotes": []}
-        with Catalog(db_path) as cat:
-            with patch.dict("sys.modules", {"godmode_media_library.cloud": mock_cloud}):
-                data = _collect_data(cat)
+        with Catalog(db_path) as cat, patch.dict("sys.modules", {"godmode_media_library.cloud": mock_cloud}):
+            data = _collect_data(cat)
 
         assert data["overview"]["total_files"] == 0
         assert data["duplicates"]["groups"] == 0

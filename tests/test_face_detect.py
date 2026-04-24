@@ -467,8 +467,6 @@ def test_cluster_faces_with_data(catalog, sample_file):
     """cluster_faces groups similar face encodings."""
     import struct
 
-    import numpy as np
-
     # Insert faces with known encodings
     enc1 = [0.1] * 128
     enc2 = [0.1001] * 128  # Very similar to enc1
@@ -503,8 +501,6 @@ def test_match_face_to_known_with_match(catalog, sample_file):
     """match_face_to_known finds matching person."""
     import struct
 
-    import numpy as np
-
     enc = [0.5] * 128
     blob = struct.pack("<128d", *enc)
 
@@ -528,8 +524,6 @@ def test_match_face_to_known_with_match(catalog, sample_file):
 def test_match_face_to_known_no_match(catalog, sample_file):
     """match_face_to_known returns None when too far."""
     import struct
-
-    import numpy as np
 
     enc = [0.5] * 128
     blob = struct.pack("<128d", *enc)
@@ -596,7 +590,7 @@ def test_null_encoding_handling(catalog, sample_file):
 
 def test_match_face_no_sample_faces(catalog, sample_file):
     """match_face_to_known returns None when persons have no sample_face_id."""
-    pid = catalog.upsert_person("NoSample")
+    catalog.upsert_person("NoSample")
     catalog.commit()
 
     from godmode_media_library.face_detect import match_face_to_known
@@ -608,8 +602,6 @@ def test_match_face_no_sample_faces(catalog, sample_file):
 def test_cluster_faces_max_clusters(catalog, sample_file):
     """cluster_faces respects max_clusters limit."""
     import struct
-
-    import numpy as np
 
     # Create many distinct face encodings that will form separate clusters
     for i in range(10):
@@ -634,8 +626,6 @@ def test_cluster_faces_preserves_named_person(catalog, sample_file):
     """cluster_faces assigns cluster to existing named person."""
     import struct
 
-    import numpy as np
-
     enc1 = [0.1] * 128
     enc2 = [0.1001] * 128  # Very similar
 
@@ -643,7 +633,7 @@ def test_cluster_faces_preserves_named_person(catalog, sample_file):
     blob2 = struct.pack("<128d", *enc2)
 
     f1 = catalog.insert_face(file_id=sample_file, face_index=0, bbox=(0, 0, 0, 0), encoding_blob=blob1)
-    f2 = catalog.insert_face(file_id=sample_file, face_index=1, bbox=(0, 0, 0, 0), encoding_blob=blob2)
+    catalog.insert_face(file_id=sample_file, face_index=1, bbox=(0, 0, 0, 0), encoding_blob=blob2)
 
     # Create a named person and assign f1 to it
     pid = catalog.upsert_person("Alice", sample_face_id=f1)
@@ -661,8 +651,6 @@ def test_cluster_faces_preserves_named_person(catalog, sample_file):
 def test_cluster_faces_decrypt_fn(catalog, sample_file):
     """cluster_faces uses decrypt_fn when provided."""
     import struct
-
-    import numpy as np
 
     enc = [0.5] * 128
     blob = struct.pack("<128d", *enc)
@@ -683,8 +671,6 @@ def test_cluster_faces_decrypt_fn(catalog, sample_file):
 def test_match_face_with_decrypt_fn(catalog, sample_file):
     """match_face_to_known uses decrypt_fn."""
     import struct
-
-    import numpy as np
 
     enc = [0.5] * 128
     blob = struct.pack("<128d", *enc)

@@ -349,22 +349,23 @@ def test_format_geocode_label_state_fallback():
 
 
 def test_extract_gps_no_exiftool():
-    with patch("shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="ExifTool is not available"):
-            extract_gps_with_exiftool([Path("/tmp/a.jpg")])
+    with patch("shutil.which", return_value=None), pytest.raises(RuntimeError, match="ExifTool is not available"):
+        extract_gps_with_exiftool([Path("/tmp/a.jpg")])
 
 
 def test_extract_gps_success(tmp_path):
     photo = tmp_path / "photo.jpg"
     photo.write_bytes(b"fake")
 
-    exif_output = json.dumps([
-        {
-            "SourceFile": str(photo),
-            "GPSLatitude": 50.0,
-            "GPSLongitude": 14.0,
-        }
-    ])
+    exif_output = json.dumps(
+        [
+            {
+                "SourceFile": str(photo),
+                "GPSLatitude": 50.0,
+                "GPSLongitude": 14.0,
+            }
+        ]
+    )
 
     mock_proc = MagicMock()
     mock_proc.returncode = 0
@@ -392,9 +393,9 @@ def test_extract_gps_exiftool_error():
     with (
         patch("shutil.which", return_value="/usr/bin/exiftool"),
         patch("subprocess.run", return_value=mock_proc),
+        pytest.raises(RuntimeError, match="ExifTool failed"),
     ):
-        with pytest.raises(RuntimeError, match="ExifTool failed"):
-            extract_gps_with_exiftool([Path("/tmp/a.jpg")])
+        extract_gps_with_exiftool([Path("/tmp/a.jpg")])
 
 
 def test_extract_gps_empty_output():
@@ -421,9 +422,9 @@ def test_extract_gps_invalid_json():
     with (
         patch("shutil.which", return_value="/usr/bin/exiftool"),
         patch("subprocess.run", return_value=mock_proc),
+        pytest.raises(RuntimeError, match="Failed to parse"),
     ):
-        with pytest.raises(RuntimeError, match="Failed to parse"):
-            extract_gps_with_exiftool([Path("/tmp/a.jpg")])
+        extract_gps_with_exiftool([Path("/tmp/a.jpg")])
 
 
 def test_extract_gps_non_dict_rows():
@@ -458,13 +459,15 @@ def test_extract_gps_missing_source_file():
 
 def test_extract_gps_returncode_1():
     """ExifTool returncode=1 (warnings) should still process output."""
-    exif_output = json.dumps([
-        {
-            "SourceFile": "/tmp/a.jpg",
-            "GPSLatitude": 50.0,
-            "GPSLongitude": 14.0,
-        }
-    ])
+    exif_output = json.dumps(
+        [
+            {
+                "SourceFile": "/tmp/a.jpg",
+                "GPSLatitude": 50.0,
+                "GPSLongitude": 14.0,
+            }
+        ]
+    )
     mock_proc = MagicMock()
     mock_proc.returncode = 1
     mock_proc.stdout = exif_output
@@ -494,15 +497,20 @@ def test_reverse_geocode_cached(tmp_path):
     mock_rate_limiter = MagicMock()
     mock_geocoder_error = type("GeocoderServiceError", (Exception,), {})
 
-    with patch.dict("sys.modules", {
-        "geopy": MagicMock(),
-        "geopy.exc": MagicMock(GeocoderServiceError=mock_geocoder_error),
-        "geopy.extra": MagicMock(),
-        "geopy.extra.rate_limiter": MagicMock(RateLimiter=mock_rate_limiter),
-        "geopy.geocoders": MagicMock(Nominatim=mock_nominatim),
-    }):
+    with patch.dict(
+        "sys.modules",
+        {
+            "geopy": MagicMock(),
+            "geopy.exc": MagicMock(GeocoderServiceError=mock_geocoder_error),
+            "geopy.extra": MagicMock(),
+            "geopy.extra.rate_limiter": MagicMock(RateLimiter=mock_rate_limiter),
+            "geopy.geocoders": MagicMock(Nominatim=mock_nominatim),
+        },
+    ):
         results, api_calls = reverse_geocode_coords(
-            coords, cache_path=cache_file, min_delay_seconds=0,
+            coords,
+            cache_path=cache_file,
+            min_delay_seconds=0,
         )
 
     assert results[(50.0, 14.0)] == "Prague, CZ"
@@ -524,15 +532,20 @@ def test_reverse_geocode_api_call(tmp_path):
     mock_nominatim = MagicMock()
     mock_geocoder_error = type("GeocoderServiceError", (Exception,), {})
 
-    with patch.dict("sys.modules", {
-        "geopy": MagicMock(),
-        "geopy.exc": MagicMock(GeocoderServiceError=mock_geocoder_error),
-        "geopy.extra": MagicMock(),
-        "geopy.extra.rate_limiter": MagicMock(RateLimiter=mock_rate_limiter),
-        "geopy.geocoders": MagicMock(Nominatim=mock_nominatim),
-    }):
+    with patch.dict(
+        "sys.modules",
+        {
+            "geopy": MagicMock(),
+            "geopy.exc": MagicMock(GeocoderServiceError=mock_geocoder_error),
+            "geopy.extra": MagicMock(),
+            "geopy.extra.rate_limiter": MagicMock(RateLimiter=mock_rate_limiter),
+            "geopy.geocoders": MagicMock(Nominatim=mock_nominatim),
+        },
+    ):
         results, api_calls = reverse_geocode_coords(
-            coords, cache_path=cache_file, min_delay_seconds=0,
+            coords,
+            cache_path=cache_file,
+            min_delay_seconds=0,
         )
 
     assert api_calls == 1
@@ -555,15 +568,20 @@ def test_reverse_geocode_api_failure(tmp_path):
     mock_rate_limiter = MagicMock(return_value=mock_reverse_fn)
     mock_nominatim = MagicMock()
 
-    with patch.dict("sys.modules", {
-        "geopy": MagicMock(),
-        "geopy.exc": MagicMock(GeocoderServiceError=mock_geocoder_error),
-        "geopy.extra": MagicMock(),
-        "geopy.extra.rate_limiter": MagicMock(RateLimiter=mock_rate_limiter),
-        "geopy.geocoders": MagicMock(Nominatim=mock_nominatim),
-    }):
+    with patch.dict(
+        "sys.modules",
+        {
+            "geopy": MagicMock(),
+            "geopy.exc": MagicMock(GeocoderServiceError=mock_geocoder_error),
+            "geopy.extra": MagicMock(),
+            "geopy.extra.rate_limiter": MagicMock(RateLimiter=mock_rate_limiter),
+            "geopy.geocoders": MagicMock(Nominatim=mock_nominatim),
+        },
+    ):
         results, api_calls = reverse_geocode_coords(
-            coords, cache_path=cache_file, min_delay_seconds=0,
+            coords,
+            cache_path=cache_file,
+            min_delay_seconds=0,
         )
 
     assert api_calls == 1

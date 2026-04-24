@@ -178,7 +178,7 @@ def _resolve_dependency_order(plan: list[PlanRow]) -> list[PlanRow]:
     # then row[i] depends on row[j] (j must come first).
     from collections import defaultdict, deque
 
-    adj: dict[int, list[int]] = defaultdict(list)   # j -> [i, ...] (j before i)
+    adj: dict[int, list[int]] = defaultdict(list)  # j -> [i, ...] (j before i)
     in_degree: dict[int, int] = defaultdict(int)
 
     for i, row in enumerate(plan):
@@ -210,8 +210,7 @@ def _resolve_dependency_order(plan: list[PlanRow]) -> list[PlanRow]:
         cycle_nodes = set(range(len(plan))) - set(ordered_indices)
         cycle_paths = [str(plan[i].move_path) for i in list(cycle_nodes)[:5]]
         _logger.warning(
-            "Dependency cycle detected in plan involving %d rows (e.g. %s). "
-            "Using default sort order; manual review recommended.",
+            "Dependency cycle detected in plan involving %d rows (e.g. %s). Using default sort order; manual review recommended.",
             len(cycle_nodes),
             ", ".join(cycle_paths),
         )

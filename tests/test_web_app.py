@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import os
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -21,7 +18,6 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
 
 from godmode_media_library.catalog import Catalog
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -202,6 +198,7 @@ class TestContentDisposition:
             cat.close()
 
         from godmode_media_library.web.app import create_app
+
         env = {"GML_API_TOKEN": "", "GML_RATE_LIMIT": "0"}
         with patch.dict(os.environ, env, clear=False):
             app = create_app(catalog_path=db_path)
@@ -234,6 +231,7 @@ class TestSharePasswordRateLimiting:
             cat.close()
 
         from godmode_media_library.web.app import _share_pw_failures, create_app
+
         _share_pw_failures.clear()
 
         env = {"GML_API_TOKEN": "", "GML_RATE_LIMIT": "0"}
@@ -290,6 +288,7 @@ class TestSecurityHeadersApp:
 class TestRateLimiting:
     def test_rate_limit_triggers_after_max(self, app_with_rate_limit):
         from godmode_media_library.web.app import _rate_limit_hits
+
         _rate_limit_hits.clear()
 
         client = TestClient(app_with_rate_limit, raise_server_exceptions=False)
@@ -343,6 +342,7 @@ class TestShareEdgeCases:
     def test_share_not_found(self, catalog_with_share):
         db_path, _ = catalog_with_share
         from godmode_media_library.web.app import create_app
+
         env = {"GML_API_TOKEN": "", "GML_RATE_LIMIT": "0"}
         with patch.dict(os.environ, env, clear=False):
             app = create_app(catalog_path=db_path)
@@ -353,6 +353,7 @@ class TestShareEdgeCases:
     def test_share_info_not_found(self, catalog_with_share):
         db_path, _ = catalog_with_share
         from godmode_media_library.web.app import create_app
+
         env = {"GML_API_TOKEN": "", "GML_RATE_LIMIT": "0"}
         with patch.dict(os.environ, env, clear=False):
             app = create_app(catalog_path=db_path)

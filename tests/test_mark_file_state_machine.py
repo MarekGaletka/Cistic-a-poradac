@@ -9,7 +9,6 @@ import pytest
 from godmode_media_library.catalog import Catalog
 from godmode_media_library.checkpoint import (
     create_job,
-    get_pending_files,
     mark_file,
 )
 

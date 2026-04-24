@@ -6,8 +6,6 @@ from collections import namedtuple
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from godmode_media_library.disk_space import check_disk_space
 
 DiskUsage = namedtuple("DiskUsage", ["total", "used", "free"])

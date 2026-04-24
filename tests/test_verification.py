@@ -6,8 +6,6 @@ Uses monkeypatching to avoid real rclone calls.
 
 import subprocess
 
-import pytest
-
 from godmode_media_library.cloud import (
     _BACKEND_HASH_MAP,
     get_native_hash_type,

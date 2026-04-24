@@ -28,6 +28,7 @@ def _register_heif_once() -> None:
         pillow_heif.register_heif_opener()
     _heif_registered = True
 
+
 _IMAGE_EXTS = PILLOW_IMAGE_EXTS
 
 # Hash size: 8 means 8x(8+1) = 72 pixel grid, producing 64-bit hash
@@ -222,9 +223,7 @@ def find_similar(
     # Structure: {hash_length: {bucket_key: [(path, hash_hex)]}}
     from collections import defaultdict
 
-    by_length: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    by_length: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(lambda: defaultdict(list))
     for path, hex_hash in hashes.items():
         bk = _bucket_key(hex_hash, PREFIX_BITS)
         by_length[len(hex_hash)][bk].append((path, hex_hash))
@@ -252,6 +251,7 @@ def find_similar(
 
                     if is_video:
                         from .video_hash import video_hamming_distance
+
                         dist = int(round(video_hamming_distance(hash_a, hash_b)))
                     else:
                         dist = hamming_distance(hash_a, hash_b)
@@ -259,8 +259,11 @@ def find_similar(
                     if dist <= threshold:
                         pairs.append(
                             SimilarPair(
-                                path_a=path_a, path_b=path_b,
-                                distance=dist, hash_a=hash_a, hash_b=hash_b,
+                                path_a=path_a,
+                                path_b=path_b,
+                                distance=dist,
+                                hash_a=hash_a,
+                                hash_b=hash_b,
                             )
                         )
 
@@ -286,6 +289,7 @@ def find_similar(
 
                         if is_video:
                             from .video_hash import video_hamming_distance
+
                             dist = int(round(video_hamming_distance(hash_a, hash_b)))
                         else:
                             dist = hamming_distance(hash_a, hash_b)
@@ -293,8 +297,11 @@ def find_similar(
                         if dist <= threshold:
                             pairs.append(
                                 SimilarPair(
-                                    path_a=path_a, path_b=path_b,
-                                    distance=dist, hash_a=hash_a, hash_b=hash_b,
+                                    path_a=path_a,
+                                    path_b=path_b,
+                                    distance=dist,
+                                    hash_a=hash_a,
+                                    hash_b=hash_b,
                                 )
                             )
 

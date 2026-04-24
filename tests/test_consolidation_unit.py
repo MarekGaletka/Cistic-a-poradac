@@ -1,10 +1,8 @@
 """Unit tests for consolidation.py helper functions."""
 
 import os
-import struct
 import tarfile
 import zipfile
-from pathlib import PurePosixPath
 from unittest.mock import patch
 
 import pytest
@@ -17,13 +15,11 @@ from godmode_media_library.consolidation import (
     _estimate_speed,
     _is_archive,
     _is_bundle_dir,
-    _is_media_file,
     _make_collision_safe,
     _resolve_rclone,
     _safe_tar_extractall,
 )
 from godmode_media_library.consolidation_types import StructurePattern
-
 
 # ── _categorize_file ─────────────────────────────────────────────────
 
@@ -121,33 +117,23 @@ class TestIsBundleDir:
 
 class TestBuildDestPath:
     def test_year_month_structure(self):
-        result = _build_dest_path(
-            "base", "photo.jpg", "abc123", "2023-06-15T10:30:00", StructurePattern.YEAR_MONTH
-        )
+        result = _build_dest_path("base", "photo.jpg", "abc123", "2023-06-15T10:30:00", StructurePattern.YEAR_MONTH)
         assert result == "base/2023/06/photo.jpg"
 
     def test_year_structure(self):
-        result = _build_dest_path(
-            "base", "photo.jpg", "abc123", "2023-06-15T10:30:00", StructurePattern.YEAR
-        )
+        result = _build_dest_path("base", "photo.jpg", "abc123", "2023-06-15T10:30:00", StructurePattern.YEAR)
         assert result == "base/2023/photo.jpg"
 
     def test_flat_structure(self):
-        result = _build_dest_path(
-            "base", "photo.jpg", "abc123", "2023-06-15T10:30:00", StructurePattern.FLAT
-        )
+        result = _build_dest_path("base", "photo.jpg", "abc123", "2023-06-15T10:30:00", StructurePattern.FLAT)
         assert result == "base/photo.jpg"
 
     def test_no_mod_time(self):
-        result = _build_dest_path(
-            "base", "photo.jpg", "abc123", None, StructurePattern.YEAR_MONTH
-        )
+        result = _build_dest_path("base", "photo.jpg", "abc123", None, StructurePattern.YEAR_MONTH)
         assert "unknown/00" in result
 
     def test_empty_filename_uses_hash(self):
-        result = _build_dest_path(
-            "base", "", "abcdef123456789", None, StructurePattern.FLAT
-        )
+        result = _build_dest_path("base", "", "abcdef123456789", None, StructurePattern.FLAT)
         assert "unnamed_" in result
 
 
@@ -246,9 +232,8 @@ class TestSafeTarExtract:
         extract_dir = tmp_path / "extracted"
         extract_dir.mkdir()
 
-        with tarfile.open(tar_path, "r") as tf:
-            with pytest.raises(ValueError, match="traversal"):
-                _safe_tar_extractall(tf, str(extract_dir))
+        with tarfile.open(tar_path, "r") as tf, pytest.raises(ValueError, match="traversal"):
+            _safe_tar_extractall(tf, str(extract_dir))
 
 
 class TestZipSlipProtection:
@@ -289,17 +274,16 @@ class TestZipBombProtection:
         with zipfile.ZipFile(zip_path, "r") as zf:
             total_uncompressed = 0
             archive_size = os.path.getsize(zip_path) or 1
-            max_uncompressed = 100 * 1024 ** 3  # 100 GB
+            max_uncompressed = 100 * 1024**3  # 100 GB
             for info in zf.infolist():
                 # Simulate a zip bomb by faking file_size
-                info.file_size = 200 * 1024 ** 3  # 200 GB claimed
+                info.file_size = 200 * 1024**3  # 200 GB claimed
                 total_uncompressed += info.file_size
 
             assert total_uncompressed > max_uncompressed
             # This is the exact check from consolidation.py
             bomb_detected = total_uncompressed > max_uncompressed or (
-                total_uncompressed > archive_size * 100
-                and total_uncompressed > 10 * 1024 ** 3
+                total_uncompressed > archive_size * 100 and total_uncompressed > 10 * 1024**3
             )
             assert bomb_detected, "Zip bomb (absolute limit) was not detected"
 
@@ -311,12 +295,11 @@ class TestZipBombProtection:
 
         archive_size = os.path.getsize(zip_path) or 1
         # Simulate: 20 GB uncompressed from ~100 byte archive
-        total_uncompressed = 20 * 1024 ** 3
-        max_uncompressed = 100 * 1024 ** 3
+        total_uncompressed = 20 * 1024**3
+        max_uncompressed = 100 * 1024**3
 
         bomb_detected = total_uncompressed > max_uncompressed or (
-            total_uncompressed > archive_size * 100
-            and total_uncompressed > 10 * 1024 ** 3
+            total_uncompressed > archive_size * 100 and total_uncompressed > 10 * 1024**3
         )
         assert bomb_detected, "Zip bomb (ratio check) was not detected"
 
@@ -327,14 +310,13 @@ class TestZipBombProtection:
             zf.writestr("data.txt", "hello world " * 100)
 
         archive_size = os.path.getsize(zip_path) or 1
-        max_uncompressed = 100 * 1024 ** 3
+        max_uncompressed = 100 * 1024**3
 
         with zipfile.ZipFile(zip_path, "r") as zf:
             total_uncompressed = sum(info.file_size for info in zf.infolist())
 
         bomb_detected = total_uncompressed > max_uncompressed or (
-            total_uncompressed > archive_size * 100
-            and total_uncompressed > 10 * 1024 ** 3
+            total_uncompressed > archive_size * 100 and total_uncompressed > 10 * 1024**3
         )
         assert not bomb_detected, "Normal zip was falsely detected as zip bomb"
 

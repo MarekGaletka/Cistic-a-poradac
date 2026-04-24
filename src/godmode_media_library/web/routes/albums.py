@@ -45,16 +45,18 @@ def list_albums(request: Request) -> dict:
                 filters = json.loads(album["filters_json"])
             except (ValueError, TypeError):
                 filters = {}
-            result.append({
-                "id": album["id"],
-                "name": album["name"],
-                "icon": album["icon"],
-                "filters": filters,
-                "file_count": total,
-                "cover_path": cover_path,
-                "created_at": album["created_at"],
-                "updated_at": album["updated_at"],
-            })
+            result.append(
+                {
+                    "id": album["id"],
+                    "name": album["name"],
+                    "icon": album["icon"],
+                    "filters": filters,
+                    "file_count": total,
+                    "cover_path": cover_path,
+                    "created_at": album["created_at"],
+                    "updated_at": album["updated_at"],
+                }
+            )
         return {"albums": result}
     finally:
         _return_catalog(cat)

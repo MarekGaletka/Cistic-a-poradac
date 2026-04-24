@@ -20,8 +20,8 @@ from .routes.gallery import router as gallery_router
 from .routes.iphone import router as iphone_router
 from .routes.recovery import router as recovery_router
 from .routes.reorganize import router as reorganize_router
-from .routes.search import router as search_router
 from .routes.scenarios import router as scenarios_router
+from .routes.search import router as search_router
 from .routes.shares import router as shares_router
 from .routes.system import router as system_router
 from .routes.tags import router as tags_router

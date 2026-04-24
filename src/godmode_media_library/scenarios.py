@@ -241,6 +241,7 @@ def _load_scenarios() -> list[Scenario]:
         logger.error("Corrupted scenarios file %s: %s — creating backup", _SCENARIOS_PATH, e)
         try:
             import shutil
+
             shutil.copy2(_SCENARIOS_PATH, _SCENARIOS_PATH.with_suffix(".bak"))
         except OSError:
             pass
@@ -273,9 +274,7 @@ def _save_scenarios(scenarios: list[Scenario]) -> None:
         data.append(d)
     content = json.dumps(data, indent=2, ensure_ascii=False)
     # Atomic write: write to temp file in same directory, then rename
-    fd, tmp_path = tempfile.mkstemp(
-        dir=str(_SCENARIOS_PATH.parent), suffix=".tmp", prefix=".scenarios_"
-    )
+    fd, tmp_path = tempfile.mkstemp(dir=str(_SCENARIOS_PATH.parent), suffix=".tmp", prefix=".scenarios_")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)

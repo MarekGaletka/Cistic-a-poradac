@@ -5,8 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
-from dataclasses import field
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -90,11 +89,11 @@ def _clear_tasks():
 # ---------------------------------------------------------------------------
 
 
-def _inject_task(command="test", status="running", progress=None, result=None,
-                 error=None, finished_at=None, created_ts_offset=0):
+def _inject_task(command="test", status="running", progress=None, result=None, error=None, finished_at=None, created_ts_offset=0):
     """Directly inject a task into the global store for deterministic tests."""
-    from godmode_media_library.web import api as api_mod
     from datetime import datetime, timezone
+
+    from godmode_media_library.web import api as api_mod
 
     task = api_mod.TaskStatus(
         id=str(uuid.uuid4())[:8],
@@ -535,7 +534,6 @@ class TestWebSocketIntegration:
 
     def test_ws_receives_task_status(self, client):
         """WebSocket connection receives at least one status message."""
-        from godmode_media_library.web import api as api_mod
 
         task = _inject_task(status="completed", command="test-ws")
 
@@ -573,8 +571,7 @@ class TestWebSocketIntegration:
 
     def test_ws_message_has_all_fields(self, client):
         """WebSocket messages contain all expected task fields."""
-        task = _inject_task(status="completed", command="verify",
-                            result={"ok": True})
+        task = _inject_task(status="completed", command="verify", result={"ok": True})
 
         with client.websocket_connect(f"/api/ws/tasks/{task.id}") as ws:
             msg = ws.receive_json()

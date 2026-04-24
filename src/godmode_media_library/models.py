@@ -51,7 +51,6 @@ class PlanPolicy:
     prefer_roots: tuple[str, ...] = ()
 
 
-
 @dataclass(frozen=True)
 class TreePlanRow:
     unit_id: str

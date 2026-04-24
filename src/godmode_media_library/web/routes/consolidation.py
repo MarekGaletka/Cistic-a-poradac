@@ -25,6 +25,7 @@ router = APIRouter()
 
 # ── Request models ────────────────────────────────────────────────────
 
+
 class ConsolidationStartRequest(BaseModel):
     source_remotes: list[str] = []
     local_roots: list[str] = []
@@ -103,6 +104,7 @@ class DedupRequest(BaseModel):
 
 # ── Local helpers ─────────────────────────────────────────────────────
 
+
 def _consolidation_progress_dict(p) -> dict:
     """Convert ConsolidationProgress to dict for task updates."""
     return {
@@ -172,6 +174,7 @@ def _run_rclone_sync(task_id: str, source: str, dest: str, *, sync_mode: bool = 
 
 # ── Endpoints ─────────────────────────────────────────────────────────
 
+
 @router.get("/consolidation/status")
 def consolidation_status(request: Request):
     """Get current consolidation status."""
@@ -195,6 +198,7 @@ def consolidation_status(request: Request):
         try:
             from ..shared import _tasks as tasks_dict
             from ..shared import _tasks_lock
+
             with _tasks_lock:
                 snapshot = list(tasks_dict.values())
             for t in snapshot:
@@ -222,6 +226,7 @@ def consolidation_health(request: Request):
         catalog_path = str(request.app.state.catalog_path)
         # Avoid full status — just check if we have an active job config
         from ...consolidation import Catalog, ckpt
+
         cat = Catalog(catalog_path)
         cat.open()
         try:
@@ -247,6 +252,7 @@ def consolidation_health(request: Request):
     # Check rclone process
     try:
         import subprocess as sp
+
         result = sp.run(["pgrep", "-f", "rclone"], capture_output=True, text=True, timeout=3)
         health["rclone_running"] = result.returncode == 0
         health["rclone_pids"] = [int(p) for p in result.stdout.strip().split("\n") if p.strip()] if result.returncode == 0 else []
@@ -305,7 +311,6 @@ def consolidation_start(body: ConsolidationStartRequest, request: Request, backg
     try:
         status = get_consolidation_status(catalog_path_str)
         if status.get("has_active_job"):
-
             raise HTTPException(
                 status_code=409,
                 detail="Konsolidace již běží. Nejdřív ji pozastavte nebo počkejte na dokončení.",
@@ -408,6 +413,7 @@ def consolidation_failed(request: Request):
 
 
 # ── Consolidation: Disk Sync & Catalog Stats ─────────────────────────
+
 
 @router.post("/consolidation/sync-to-disk")
 def consolidation_sync_to_disk(body: SyncToDiskRequest, request: Request, background_tasks: BackgroundTasks):
@@ -617,18 +623,27 @@ async def consolidation_run_metadata_enrichment(request: Request, bg: Background
 
                 # Phase 3: Quality analysis
                 _update_progress(task.id, {"phase": "quality_analysis", "phase_label": "Analyzuji kvalitu obrázků"})
-                quality_stats = batch_analyze(cat, progress_fn=lambda done, total: _update_progress(task.id, {
-                    "phase": "quality_analysis",
-                    "phase_label": f"Analyzuji kvalitu obrázků ({done}/{total})",
-                    "analyzed": done,
-                    "total": total,
-                }))
+                quality_stats = batch_analyze(
+                    cat,
+                    progress_fn=lambda done, total: _update_progress(
+                        task.id,
+                        {
+                            "phase": "quality_analysis",
+                            "phase_label": f"Analyzuji kvalitu obrázků ({done}/{total})",
+                            "analyzed": done,
+                            "total": total,
+                        },
+                    ),
+                )
 
-                _finish_task(task.id, result={
-                    "backfill": backfill_result,
-                    "fs_dates_filled": fs_dates,
-                    "quality": quality_stats,
-                })
+                _finish_task(
+                    task.id,
+                    result={
+                        "backfill": backfill_result,
+                        "fs_dates_filled": fs_dates,
+                        "quality": quality_stats,
+                    },
+                )
             finally:
                 _return_catalog(cat)
         except Exception as exc:
@@ -658,13 +673,15 @@ def consolidation_available_disks():
             continue
         try:
             usage = shutil.disk_usage(str(entry))
-            disks.append({
-                "name": entry.name,
-                "path": str(entry),
-                "total_size": usage.total,
-                "free_space": usage.free,
-                "used_space": usage.used,
-            })
+            disks.append(
+                {
+                    "name": entry.name,
+                    "path": str(entry),
+                    "total_size": usage.total,
+                    "free_space": usage.free,
+                    "used_space": usage.used,
+                }
+            )
         except OSError:
             # Volume not accessible, skip
             continue

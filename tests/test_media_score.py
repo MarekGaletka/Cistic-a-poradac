@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,8 +22,8 @@ from godmode_media_library.media_score import (
     score_file,
 )
 
-
 # ── _tier_label ──────────────────────────────────────────────────────
+
 
 class TestTierLabel:
     def test_masterpiece(self):
@@ -48,6 +46,7 @@ class TestTierLabel:
 
 
 # ── _score_recency (colon replacement) ───────────────────────────────
+
 
 class TestScoreRecency:
     def test_yyyy_colon_format(self):
@@ -74,6 +73,7 @@ class TestScoreRecency:
 
     def test_very_recent_date_high_score(self):
         from datetime import datetime, timedelta
+
         d = datetime.now() - timedelta(days=30)
         # Use EXIF format (colons in date) which is what _score_recency expects
         recent = d.strftime("%Y:%m:%d %H:%M:%S")
@@ -87,6 +87,7 @@ class TestScoreRecency:
 
 
 # ── _score_camera (word boundaries) ─────────────────────────────────
+
 
 class TestScoreCamera:
     def test_pro_camera_exact(self):
@@ -121,6 +122,7 @@ class TestScoreCamera:
 
 # ── _score_resolution ────────────────────────────────────────────────
 
+
 class TestScoreResolution:
     def test_high_res_20mp(self):
         assert _score_resolution(5000, 4000, "jpg") == 1.0
@@ -147,6 +149,7 @@ class TestScoreResolution:
 
 # ── _score_file_quality ──────────────────────────────────────────────
 
+
 class TestScoreFileQuality:
     def test_video_large_file(self):
         assert _score_file_quality(600 * 1024 * 1024, None, None, "mp4") == 1.0
@@ -164,6 +167,7 @@ class TestScoreFileQuality:
 
 
 # ── _score_user_signal ───────────────────────────────────────────────
+
 
 class TestScoreUserSignal:
     def test_max_rating(self):
@@ -183,6 +187,7 @@ class TestScoreUserSignal:
 
 
 # ── _score_uniqueness, _score_geo, _score_richness ───────────────────
+
 
 class TestMiscScorers:
     def test_uniqueness_no_group(self):
@@ -211,6 +216,7 @@ class TestMiscScorers:
 
 
 # ── score_file (overall) ─────────────────────────────────────────────
+
 
 class TestScoreFile:
     def test_basic_scoring(self):
@@ -253,6 +259,7 @@ class TestScoreFile:
 
 
 # ── score_catalog (with mock sqlite) ─────────────────────────────────
+
 
 class TestScoreCatalog:
     def test_score_catalog_basic(self, tmp_path):
@@ -331,6 +338,7 @@ class TestScoreCatalog:
 
 
 # ── Additional coverage tests ──────────────────────────────────────
+
 
 class TestScoreResolutionEdgeCases:
     """Cover resolution thresholds at 4MP, 2MP, 0.5MP boundaries."""
@@ -422,6 +430,7 @@ class TestScoreRecencyEdgeCases:
     def test_two_year_old(self):
         # ~1.5 years ago
         from datetime import datetime, timedelta
+
         d = datetime.now() - timedelta(days=550)
         date_str = d.strftime("%Y:%m:%d %H:%M:%S")
         score = _score_recency(date_str, None)
@@ -429,6 +438,7 @@ class TestScoreRecencyEdgeCases:
 
     def test_five_year_old(self):
         from datetime import datetime, timedelta
+
         d = datetime.now() - timedelta(days=4 * 365)
         date_str = d.strftime("%Y:%m:%d %H:%M:%S")
         score = _score_recency(date_str, None)
@@ -436,6 +446,7 @@ class TestScoreRecencyEdgeCases:
 
     def test_eight_year_old(self):
         from datetime import datetime, timedelta
+
         d = datetime.now() - timedelta(days=8 * 365)
         date_str = d.strftime("%Y:%m:%d %H:%M:%S")
         score = _score_recency(date_str, None)
@@ -485,8 +496,7 @@ class TestScoreCatalogHeapOverflow:
         # Insert 5 files with varying quality
         for i in range(5):
             conn.execute(
-                "INSERT INTO files (id, path, ext, size, width, height, metadata_richness) "
-                "VALUES (?, ?, 'jpg', ?, ?, ?, ?)",
+                "INSERT INTO files (id, path, ext, size, width, height, metadata_richness) VALUES (?, ?, 'jpg', ?, ?, ?, ?)",
                 (i + 1, f"/photo_{i}.jpg", (i + 1) * 1_000_000, (i + 1) * 1000, (i + 1) * 750, i * 20.0),
             )
         conn.commit()

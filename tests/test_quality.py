@@ -2,26 +2,25 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from godmode_media_library.asset_sets import PILLOW_IMAGE_EXTS
 from godmode_media_library.quality import (
-    VIDEO_EXTS,
+    _SCREEN_RESOLUTIONS,
     DOC_EXTS,
+    VIDEO_EXTS,
     QualityInfo,
     _compute_blur_score,
     _compute_brightness,
     _is_meme_ratio,
-    _SCREEN_RESOLUTIONS,
     analyze_image_quality,
     batch_analyze,
 )
 
-
 # ── _is_meme_ratio ──────────────────────────────────────────────────
+
 
 class TestIsMemeRatio:
     def test_square_is_meme(self):
@@ -39,10 +38,12 @@ class TestIsMemeRatio:
 
 # ── _compute_blur_score ──────────────────────────────────────────────
 
+
 class TestComputeBlurScore:
     def test_uniform_image_low_score(self):
         """A solid-color image should have very low blur score (no edges)."""
         from PIL import Image
+
         img = Image.new("L", (100, 100), color=128)
         score = _compute_blur_score(img)
         assert score < 10  # nearly zero variance
@@ -50,7 +51,9 @@ class TestComputeBlurScore:
     def test_noisy_image_high_score(self):
         """An image with random noise should have high blur score."""
         import random
+
         from PIL import Image
+
         random.seed(42)
         pixels = [random.randint(0, 255) for _ in range(100 * 100)]
         img = Image.new("L", (100, 100))
@@ -61,24 +64,29 @@ class TestComputeBlurScore:
 
 # ── _compute_brightness ─────────────────────────────────────────────
 
+
 class TestComputeBrightness:
     def test_black_image(self):
         from PIL import Image
+
         img = Image.new("L", (10, 10), color=0)
         assert _compute_brightness(img) == pytest.approx(0.0)
 
     def test_white_image(self):
         from PIL import Image
+
         img = Image.new("L", (10, 10), color=255)
         assert _compute_brightness(img) == pytest.approx(255.0)
 
     def test_mid_gray(self):
         from PIL import Image
+
         img = Image.new("L", (10, 10), color=128)
         assert _compute_brightness(img) == pytest.approx(128.0)
 
 
 # ── analyze_image_quality ────────────────────────────────────────────
+
 
 class TestAnalyzeImageQuality:
     def test_video_file_returns_video_category(self, tmp_path):
@@ -96,6 +104,7 @@ class TestAnalyzeImageQuality:
     def test_screenshot_detection(self, tmp_path):
         """A PNG at screen resolution with no camera EXIF = screenshot."""
         from PIL import Image
+
         f = tmp_path / "screen.png"
         img = Image.new("RGB", (1920, 1080), color=(100, 100, 100))
         img.save(str(f))
@@ -107,6 +116,7 @@ class TestAnalyzeImageQuality:
     def test_photo_with_camera_not_screenshot(self, tmp_path):
         """Even at screen resolution, having camera EXIF means it's a photo."""
         from PIL import Image
+
         f = tmp_path / "photo.jpg"
         img = Image.new("RGB", (1920, 1080), color=(100, 100, 100))
         img.save(str(f))
@@ -118,6 +128,7 @@ class TestAnalyzeImageQuality:
     def test_meme_detection(self, tmp_path):
         """Small file, square ratio, no camera = meme."""
         from PIL import Image
+
         f = tmp_path / "meme.jpg"
         img = Image.new("RGB", (500, 500), color=(200, 200, 200))
         img.save(str(f), quality=10)  # small file
@@ -130,6 +141,7 @@ class TestAnalyzeImageQuality:
 
     def test_dark_image(self, tmp_path):
         from PIL import Image
+
         f = tmp_path / "dark.jpg"
         img = Image.new("RGB", (200, 200), color=(10, 10, 10))
         img.save(str(f))
@@ -138,6 +150,7 @@ class TestAnalyzeImageQuality:
 
     def test_overexposed_image(self, tmp_path):
         from PIL import Image
+
         f = tmp_path / "bright.jpg"
         img = Image.new("RGB", (200, 200), color=(250, 250, 250))
         img.save(str(f))
@@ -147,6 +160,7 @@ class TestAnalyzeImageQuality:
     def test_blurry_detection(self, tmp_path):
         """A solid-color image has no edges, so it should be classified as blurry."""
         from PIL import Image
+
         f = tmp_path / "blur.jpg"
         img = Image.new("RGB", (200, 200), color=(128, 128, 128))
         img.save(str(f))
@@ -167,6 +181,7 @@ class TestAnalyzeImageQuality:
     def test_size_read_from_filesystem(self, tmp_path):
         """When size=0, function reads from filesystem."""
         from PIL import Image
+
         f = tmp_path / "auto.jpg"
         img = Image.new("RGB", (100, 100), color=(128, 128, 128))
         img.save(str(f))
@@ -177,9 +192,11 @@ class TestAnalyzeImageQuality:
 
 # ── batch_analyze ────────────────────────────────────────────────────
 
+
 class TestBatchAnalyze:
     def test_batch_with_mock_catalog(self, tmp_path):
         from PIL import Image
+
         f = tmp_path / "photo.jpg"
         img = Image.new("RGB", (200, 200), color=(100, 100, 100))
         img.save(str(f))
@@ -203,6 +220,7 @@ class TestBatchAnalyze:
 
     def test_batch_progress_callback(self, tmp_path):
         from PIL import Image
+
         # Create 10 images so progress callback fires (every 10)
         files = []
         for i in range(10):
@@ -231,6 +249,7 @@ class TestBatchAnalyze:
 
 
 # ── Constants / extension sets ───────────────────────────────────────
+
 
 class TestExtensionSets:
     def test_image_exts_has_common(self):

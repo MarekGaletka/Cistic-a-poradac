@@ -14,15 +14,15 @@ import os
 import shutil
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
 
 from . import checkpoint as ckpt
 from .catalog import Catalog, CatalogFileRow
 from .cloud import rclone_copyto
 from .exif_reader import ExifMeta, can_read_exif, read_exif
-from .media_probe import probe_file
+from .media_probe import MediaMeta, probe_file
 from .utils import sha256_file
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,7 @@ def cancel_import():
 
 # ── iPhone connection helpers ────────────────────────────────────────
 
+
 def _run_async(coro):
     """Run an async coroutine from sync context, handling nested event loops."""
     try:
@@ -126,6 +127,7 @@ def _run_async(coro):
     if loop and loop.is_running():
         # Already inside an event loop (e.g. FastAPI) — run in a new thread
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, coro).result(timeout=10)
     return asyncio.run(coro)
@@ -135,6 +137,7 @@ def _check_iphone_connected() -> bool:
     """Check if an iPhone is connected via USB."""
     try:
         from pymobiledevice3.usbmux import list_devices
+
         devices = _run_async(list_devices())
         return len(devices) > 0
     except Exception:
@@ -145,6 +148,7 @@ def _get_afc_service():
     """Create a new AFC service connection to the iPhone."""
     from pymobiledevice3.lockdown import create_using_usbmux
     from pymobiledevice3.services.afc import AfcService
+
     return create_using_usbmux, AfcService
 
 
@@ -173,17 +177,18 @@ async def list_iphone_files() -> list[IPhoneFile]:
                     info = await afc.stat(afc_path)
                     size = info.get("st_size", 0)
                     mtime = info.get("st_mtime", 0.0)
-                    files.append(IPhoneFile(
-                        afc_path=afc_path,
-                        filename=entry,
-                        size=size,
-                        mtime=mtime,
-                    ))
+                    files.append(
+                        IPhoneFile(
+                            afc_path=afc_path,
+                            filename=entry,
+                            size=size,
+                            mtime=mtime,
+                        )
+                    )
                 except Exception as e:
                     logger.warning("Cannot stat %s: %s", afc_path, e)
 
-    logger.info("Found %d files on iPhone (%s)", len(files),
-                _fmt_bytes(sum(f.size for f in files)))
+    logger.info("Found %d files on iPhone (%s)", len(files), _fmt_bytes(sum(f.size for f in files)))
     return files
 
 
@@ -201,8 +206,7 @@ async def _download_file(afc_path: str, dest: Path) -> bool:
     return True
 
 
-def _determine_dest_path(config: IPhoneImportConfig, exif: ExifMeta | None,
-                         filename: str, probe: "MediaMeta | None" = None) -> str:
+def _determine_dest_path(config: IPhoneImportConfig, exif: ExifMeta | None, filename: str, probe: MediaMeta | None = None) -> str:
     """Calculate destination path based on EXIF date, QuickTime creation_time, or filename.
 
     Priority (oldest wins): EXIF DateTimeOriginal > QuickTime creation_time > filename date.
@@ -220,8 +224,7 @@ def _determine_dest_path(config: IPhoneImportConfig, exif: ExifMeta | None,
     # 2. QuickTime/MP4 creation_time from ffprobe
     if probe and getattr(probe, "creation_time", None):
         ct = probe.creation_time
-        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
-                    "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
             try:
                 dt = datetime.strptime(ct, fmt)
                 # Skip zero dates (some encoders write 1904-01-01)
@@ -287,9 +290,10 @@ def reorganize_unsorted(
         stale_ids: list[int] = []
         try:
             lsf_result = subprocess.run(
-                ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/",
-                 "--files-only", "--fast-list", "--no-mimetype"],
-                capture_output=True, text=True, timeout=120,
+                ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/", "--files-only", "--fast-list", "--no-mimetype"],
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if lsf_result.returncode == 0:
                 actual_files = {line.strip() for line in lsf_result.stdout.splitlines() if line.strip()}
@@ -328,16 +332,25 @@ def reorganize_unsorted(
             ext = (row["ext"] or "").lower()
 
             if progress_fn and i % 5 == 0:
-                progress_fn({"phase": "reorganizing", "current": i, "total": total,
-                             "moved": moved, "skipped": skipped, "failed": failed,
-                             "current_file": filename})
+                progress_fn(
+                    {
+                        "phase": "reorganizing",
+                        "current": i,
+                        "total": total,
+                        "moved": moved,
+                        "skipped": skipped,
+                        "failed": failed,
+                        "current_file": filename,
+                    }
+                )
 
             # Quick existence check: verify file still exists on remote before expensive download
             try:
                 check_result = subprocess.run(
-                    ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/",
-                     "--include", filename, "--files-only", "--max-depth", "1"],
-                    capture_output=True, text=True, timeout=15,
+                    ["rclone", "lsf", f"{dest_remote}:{dest_path}/Unsorted/", "--include", filename, "--files-only", "--max-depth", "1"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
                 )
                 if not check_result.stdout.strip():
                     logger.info("Skipping %s — no longer in Unsorted/ (already moved)", filename)
@@ -352,6 +365,7 @@ def reorganize_unsorted(
             if ext not in ("mov", "mp4", "m4v", "3gp"):
                 # For AAE/other, try to match date from a sibling file with same IMG number
                 import re
+
                 m = re.match(r"(IMG_\d+)\.", filename)
                 if m:
                     prefix = m.group(1)
@@ -372,10 +386,11 @@ def reorganize_unsorted(
                         try:
                             subprocess.run(
                                 ["rclone", "moveto", full_path, new_path, "--server-side-across-configs"],
-                                capture_output=True, timeout=30, check=True,
+                                capture_output=True,
+                                timeout=30,
+                                check=True,
                             )
-                            conn.execute("UPDATE files SET path = ?, date_original = ? WHERE id = ?",
-                                         (new_path, date_str, row["id"]))
+                            conn.execute("UPDATE files SET path = ?, date_original = ? WHERE id = ?", (new_path, date_str, row["id"]))
                             conn.commit()
                             moved += 1
                         except Exception as e:
@@ -397,26 +412,33 @@ def reorganize_unsorted(
                 # Get file size for timeout calculation
                 size_result = subprocess.run(
                     ["rclone", "size", full_path, "--json"],
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
                 )
                 file_size_mb = 100  # default
                 if size_result.returncode == 0:
                     import json as _json
+
                     with contextlib.suppress(Exception):
                         file_size_mb = _json.loads(size_result.stdout).get("bytes", 0) / 1e6
                 dl_timeout = max(120, int(file_size_mb) + 120)
 
                 subprocess.run(
                     ["rclone", "copyto", full_path, tmp_path],
-                    capture_output=True, timeout=dl_timeout, check=True,
+                    capture_output=True,
+                    timeout=dl_timeout,
+                    check=True,
                 )
                 result = subprocess.run(
-                    ["ffprobe", "-v", "quiet", "-print_format", "json",
-                     "-show_format", "-show_streams", tmp_path],
-                    capture_output=True, text=True, timeout=30,
+                    ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", tmp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
                 if result.returncode == 0:
                     import json
+
                     data = json.loads(result.stdout)
                     tags = data.get("format", {}).get("tags", {})
                     creation_time = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")
@@ -442,8 +464,7 @@ def reorganize_unsorted(
 
             # Parse creation_time
             dt = None
-            for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
-                        "%Y-%m-%d %H:%M:%S"):
+            for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
                 try:
                     dt = datetime.strptime(creation_time, fmt).replace(tzinfo=None)
                     break
@@ -462,10 +483,11 @@ def reorganize_unsorted(
             try:
                 subprocess.run(
                     ["rclone", "moveto", full_path, new_path, "--server-side-across-configs"],
-                    capture_output=True, timeout=60, check=True,
+                    capture_output=True,
+                    timeout=60,
+                    check=True,
                 )
-                conn.execute("UPDATE files SET path = ?, date_original = ? WHERE id = ?",
-                             (new_path, date_original_str, row["id"]))
+                conn.execute("UPDATE files SET path = ?, date_original = ? WHERE id = ?", (new_path, date_original_str, row["id"]))
                 conn.commit()
                 moved += 1
                 logger.info("Moved %s → %s (%s)", filename, new_folder, date_original_str)
@@ -483,18 +505,40 @@ def reorganize_unsorted(
 def _fmt_bytes(b: int) -> str:
     if b < 1024:
         return f"{b} B"
-    if b < 1024 ** 2:
+    if b < 1024**2:
         return f"{b / 1024:.1f} KB"
-    if b < 1024 ** 3:
-        return f"{b / 1024 ** 2:.1f} MB"
-    return f"{b / 1024 ** 3:.2f} GB"
+    if b < 1024**3:
+        return f"{b / 1024**2:.1f} MB"
+    return f"{b / 1024**3:.2f} GB"
 
 
 MEDIA_EXTS = {
-    ".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff",
-    ".gif", ".bmp", ".webp", ".dng", ".cr2", ".cr3", ".nef", ".arw", ".raw",
-    ".mov", ".mp4", ".m4v", ".avi", ".mkv", ".3gp",
-    ".mp3", ".m4a", ".aac", ".wav",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".heic",
+    ".heif",
+    ".tif",
+    ".tiff",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".dng",
+    ".cr2",
+    ".cr3",
+    ".nef",
+    ".arw",
+    ".raw",
+    ".mov",
+    ".mp4",
+    ".m4v",
+    ".avi",
+    ".mkv",
+    ".3gp",
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".wav",
     ".aae",
 }
 
@@ -504,6 +548,7 @@ def _is_media(filename: str) -> bool:
 
 
 # ── Main pipeline ────────────────────────────────────────────────────
+
 
 def run_import(
     catalog_path: str,
@@ -560,11 +605,15 @@ def run_import(
             ckpt.update_job(cat, job.job_id, status="running")
             logger.info("Resuming iPhone import job %s", job.job_id)
         else:
-            job = ckpt.create_job(cat, IPHONE_JOB_TYPE, config={
-                "dest_remote": config.dest_remote,
-                "dest_path": config.dest_path,
-                "structure_pattern": config.structure_pattern,
-            })
+            job = ckpt.create_job(
+                cat,
+                IPHONE_JOB_TYPE,
+                config={
+                    "dest_remote": config.dest_remote,
+                    "dest_path": config.dest_path,
+                    "structure_pattern": config.structure_pattern,
+                },
+            )
             ckpt.update_job(cat, job.job_id, status="running")
             logger.info("Created new iPhone import job %s", job.job_id)
 
@@ -639,9 +688,14 @@ def run_import(
                     birthtime=ifile.mtime or now_ts,
                     ext=local_temp.suffix.lower().lstrip("."),
                     sha256=file_hash,
-                    inode=None, device=None, nlink=1,
-                    asset_key=None, asset_component=False, xattr_count=0,
-                    first_seen=now_str, last_scanned=now_str,
+                    inode=None,
+                    device=None,
+                    nlink=1,
+                    asset_key=None,
+                    asset_component=False,
+                    xattr_count=0,
+                    first_seen=now_str,
+                    last_scanned=now_str,
                     duration_seconds=probe.duration_seconds if probe else None,
                     width=probe.width if probe else None,
                     height=probe.height if probe else None,
@@ -649,9 +703,9 @@ def run_import(
                     audio_codec=probe.audio_codec if probe else None,
                     bitrate=probe.bitrate if probe else None,
                     phash=str(phash) if phash else None,
-                    date_original=exif.date_original if exif and exif.date_original else (
-                        probe.creation_time if probe and getattr(probe, "creation_time", None) else None
-                    ),
+                    date_original=exif.date_original
+                    if exif and exif.date_original
+                    else (probe.creation_time if probe and getattr(probe, "creation_time", None) else None),
                     camera_make=exif.camera_make if exif else None,
                     camera_model=exif.camera_model if exif else None,
                     gps_latitude=exif.gps_latitude if exif else None,
@@ -659,10 +713,16 @@ def run_import(
                 )
                 with catalog_lock:
                     cat.upsert_file(row)
-                    ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                                   STEP_TRANSFER, "completed",
-                                   dest=f"{config.dest_remote}:{dest_p}",
-                                   bytes_transferred=ifile.size)
+                    ckpt.mark_file(
+                        cat,
+                        job.job_id,
+                        ifile.afc_path,
+                        ifile.afc_path,
+                        STEP_TRANSFER,
+                        "completed",
+                        dest=f"{config.dest_remote}:{dest_p}",
+                        bytes_transferred=ifile.size,
+                    )
 
                 bytes_done += ifile.size
                 elapsed = time.monotonic() - start_time
@@ -676,27 +736,22 @@ def run_import(
                 if progress_fn:
                     progress_fn(get_progress())
 
-                logger.info("Transferred %s → %s:%s (%s)",
-                            ifile.filename, config.dest_remote, dest_p,
-                            _fmt_bytes(ifile.size))
+                logger.info("Transferred %s → %s:%s (%s)", ifile.filename, config.dest_remote, dest_p, _fmt_bytes(ifile.size))
 
             except Exception as e:
                 logger.warning("Upload failed %s: %s", ifile.filename, e)
                 with catalog_lock:
-                    ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                                   STEP_TRANSFER, "failed", error=str(e))
+                    ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path, STEP_TRANSFER, "failed", error=str(e))
                 with _progress_lock:
                     _progress.failed_files += 1
             finally:
                 _cleanup_temp(local_temp)
                 upload_semaphore.release()
 
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=config.upload_workers, thread_name_prefix="iphone-upload"
-        ) as upload_pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=config.upload_workers, thread_name_prefix="iphone-upload") as upload_pool:
             futures: list[concurrent.futures.Future] = []
 
-            for i, ifile in enumerate(iphone_files):
+            for _i, ifile in enumerate(iphone_files):
                 if abort:
                     break
 
@@ -719,18 +774,15 @@ def run_import(
                 # Check disk space (account for prefetched files)
                 disk = shutil.disk_usage(str(temp_dir))
                 if disk.free < max(MIN_FREE_BYTES, ifile.size * 2):
-                    _report(phase="error",
-                            error=f"Nedostatek místa na disku ({_fmt_bytes(disk.free)} volných)")
+                    _report(phase="error", error=f"Nedostatek místa na disku ({_fmt_bytes(disk.free)} volných)")
                     ckpt.update_job(cat, job.job_id, status="paused", error="Nedostatek místa")
                     abort = True
                     break
 
                 # Check iPhone still connected
                 if not _check_iphone_connected():
-                    _report(phase="paused", iphone_connected=False,
-                            error="iPhone odpojen — připojte jej a pokračujte")
-                    ckpt.update_job(cat, job.job_id, status="paused",
-                                    error="iPhone disconnected")
+                    _report(phase="paused", iphone_connected=False, error="iPhone odpojen — připojte jej a pokračujte")
+                    ckpt.update_job(cat, job.job_id, status="paused", error="iPhone disconnected")
                     while not _check_iphone_connected() and not _cancel_event.is_set():
                         time.sleep(5)
                     if _cancel_event.is_set():
@@ -745,14 +797,12 @@ def run_import(
                 local_temp = temp_dir / ifile.filename
                 try:
                     with catalog_lock:
-                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                                       STEP_TRANSFER, "in_progress")
+                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path, STEP_TRANSFER, "in_progress")
                     asyncio.run(_download_file(ifile.afc_path, local_temp))
                 except Exception as e:
                     logger.warning("Download failed %s: %s", ifile.filename, e)
                     with catalog_lock:
-                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                                       STEP_TRANSFER, "failed", error=str(e))
+                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path, STEP_TRANSFER, "failed", error=str(e))
                     with _progress_lock:
                         _progress.failed_files += 1
                     _cleanup_temp(local_temp)
@@ -769,8 +819,7 @@ def run_import(
                     if existing:
                         logger.info("Dedup skip: %s (hash %s)", ifile.filename, file_hash[:12])
                         with catalog_lock:
-                            ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                                           STEP_TRANSFER, "skipped", dest="dedup")
+                            ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path, STEP_TRANSFER, "skipped", dest="dedup")
                         with _progress_lock:
                             _progress.skipped_files += 1
                             _progress.completed_files += 1
@@ -794,6 +843,7 @@ def run_import(
                     try:
                         from .perceptual_hash import dhash, is_image_ext
                         from .video_hash import video_dhash
+
                         ext = local_temp.suffix.lower().lstrip(".")
                         if ifile.size > PHASH_SIZE_LIMIT:
                             pass  # Skip phash for files > 500 MB
@@ -810,8 +860,7 @@ def run_import(
                 except Exception as e:
                     logger.warning("Prepare failed %s: %s", ifile.filename, e)
                     with catalog_lock:
-                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path,
-                                       STEP_TRANSFER, "failed", error=str(e))
+                        ckpt.mark_file(cat, job.job_id, ifile.afc_path, ifile.afc_path, STEP_TRANSFER, "failed", error=str(e))
                     with _progress_lock:
                         _progress.failed_files += 1
                     _cleanup_temp(local_temp)
@@ -863,6 +912,7 @@ def get_iphone_status(catalog_path: str) -> dict:
     if connected:
         try:
             from pymobiledevice3.usbmux import list_devices
+
             devices = _run_async(list_devices())
             if devices:
                 result["device_name"] = getattr(devices[0], "name", "iPhone")

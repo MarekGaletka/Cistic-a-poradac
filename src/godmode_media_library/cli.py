@@ -138,9 +138,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     else:
         quarantine_root = run_dir / "quarantine" / f"apply_{utc_stamp()}"
 
-    if not args.dry_run and not _confirm(
-        f"Apply quarantine plan from {plan_path}?", yes=getattr(args, "yes", False)
-    ):
+    if not args.dry_run and not _confirm(f"Apply quarantine plan from {plan_path}?", yes=getattr(args, "yes", False)):
         print("Aborted.")
         return 0
 
@@ -194,9 +192,7 @@ def cmd_promote(args: argparse.Namespace) -> int:
     else:
         backup_root = run_dir / "quarantine" / f"promote_backup_{utc_stamp()}"
 
-    if not args.dry_run and not _confirm(
-        f"Promote files from manifest {manifest_path}?", yes=getattr(args, "yes", False)
-    ):
+    if not args.dry_run and not _confirm(f"Promote files from manifest {manifest_path}?", yes=getattr(args, "yes", False)):
         print("Aborted.")
         return 0
 
@@ -253,8 +249,10 @@ def cmd_tree_apply(args: argparse.Namespace) -> int:
     log_path = Path(args.log).expanduser().resolve() if args.log else (plan_path.parent / "tree_apply_log.tsv")
     ensure_dir(log_path.parent)
 
-    if args.operation == "move" and not args.dry_run and not _confirm(
-        f"Apply tree plan with operation=move from {plan_path}?", yes=getattr(args, "yes", False)
+    if (
+        args.operation == "move"
+        and not args.dry_run
+        and not _confirm(f"Apply tree plan with operation=move from {plan_path}?", yes=getattr(args, "yes", False))
     ):
         print("Aborted.")
         return 0
@@ -509,7 +507,9 @@ def _kill_old_server(port: int) -> None:
     try:
         result = _sp.run(
             ["lsof", "-ti", f":{port}"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for p in result.stdout.split():
             p = p.strip()
@@ -522,7 +522,9 @@ def _kill_old_server(port: int) -> None:
     try:
         result = _sp.run(
             ["pgrep", "-f", "gml serve"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for p in result.stdout.split():
             p = p.strip()
@@ -738,8 +740,14 @@ def cmd_query(args: argparse.Namespace) -> int:
         )
         if fmt != "text":
             data = [
-                {"path": f.path, "size": f.size, "ext": f.ext, "sha256": f.sha256 or "",
-                 "camera": f.camera_model or "", "duration": f.duration_seconds or ""}
+                {
+                    "path": f.path,
+                    "size": f.size,
+                    "ext": f.ext,
+                    "sha256": f.sha256 or "",
+                    "camera": f.camera_model or "",
+                    "duration": f.duration_seconds or "",
+                }
                 for f in rows
             ]
             print(_format_output(data, fmt, ["path", "size", "ext", "sha256", "camera", "duration"]))
@@ -1202,8 +1210,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--logfile-backups", type=int, default=3, help="Number of rotated log backup files (default 3)")
     parser.add_argument("--lang", choices=["en", "cs"], default=None, help="Language (en/cs)")
     parser.add_argument(
-        "--output-format", choices=["text", "json", "tsv"],
-        default="text", dest="output_format", help="Output format (default: text)",
+        "--output-format",
+        choices=["text", "json", "tsv"],
+        default="text",
+        dest="output_format",
+        help="Output format (default: text)",
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1293,8 +1304,12 @@ def build_parser() -> argparse.ArgumentParser:
     psim = sub.add_parser("similar", help=t("help.similar"))
     psim.add_argument("--catalog", default=None, help="Catalog DB path")
     psim.add_argument(
-        "--threshold", type=int, default=10, choices=range(0, 65),
-        metavar="0-64", help="Max Hamming distance 0-64 (0=identical, lower=stricter)",
+        "--threshold",
+        type=int,
+        default=10,
+        choices=range(0, 65),
+        metavar="0-64",
+        help="Max Hamming distance 0-64 (0=identical, lower=stricter)",
     )
     psim.add_argument("--out", default=None, help="Optional output TSV path")
     psim.set_defaults(func=cmd_similar)
@@ -1395,8 +1410,10 @@ def build_parser() -> argparse.ArgumentParser:
     pta = sub.add_parser("tree-apply", help="Apply tree restructuring plan")
     pta.add_argument("--plan", required=True, help="Path to tree_plan.tsv")
     pta.add_argument(
-        "--operation", choices=["move", "copy", "hardlink", "symlink"],
-        default="hardlink", help="Apply operation (default: hardlink)",
+        "--operation",
+        choices=["move", "copy", "hardlink", "symlink"],
+        default="hardlink",
+        help="Apply operation (default: hardlink)",
     )
     pta.add_argument("--collision-policy", choices=["skip", "rename", "overwrite"], default="rename", help="Collision policy")
     pta.add_argument("--log", default=None, help="Optional output log path")

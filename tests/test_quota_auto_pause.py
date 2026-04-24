@@ -63,7 +63,6 @@ class TestQuotaAutoPauseBehavior:
         """Simulate the quota check logic from consolidation.py Phase 5."""
         from godmode_media_library.consolidation_types import (
             ERROR_TRUNCATE_LEN,
-            JobStatus,
         )
 
         error_msg = "googleapi: Error 403: The user's Drive storage quota has been exceeded."

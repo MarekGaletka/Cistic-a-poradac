@@ -7,9 +7,8 @@ endpoints (quarantine, integrity, deep-scan, repair, photorec, signal).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -39,7 +38,9 @@ def client(tmp_path):
     # Register tmp_path as a configured root so recovery endpoints
     # pass the _check_path_within_roots security check.
     import json as _json
+
     from godmode_media_library.catalog import Catalog
+
     cat = Catalog(db_path)
     cat.open()
     cat.conn.execute(
@@ -102,6 +103,7 @@ class TestCloudSources:
     def test_list_remotes_rclone_not_installed(self, client):
         # Clear endpoint cache so mock takes effect
         from godmode_media_library.web import api as _api
+
         _api._remotes_cache.update({"data": None, "ts": 0.0})
 
         with patch("godmode_media_library.cloud.check_rclone", return_value=False):
@@ -157,9 +159,7 @@ class TestCloudSources:
         native_dir = tmp_path / "iCloud"
         native_dir.mkdir()
         (native_dir / "photo.jpg").write_bytes(b"data")
-        mock_paths = [
-            {"name": "iCloud", "path": str(native_dir), "type": "native_sync", "icon": "icon"}
-        ]
+        mock_paths = [{"name": "iCloud", "path": str(native_dir), "type": "native_sync", "icon": "icon"}]
         with patch("godmode_media_library.cloud.detect_native_cloud_paths", return_value=mock_paths):
             resp = client.get("/api/cloud/native")
         assert resp.status_code == 200
@@ -290,8 +290,12 @@ class TestCloudSync:
         from godmode_media_library.cloud import SyncResult
 
         mock_result = SyncResult(
-            remote="mega", remote_path="", local_path="/tmp/sync",
-            files_transferred=0, errors=0, elapsed_seconds=0.5,
+            remote="mega",
+            remote_path="",
+            local_path="/tmp/sync",
+            files_transferred=0,
+            errors=0,
+            elapsed_seconds=0.5,
         )
         with (
             patch("godmode_media_library.cloud.rclone_copy", return_value=mock_result),
@@ -598,9 +602,7 @@ class TestIntegrityCheck:
     def test_start_integrity_check(self, client):
         from godmode_media_library.recovery import IntegrityResult
 
-        mock_result = IntegrityResult(
-            total_checked=100, healthy=95, corrupted=5, repaired=0, errors=[]
-        )
+        mock_result = IntegrityResult(total_checked=100, healthy=95, corrupted=5, repaired=0, errors=[])
         with patch("godmode_media_library.recovery.check_integrity", return_value=mock_result):
             resp = client.post("/api/recovery/integrity-check")
         assert resp.status_code == 200
@@ -612,9 +614,7 @@ class TestIntegrityCheck:
         """Verify the task can be polled after creation."""
         from godmode_media_library.recovery import IntegrityResult
 
-        mock_result = IntegrityResult(
-            total_checked=50, healthy=50, corrupted=0, repaired=0, errors=[]
-        )
+        mock_result = IntegrityResult(total_checked=50, healthy=50, corrupted=0, repaired=0, errors=[])
         with patch("godmode_media_library.recovery.check_integrity", return_value=mock_result):
             start_resp = client.post("/api/recovery/integrity-check")
         task_id = start_resp.json()["task_id"]
@@ -678,8 +678,11 @@ class TestDeepScan:
         from godmode_media_library.recovery import DeepScanResult
 
         mock_result = DeepScanResult(
-            locations_scanned=3, files_found=10, total_size=5000,
-            files=[], locations=[],
+            locations_scanned=3,
+            files_found=10,
+            total_size=5000,
+            files=[],
+            locations=[],
         )
         with patch("godmode_media_library.recovery.deep_scan", return_value=mock_result):
             start = client.post("/api/recovery/deep-scan")
@@ -790,9 +793,17 @@ class TestAppRecovery:
 
     def test_get_available_apps(self, client):
         mock_apps = [
-            {"id": "whatsapp", "name": "WhatsApp", "icon": "icon", "color": "#25D366",
-             "category": "messaging", "available": False, "encrypted": True,
-             "decryptable": False, "note": ""},
+            {
+                "id": "whatsapp",
+                "name": "WhatsApp",
+                "icon": "icon",
+                "color": "#25D366",
+                "category": "messaging",
+                "available": False,
+                "encrypted": True,
+                "decryptable": False,
+                "note": "",
+            },
         ]
         with patch("godmode_media_library.recovery.get_available_apps", return_value=mock_apps):
             resp = client.get("/api/recovery/apps")
@@ -856,8 +867,12 @@ class TestCloudBackup:
         from godmode_media_library.cloud import SyncResult
 
         mock_result = SyncResult(
-            remote="mega", remote_path="GML-Backup/photos",
-            local_path=str(src_dir), files_transferred=1, errors=0, elapsed_seconds=1.0,
+            remote="mega",
+            remote_path="GML-Backup/photos",
+            local_path=str(src_dir),
+            files_transferred=1,
+            errors=0,
+            elapsed_seconds=1.0,
         )
         with patch("godmode_media_library.cloud.rclone_upload", return_value=mock_result):
             resp = client.post(

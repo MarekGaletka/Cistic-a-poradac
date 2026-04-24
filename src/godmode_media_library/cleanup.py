@@ -21,10 +21,8 @@ import re
 import subprocess
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import PurePosixPath
 
 from .cloud import (
     _rclone_bin,
@@ -37,9 +35,11 @@ logger = logging.getLogger(__name__)
 
 # ── Types ────────────────────────────────────────────────────────────
 
+
 @dataclass
 class CleanupProgress:
     """Mutable progress state for cleanup operations."""
+
     phase: str = ""
     phase_label: str = ""
     current: int = 0
@@ -55,6 +55,7 @@ class CleanupProgress:
 @dataclass
 class CleanupResult:
     """Result of a cleanup run."""
+
     unsorted: dict = field(default_factory=dict)
     staging: dict = field(default_factory=dict)
     unknown: dict = field(default_factory=dict)
@@ -64,6 +65,7 @@ class CleanupResult:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
+
 
 def _delete_file(remote: str, path: str, timeout: int = 120) -> bool:
     """Delete a single file on a remote using rclone deletefile."""
@@ -144,7 +146,8 @@ def _rclone_lsjson_full(
         return []
 
     cmd = [
-        _rclone_bin(), "lsjson",
+        _rclone_bin(),
+        "lsjson",
         f"{remote}:{path}",
         "--hash",
         "--no-mimetype",
@@ -165,14 +168,16 @@ def _rclone_lsjson_full(
             if entry.get("IsDir"):
                 continue
             hashes = entry.get("Hashes", {})
-            out.append({
-                "name": entry["Name"],
-                "path": entry["Path"],
-                "size": entry.get("Size", 0),
-                "md5": hashes.get("md5") or hashes.get("MD5"),
-                "sha256": hashes.get("sha256") or hashes.get("SHA-256"),
-                "modtime": entry.get("ModTime", ""),
-            })
+            out.append(
+                {
+                    "name": entry["Name"],
+                    "path": entry["Path"],
+                    "size": entry.get("Size", 0),
+                    "md5": hashes.get("md5") or hashes.get("MD5"),
+                    "sha256": hashes.get("sha256") or hashes.get("SHA-256"),
+                    "modtime": entry.get("ModTime", ""),
+                }
+            )
         return out
 
     except subprocess.TimeoutExpired:
@@ -184,6 +189,7 @@ def _rclone_lsjson_full(
 
 
 # ── Cleanup: Unsorted duplicates ─────────────────────────────────────
+
 
 def _cleanup_unsorted(
     remote: str,
@@ -211,9 +217,16 @@ def _cleanup_unsorted(
 
     for i, f in enumerate(unsorted_files):
         if progress_fn and i % 10 == 0:
-            progress_fn({"phase": "unsorted", "phase_label": "Mazání duplikátů z Unsorted/",
-                         "current": i, "total": len(unsorted_files),
-                         "deleted": result["deleted"], "current_file": f["name"]})
+            progress_fn(
+                {
+                    "phase": "unsorted",
+                    "phase_label": "Mazání duplikátů z Unsorted/",
+                    "current": i,
+                    "total": len(unsorted_files),
+                    "deleted": result["deleted"],
+                    "current_file": f["name"],
+                }
+            )
 
         md5 = f.get("md5")
         size = f.get("size", 0)
@@ -240,13 +253,18 @@ def _cleanup_unsorted(
         else:
             result["skipped"] += 1
 
-    logger.info("Cleanup Unsorted: deleted=%d, skipped=%d, failed=%d, freed=%.1f MB",
-                result["deleted"], result["skipped"], result["failed"],
-                result["bytes_freed"] / (1024**2))
+    logger.info(
+        "Cleanup Unsorted: deleted=%d, skipped=%d, failed=%d, freed=%.1f MB",
+        result["deleted"],
+        result["skipped"],
+        result["failed"],
+        result["bytes_freed"] / (1024**2),
+    )
     return result
 
 
 # ── Cleanup: .staging ────────────────────────────────────────────────
+
 
 def _cleanup_staging(
     remote: str,
@@ -262,8 +280,12 @@ def _cleanup_staging(
       - If no match → extract date, move to year/month folder
     """
     result = {
-        "total": 0, "deleted_dupes": 0, "moved_unique": 0,
-        "skipped": 0, "failed": 0, "bytes_freed": 0,
+        "total": 0,
+        "deleted_dupes": 0,
+        "moved_unique": 0,
+        "skipped": 0,
+        "failed": 0,
+        "bytes_freed": 0,
         "subfolder_stats": {},
     }
 
@@ -286,10 +308,17 @@ def _cleanup_staging(
 
     for i, f in enumerate(staging_files):
         if progress_fn and i % 20 == 0:
-            progress_fn({"phase": "staging", "phase_label": "Čištění .staging/",
-                         "current": i, "total": len(staging_files),
-                         "deleted": result["deleted_dupes"], "moved": result["moved_unique"],
-                         "current_file": f["name"]})
+            progress_fn(
+                {
+                    "phase": "staging",
+                    "phase_label": "Čištění .staging/",
+                    "current": i,
+                    "total": len(staging_files),
+                    "deleted": result["deleted_dupes"],
+                    "moved": result["moved_unique"],
+                    "current_file": f["name"],
+                }
+            )
 
         md5 = f.get("md5")
         size = f.get("size", 0)
@@ -297,9 +326,8 @@ def _cleanup_staging(
 
         # Check if duplicate exists in organized folders
         is_dupe = False
-        if md5 and md5 in organized_index:
-            if size in organized_index[md5]:
-                is_dupe = True
+        if md5 and md5 in organized_index and size in organized_index[md5]:
+            is_dupe = True
 
         if is_dupe:
             # Delete duplicate
@@ -336,13 +364,19 @@ def _cleanup_staging(
                 result["moved_unique"] += 1
                 result["subfolder_stats"][subfolder]["unique"] += 1
 
-    logger.info("Cleanup .staging: dupes=%d, moved=%d, skipped=%d, failed=%d, freed=%.1f MB",
-                result["deleted_dupes"], result["moved_unique"], result["skipped"],
-                result["failed"], result["bytes_freed"] / (1024**2))
+    logger.info(
+        "Cleanup .staging: dupes=%d, moved=%d, skipped=%d, failed=%d, freed=%.1f MB",
+        result["deleted_dupes"],
+        result["moved_unique"],
+        result["skipped"],
+        result["failed"],
+        result["bytes_freed"] / (1024**2),
+    )
     return result
 
 
 # ── Cleanup: unknown/00 ─────────────────────────────────────────────
+
 
 def _cleanup_unknown(
     remote: str,
@@ -359,9 +393,14 @@ def _cleanup_unknown(
       3. Move to year/month or unknown/{category}/ if undateable
     """
     result = {
-        "total": 0, "deleted_dupes": 0, "moved_dated": 0,
-        "moved_undated": 0, "skipped_junk": 0, "failed": 0,
-        "bytes_freed": 0, "by_category": {},
+        "total": 0,
+        "deleted_dupes": 0,
+        "moved_dated": 0,
+        "moved_undated": 0,
+        "skipped_junk": 0,
+        "failed": 0,
+        "bytes_freed": 0,
+        "by_category": {},
     }
 
     # Junk files to skip/delete
@@ -380,11 +419,17 @@ def _cleanup_unknown(
 
     for i, f in enumerate(unknown_files):
         if progress_fn and i % 20 == 0:
-            progress_fn({"phase": "unknown", "phase_label": "Třídění unknown/",
-                         "current": i, "total": len(unknown_files),
-                         "moved": result["moved_dated"] + result["moved_undated"],
-                         "deleted": result["deleted_dupes"],
-                         "current_file": f["name"]})
+            progress_fn(
+                {
+                    "phase": "unknown",
+                    "phase_label": "Třídění unknown/",
+                    "current": i,
+                    "total": len(unknown_files),
+                    "moved": result["moved_dated"] + result["moved_undated"],
+                    "deleted": result["deleted_dupes"],
+                    "current_file": f["name"],
+                }
+            )
 
         filename = f["name"]
         md5 = f.get("md5")
@@ -400,9 +445,8 @@ def _cleanup_unknown(
 
         # Check for duplicate in organized folders
         is_dupe = False
-        if md5 and md5 in organized_index:
-            if size in organized_index[md5]:
-                is_dupe = True
+        if md5 and md5 in organized_index and size in organized_index[md5]:
+            is_dupe = True
 
         if is_dupe:
             if not dry_run:
@@ -452,13 +496,20 @@ def _cleanup_unknown(
             else:
                 result["moved_undated"] += 1
 
-    logger.info("Cleanup unknown: dupes=%d, dated=%d, undated=%d, junk=%d, failed=%d, freed=%.1f MB",
-                result["deleted_dupes"], result["moved_dated"], result["moved_undated"],
-                result["skipped_junk"], result["failed"], result["bytes_freed"] / (1024**2))
+    logger.info(
+        "Cleanup unknown: dupes=%d, dated=%d, undated=%d, junk=%d, failed=%d, freed=%.1f MB",
+        result["deleted_dupes"],
+        result["moved_dated"],
+        result["moved_undated"],
+        result["skipped_junk"],
+        result["failed"],
+        result["bytes_freed"] / (1024**2),
+    )
     return result
 
 
 # ── Build organized file index ───────────────────────────────────────
+
 
 def _build_organized_index(
     remote: str,
@@ -471,8 +522,7 @@ def _build_organized_index(
     a lookup table for duplicate detection.
     """
     if progress_fn:
-        progress_fn({"phase": "indexing", "phase_label": "Indexuji organizované soubory...",
-                      "current": 0, "total": 0})
+        progress_fn({"phase": "indexing", "phase_label": "Indexuji organizované soubory...", "current": 0, "total": 0})
 
     logger.info("Building organized file index for %s:%s...", remote, base_path)
 
@@ -501,17 +551,23 @@ def _build_organized_index(
             index[md5].add(f.get("size", 0))
             indexed += 1
 
-    logger.info("Organized index: %d unique hashes from %d files (of %d total)",
-                len(index), indexed, len(all_files))
+    logger.info("Organized index: %d unique hashes from %d files (of %d total)", len(index), indexed, len(all_files))
 
     if progress_fn:
-        progress_fn({"phase": "indexing", "phase_label": f"Index hotový: {len(index)} unikátních hashů",
-                      "current": indexed, "total": len(all_files)})
+        progress_fn(
+            {
+                "phase": "indexing",
+                "phase_label": f"Index hotový: {len(index)} unikátních hashů",
+                "current": indexed,
+                "total": len(all_files),
+            }
+        )
 
     return index
 
 
 # ── Main orchestrator ────────────────────────────────────────────────
+
 
 def gdrive_cleanup(
     remote: str = "gws-backup",
@@ -546,34 +602,29 @@ def gdrive_cleanup(
 
     # Step 2: Clean Unsorted/ duplicates
     if not skip_unsorted:
-        results["unsorted"] = _cleanup_unsorted(
-            remote, base_path, organized_index, dry_run, progress_fn)
+        results["unsorted"] = _cleanup_unsorted(remote, base_path, organized_index, dry_run, progress_fn)
     else:
         results["unsorted"] = {"skipped": True}
 
     # Step 3: Clean .staging/ folders
     if not skip_staging:
-        results["staging"] = _cleanup_staging(
-            remote, base_path, organized_index, dry_run, progress_fn)
+        results["staging"] = _cleanup_staging(remote, base_path, organized_index, dry_run, progress_fn)
     else:
         results["staging"] = {"skipped": True}
 
     # Step 4: Clean unknown/ folder
     if not skip_unknown:
-        results["unknown"] = _cleanup_unknown(
-            remote, base_path, organized_index, dry_run, progress_fn)
+        results["unknown"] = _cleanup_unknown(remote, base_path, organized_index, dry_run, progress_fn)
     else:
         results["unknown"] = {"skipped": True}
 
     # Step 5: Final dedup pass
     if run_dedup and not dry_run:
         if progress_fn:
-            progress_fn({"phase": "dedup", "phase_label": "Finální deduplikace...",
-                          "current": 0, "total": 0})
+            progress_fn({"phase": "dedup", "phase_label": "Finální deduplikace...", "current": 0, "total": 0})
         from .cloud import rclone_dedupe
-        results["dedup"] = rclone_dedupe(
-            remote, base_path, mode="largest", dry_run=False, timeout=3600,
-            progress_fn=progress_fn)
+
+        results["dedup"] = rclone_dedupe(remote, base_path, mode="largest", dry_run=False, timeout=3600, progress_fn=progress_fn)
     else:
         results["dedup"] = {"skipped": True}
 
@@ -582,20 +633,20 @@ def gdrive_cleanup(
 
     # Summary
     total_deleted = (
-        results.get("unsorted", {}).get("deleted", 0) +
-        results.get("staging", {}).get("deleted_dupes", 0) +
-        results.get("unknown", {}).get("deleted_dupes", 0) +
-        results.get("unknown", {}).get("skipped_junk", 0)
+        results.get("unsorted", {}).get("deleted", 0)
+        + results.get("staging", {}).get("deleted_dupes", 0)
+        + results.get("unknown", {}).get("deleted_dupes", 0)
+        + results.get("unknown", {}).get("skipped_junk", 0)
     )
     total_moved = (
-        results.get("staging", {}).get("moved_unique", 0) +
-        results.get("unknown", {}).get("moved_dated", 0) +
-        results.get("unknown", {}).get("moved_undated", 0)
+        results.get("staging", {}).get("moved_unique", 0)
+        + results.get("unknown", {}).get("moved_dated", 0)
+        + results.get("unknown", {}).get("moved_undated", 0)
     )
     total_freed = (
-        results.get("unsorted", {}).get("bytes_freed", 0) +
-        results.get("staging", {}).get("bytes_freed", 0) +
-        results.get("unknown", {}).get("bytes_freed", 0)
+        results.get("unsorted", {}).get("bytes_freed", 0)
+        + results.get("staging", {}).get("bytes_freed", 0)
+        + results.get("unknown", {}).get("bytes_freed", 0)
     )
     results["summary"] = {
         "total_deleted": total_deleted,
@@ -604,7 +655,12 @@ def gdrive_cleanup(
         "total_freed_human": f"{total_freed / (1024**3):.1f} GB",
     }
 
-    logger.info("=== GDrive Cleanup DONE: deleted=%d, moved=%d, freed=%s, elapsed=%.0fs ===",
-                total_deleted, total_moved, results["summary"]["total_freed_human"], elapsed)
+    logger.info(
+        "=== GDrive Cleanup DONE: deleted=%d, moved=%d, freed=%s, elapsed=%.0fs ===",
+        total_deleted,
+        total_moved,
+        results["summary"]["total_freed_human"],
+        elapsed,
+    )
 
     return results

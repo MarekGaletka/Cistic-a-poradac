@@ -326,11 +326,14 @@ def trigger_face_detection(request: Request, background: BackgroundTasks, body: 
                     encrypt_fn=encrypt_fn,
                     progress_fn=on_progress,
                 )
-                _finish_task(task.id, result={
-                    "files_processed": result.files_processed,
-                    "faces_detected": result.faces_detected,
-                    "errors": result.errors,
-                })
+                _finish_task(
+                    task.id,
+                    result={
+                        "files_processed": result.files_processed,
+                        "faces_detected": result.faces_detected,
+                        "errors": result.errors,
+                    },
+                )
             finally:
                 _return_catalog(cat)
         except Exception as exc:
@@ -360,10 +363,13 @@ def trigger_face_clustering(request: Request, background: BackgroundTasks, body:
                     min_samples=body.min_samples,
                     decrypt_fn=decrypt_fn,
                 )
-                _finish_task(task.id, result={
-                    "clusters": len(clusters),
-                    "total_faces_clustered": sum(len(v) for v in clusters.values()),
-                })
+                _finish_task(
+                    task.id,
+                    result={
+                        "clusters": len(clusters),
+                        "total_faces_clustered": sum(len(v) for v in clusters.values()),
+                    },
+                )
             finally:
                 _return_catalog(cat)
         except Exception as exc:
@@ -438,12 +444,8 @@ def cleanup_auto_persons(request: Request):
         faces_freed = 0
         for p in all_persons:
             if auto_re.match(p["name"]):
-                cnt = cat.conn.execute(
-                    "SELECT COUNT(*) FROM faces WHERE person_id = ?", (p["id"],)
-                ).fetchone()[0]
-                cat.conn.execute(
-                    "UPDATE faces SET person_id = NULL WHERE person_id = ?", (p["id"],)
-                )
+                cnt = cat.conn.execute("SELECT COUNT(*) FROM faces WHERE person_id = ?", (p["id"],)).fetchone()[0]
+                cat.conn.execute("UPDATE faces SET person_id = NULL WHERE person_id = ?", (p["id"],))
                 cat.conn.execute("DELETE FROM persons WHERE id = ?", (p["id"],))
                 deleted += 1
                 faces_freed += cnt

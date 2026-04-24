@@ -224,8 +224,7 @@ def create_merge_plan(
             for p, v in path_values.items():
                 if p != survivor_path:
                     logger.info(
-                        "Merge conflict for tag '%s' on %s: keeping survivor value %r "
-                        "(discarded %r from %s)",
+                        "Merge conflict for tag '%s' on %s: keeping survivor value %r (discarded %r from %s)",
                         tag,
                         survivor_path,
                         survivor_val,
