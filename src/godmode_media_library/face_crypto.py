@@ -108,7 +108,8 @@ def _write_keystore(keystore: dict[str, Any]) -> None:
         dir=str(ks_path.parent), prefix=".face_keystore_", suffix=".tmp"
     )
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
         os.write(fd, data)
         os.close(fd)
         fd = -1  # mark as closed

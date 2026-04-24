@@ -12,11 +12,10 @@ import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .asset_sets import PILLOW_IMAGE_EXTS
 from .catalog import Catalog
 
 logger = logging.getLogger(__name__)
-
-IMAGE_EXTS = {"jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "heic", "heif"}
 
 
 @dataclass
@@ -132,7 +131,7 @@ def scan_new_faces(
         encrypt_fn: Function to encrypt encoding bytes.
         progress_fn: Callback(processed, total) for progress updates.
     """
-    pending = catalog.files_without_faces(IMAGE_EXTS)
+    pending = catalog.files_without_faces(PILLOW_IMAGE_EXTS)
     total = len(pending)
     result = FaceScanResult()
 

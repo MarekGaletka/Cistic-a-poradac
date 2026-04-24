@@ -12,6 +12,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .asset_sets import IMAGE_EXTS
+
 logger = logging.getLogger(__name__)
 
 # ── Score dimensions & weights ───────────────────────────────────────
@@ -92,26 +94,6 @@ _CAMERA_TIERS: dict[str, float] = {
 
 # ── Image category thresholds ────────────────────────────────────────
 
-_IMAGE_EXTS = {
-    "jpg",
-    "jpeg",
-    "png",
-    "tiff",
-    "tif",
-    "bmp",
-    "webp",
-    "heic",
-    "heif",
-    "raw",
-    "cr2",
-    "cr3",
-    "nef",
-    "arw",
-    "orf",
-    "rw2",
-    "dng",
-    "raf",
-}
 _VIDEO_EXTS = {
     "mp4",
     "mov",
@@ -417,7 +399,7 @@ def score_catalog(
         """
 
         if media_only:
-            all_exts = _IMAGE_EXTS | _VIDEO_EXTS
+            all_exts = IMAGE_EXTS | _VIDEO_EXTS
             placeholders = ",".join("?" for _ in all_exts)
             query += f" WHERE LOWER(f.ext) IN ({placeholders})"
             params: list = list(all_exts)

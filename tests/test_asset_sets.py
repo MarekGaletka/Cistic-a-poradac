@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from godmode_media_library.asset_sets import (
+    IMAGE_EXTS,
+    IMAGE_EXTS_DOTTED,
+    PILLOW_IMAGE_EXTS,
+    VIDEO_EXTS,
     asset_key_for_path,
     build_asset_membership,
     summarize_asset_sets,
@@ -72,3 +76,20 @@ def test_summarize_asset_sets_only_image():
     assert summary["only_image_sets"] == 2
     assert summary["only_video_sets"] == 1
     assert summary["live_pairs_img_plus_video"] == 0
+
+
+# ── IMAGE_EXTS unification tests ──────────────────────────────────
+
+
+def test_pillow_image_exts_subset_of_image_exts():
+    assert PILLOW_IMAGE_EXTS <= IMAGE_EXTS
+
+
+def test_image_exts_dotted_consistency():
+    assert len(IMAGE_EXTS_DOTTED) == len(IMAGE_EXTS)
+    for ext in IMAGE_EXTS:
+        assert f".{ext}" in IMAGE_EXTS_DOTTED
+
+
+def test_no_overlap_image_video():
+    assert IMAGE_EXTS.isdisjoint(VIDEO_EXTS)

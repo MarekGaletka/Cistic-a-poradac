@@ -350,3 +350,19 @@ class TestKeyRotation:
             version, key_id = struct.unpack(_HEADER_FMT, blob[:_HEADER_SIZE])
             assert version == _BLOB_VERSION
             assert key_id == 1
+
+
+# ── _write_keystore without os.fchmod (Windows) ──────────────────
+
+
+class TestWriteKeystoreNoFchmod:
+    def test_write_keystore_without_fchmod(self, tmp_path, monkeypatch):
+        """Keystore write succeeds even when os.fchmod is unavailable."""
+        monkeypatch.delattr("os.fchmod", raising=False)
+
+        with _patch_paths(tmp_path) as ctx:
+            original = [0.0] * _ENCODING_SIZE
+            blob = encrypt_encoding(original)
+            assert ctx.ks_file.exists()
+            recovered = decrypt_encoding(blob)
+            assert recovered == original

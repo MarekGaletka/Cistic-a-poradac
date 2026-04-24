@@ -9,6 +9,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from .asset_sets import IMAGE_EXTS
 from .utils import utc_stamp
 
 logger = logging.getLogger(__name__)
@@ -1600,13 +1601,13 @@ class Catalog:
             conditions.append("gps_latitude IS NOT NULL")
 
         # file_type (image / video)
-        _IMAGE_EXTS = ("jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "heic", "heif", "svg", "raw", "cr2", "nef", "arw", "dng")
+        _img_exts = tuple(IMAGE_EXTS)
         _VIDEO_EXTS = ("mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp")
         ft = filters.get("file_type", "").lower()
         if ft == "image":
-            ph = ",".join("?" for _ in _IMAGE_EXTS)
+            ph = ",".join("?" for _ in _img_exts)
             conditions.append(f"ext IN ({ph})")
-            params.extend(_IMAGE_EXTS)
+            params.extend(_img_exts)
         elif ft == "video":
             ph = ",".join("?" for _ in _VIDEO_EXTS)
             conditions.append(f"ext IN ({ph})")

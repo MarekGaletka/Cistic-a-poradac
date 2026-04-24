@@ -77,8 +77,7 @@ _LAPLACIAN_KERNEL = (0, 1, 0, 1, -4, 1, 0, 1, 0)
 # Size threshold for meme detection (100KB)
 _MEME_SIZE_THRESHOLD = 100 * 1024
 
-# Image extensions to analyze
-IMAGE_EXTS = {"jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "heic", "heif", "gif"}
+from .asset_sets import PILLOW_IMAGE_EXTS
 
 # Video extensions (classified without analysis)
 VIDEO_EXTS = {"mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp", "mts"}
@@ -250,7 +249,7 @@ def batch_analyze(catalog, *, limit: int = 0, progress_fn=None) -> dict:
     dict
         Summary stats: {analyzed, photo, screenshot, meme, blurry, dark, overexposed, errors}.
     """
-    files = catalog.files_without_quality(IMAGE_EXTS)
+    files = catalog.files_without_quality(PILLOW_IMAGE_EXTS)
     if limit > 0:
         files = files[:limit]
 

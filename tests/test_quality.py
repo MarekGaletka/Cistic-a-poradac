@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
+from godmode_media_library.asset_sets import PILLOW_IMAGE_EXTS
 from godmode_media_library.quality import (
-    IMAGE_EXTS,
     VIDEO_EXTS,
     DOC_EXTS,
     QualityInfo,
@@ -234,9 +234,9 @@ class TestBatchAnalyze:
 
 class TestExtensionSets:
     def test_image_exts_has_common(self):
-        assert "jpg" in IMAGE_EXTS
-        assert "png" in IMAGE_EXTS
-        assert "heic" in IMAGE_EXTS
+        assert "jpg" in PILLOW_IMAGE_EXTS
+        assert "png" in PILLOW_IMAGE_EXTS
+        assert "heic" in PILLOW_IMAGE_EXTS
 
     def test_video_exts(self):
         assert "mp4" in VIDEO_EXTS

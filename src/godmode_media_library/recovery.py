@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .asset_sets import IMAGE_EXTS_DOTTED
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_QUARANTINE = (Path.home() / ".config" / "gml" / "quarantine").resolve()
@@ -57,28 +59,9 @@ def _sanitize_subprocess_path(path: str, label: str = "path") -> str:
         )
     return path
 
-# Media extensions we look for during deep scan / recovery
-_IMAGE_EXTS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".gif",
-    ".bmp",
-    ".tiff",
-    ".tif",
-    ".webp",
-    ".heic",
-    ".heif",
-    ".svg",
-    ".raw",
-    ".cr2",
-    ".nef",
-    ".arw",
-    ".dng",
-}
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp"}
 _AUDIO_EXTS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a", ".opus"}
-_MEDIA_EXTS = _IMAGE_EXTS | _VIDEO_EXTS | _AUDIO_EXTS
+_MEDIA_EXTS = IMAGE_EXTS_DOTTED | _VIDEO_EXTS | _AUDIO_EXTS
 
 
 # ---------------------------------------------------------------------------
@@ -1702,7 +1685,7 @@ def decrypt_signal_attachments(
 
 
 def _categorize_ext(ext: str) -> str:
-    if ext in _IMAGE_EXTS:
+    if ext in IMAGE_EXTS_DOTTED:
         return "image"
     if ext in _VIDEO_EXTS:
         return "video"
